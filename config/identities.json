@@ -1,0 +1,79 @@
+{
+  "identity_groups": [
+    {
+      "id": "river_union",
+      "name": "River Union",
+      "religion": "River Faith",
+      "caste": "Labor Collective",
+      "language": "North Standard",
+      "population_percent": 0.43,
+      "economic_modifier": 0.92,
+      "education_modifier": 0.88,
+      "grievance_score": 0.58,
+      "radicalization_base_rate": 0.085,
+      "issue_sensitivity": {
+        "economy": 1.2,
+        "law_and_order": 1.0,
+        "corruption": 1.15,
+        "social_tension": 1.25,
+        "public_trust": 1.05
+      }
+    },
+    {
+      "id": "merchant_bloc",
+      "name": "Merchant Bloc",
+      "religion": "Sun Temple",
+      "caste": "Merchant Network",
+      "language": "Trade Creole",
+      "population_percent": 0.31,
+      "economic_modifier": 1.16,
+      "education_modifier": 1.02,
+      "grievance_score": 0.34,
+      "radicalization_base_rate": 0.05,
+      "issue_sensitivity": {
+        "economy": 1.3,
+        "law_and_order": 0.9,
+        "corruption": 0.95,
+        "social_tension": 0.9,
+        "public_trust": 1.1
+      }
+    },
+    {
+      "id": "campus_front",
+      "name": "Campus Front",
+      "religion": "Plural",
+      "caste": "Civic Students",
+      "language": "Metro Link",
+      "population_percent": 0.26,
+      "economic_modifier": 0.98,
+      "education_modifier": 1.1,
+      "grievance_score": 0.47,
+      "radicalization_base_rate": 0.07,
+      "issue_sensitivity": {
+        "economy": 1.0,
+        "law_and_order": 1.2,
+        "corruption": 1.25,
+        "social_tension": 1.15,
+        "public_trust": 1.2
+      }
+    }
+  ],
+  "role_distribution": {
+    "Worker": 0.34,
+    "BusinessOwner": 0.15,
+    "Politician": 0.08,
+    "Journalist": 0.12,
+    "Student": 0.31
+  },
+  "initial_city_stats": {
+    "economy": 54,
+    "employment": 50,
+    "law_and_order": 52,
+    "infrastructure": 50,
+    "environment": 50,
+    "corruption": 42,
+    "social_tension": 44,
+    "media_freedom": 58,
+    "public_trust": 50
+  }
+}

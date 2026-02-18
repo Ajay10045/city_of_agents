@@ -1,0 +1,205 @@
+{
+  "events": [
+    {
+      "id": "social_conflict_wave",
+      "name": "Social Conflict Wave",
+      "type": "social",
+      "base_risk": 0.08,
+      "weight": 1.2,
+      "min_turn": 3,
+      "cooldown": 5,
+      "duration": 2,
+      "escalation_chance": 0.2,
+      "max_escalation": 4,
+      "conditions": {
+        "social_tension_min": 52
+      },
+      "city_effects": {
+        "law_and_order": -3.2,
+        "public_trust": -2.4,
+        "social_tension": 4.3,
+        "economy": -1.1
+      },
+      "group_effects": [
+        {
+          "match": {
+            "religion": "River Faith"
+          },
+          "happiness": -1.8,
+          "radicalization": 2.8,
+          "alignment": -1.5
+        },
+        {
+          "match": {
+            "religion": "Sun Temple"
+          },
+          "happiness": -1.1,
+          "radicalization": 1.9,
+          "alignment": -0.8
+        }
+      ],
+      "media_effects": {
+        "sensationalism": 5.2,
+        "trust": -1.8
+      }
+    },
+    {
+      "id": "financial_fraud_expose",
+      "name": "Financial Fraud Expose",
+      "type": "financial",
+      "base_risk": 0.06,
+      "weight": 1.0,
+      "min_turn": 5,
+      "cooldown": 6,
+      "duration": 2,
+      "escalation_chance": 0.16,
+      "max_escalation": 3,
+      "conditions": {
+        "corruption_min": 50
+      },
+      "city_effects": {
+        "economy": -3.4,
+        "public_trust": -3.0,
+        "corruption": 1.5,
+        "employment": -1.2
+      },
+      "group_effects": [
+        {
+          "match": {
+            "caste": "Merchant Network"
+          },
+          "happiness": -1.9,
+          "alignment": -1.1
+        },
+        {
+          "match": {
+            "language": "Metro Link"
+          },
+          "alignment": -1.4,
+          "radicalization": 1.1
+        }
+      ],
+      "media_effects": {
+        "sensationalism": 3.6,
+        "trust": -2.4,
+        "bias": -0.8
+      }
+    },
+    {
+      "id": "economic_shock",
+      "name": "Economic Shock",
+      "type": "financial",
+      "base_risk": 0.055,
+      "weight": 0.9,
+      "min_turn": 8,
+      "cooldown": 7,
+      "duration": 3,
+      "escalation_chance": 0.14,
+      "max_escalation": 3,
+      "conditions": {
+        "employment_max": 48,
+        "economy_max": 50
+      },
+      "city_effects": {
+        "economy": -2.9,
+        "employment": -2.7,
+        "social_tension": 2.4,
+        "public_trust": -1.2
+      },
+      "group_effects": [
+        {
+          "match": {
+            "caste": "Labor Collective"
+          },
+          "happiness": -2.0,
+          "radicalization": 1.6,
+          "alignment": -1.4
+        }
+      ],
+      "media_effects": {
+        "sensationalism": 2.1,
+        "trust": -0.7
+      }
+    },
+    {
+      "id": "political_scandal",
+      "name": "Political Scandal Leak",
+      "type": "political",
+      "base_risk": 0.07,
+      "weight": 1.1,
+      "min_turn": 4,
+      "cooldown": 5,
+      "duration": 1,
+      "escalation_chance": 0.1,
+      "max_escalation": 2,
+      "conditions": {
+        "corruption_min": 46,
+        "public_trust_max": 58
+      },
+      "city_effects": {
+        "public_trust": -3.8,
+        "social_tension": 1.8,
+        "law_and_order": -0.9
+      },
+      "group_effects": [
+        {
+          "match": {
+            "language": "Trade Creole"
+          },
+          "happiness": -0.9,
+          "alignment": -1.0
+        },
+        {
+          "match": {
+            "language": "Metro Link"
+          },
+          "alignment": -1.7
+        }
+      ],
+      "media_effects": {
+        "sensationalism": 4.0,
+        "trust": -1.9,
+        "bias": -1.1
+      }
+    },
+    {
+      "id": "monsoon_flood",
+      "name": "Monsoon Flood",
+      "type": "disaster",
+      "base_risk": 0.045,
+      "weight": 0.8,
+      "min_turn": 6,
+      "cooldown": 8,
+      "duration": 2,
+      "escalation_chance": 0.12,
+      "max_escalation": 3,
+      "conditions": {},
+      "city_effects": {
+        "infrastructure": -3.0,
+        "economy": -1.8,
+        "law_and_order": -1.3,
+        "public_trust": -0.8,
+        "environment": -1.0
+      },
+      "group_effects": [
+        {
+          "match": {
+            "caste": "Labor Collective"
+          },
+          "happiness": -1.4,
+          "radicalization": 0.9
+        },
+        {
+          "match": {
+            "caste": "Merchant Network"
+          },
+          "happiness": -0.8
+        }
+      ],
+      "media_effects": {
+        "sensationalism": 2.8,
+        "trust": -0.6
+      }
+    }
+  ]
+}

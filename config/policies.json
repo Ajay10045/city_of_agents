@@ -1,0 +1,465 @@
+{
+  "policies": [
+    {
+      "id": "mayor_public_works_drive",
+      "actor": "mayor",
+      "name": "Public Works Drive",
+      "weight": 1.2,
+      "effects": {
+        "economy": 2.8,
+        "employment": 2.4,
+        "infrastructure": 3.6,
+        "corruption": 0.8,
+        "public_trust": 1.2
+      },
+      "long_term_effects": [
+        {
+          "duration": 3,
+          "city_effects": {
+            "economy": 0.8,
+            "employment": 0.6,
+            "infrastructure": 0.9
+          }
+        }
+      ],
+      "group_effects": [
+        {
+          "match": {
+            "caste": "Labor Collective"
+          },
+          "happiness": 1.8,
+          "alignment": 2.2
+        },
+        {
+          "match": {
+            "caste": "Merchant Network"
+          },
+          "happiness": -0.4
+        }
+      ],
+      "campaign_strength": 1.08,
+      "media_effects": {
+        "bias": 1.2,
+        "trust": 1.4,
+        "sensationalism": -0.6
+      }
+    },
+    {
+      "id": "mayor_anti_corruption_audit",
+      "actor": "mayor",
+      "name": "Anti-Corruption Audit",
+      "weight": 1.0,
+      "effects": {
+        "corruption": -3.4,
+        "public_trust": 2.2,
+        "economy": -0.7,
+        "law_and_order": 1.1
+      },
+      "long_term_effects": [
+        {
+          "duration": 2,
+          "city_effects": {
+            "corruption": -1.0,
+            "public_trust": 0.8
+          }
+        }
+      ],
+      "group_effects": [
+        {
+          "match": {
+            "language": "Metro Link"
+          },
+          "happiness": 1.0,
+          "alignment": 1.4
+        }
+      ],
+      "campaign_strength": 1.04,
+      "media_effects": {
+        "bias": 0.8,
+        "trust": 1.8
+      }
+    },
+    {
+      "id": "mayor_law_order_push",
+      "actor": "mayor",
+      "name": "Law and Order Push",
+      "weight": 0.95,
+      "effects": {
+        "law_and_order": 4.2,
+        "social_tension": 1.8,
+        "public_trust": -0.6,
+        "media_freedom": -1.4
+      },
+      "long_term_effects": [
+        {
+          "duration": 2,
+          "city_effects": {
+            "law_and_order": 0.8,
+            "public_trust": -0.3
+          }
+        }
+      ],
+      "group_effects": [
+        {
+          "match": {
+            "language": "Metro Link"
+          },
+          "happiness": -1.4,
+          "radicalization": 1.0,
+          "alignment": -1.2
+        },
+        {
+          "match": {
+            "caste": "Merchant Network"
+          },
+          "happiness": 0.8,
+          "alignment": 0.9
+        }
+      ],
+      "campaign_strength": 1.05,
+      "media_effects": {
+        "bias": 1.6,
+        "trust": -0.8,
+        "sensationalism": 1.2
+      }
+    },
+    {
+      "id": "mayor_green_transit_upgrade",
+      "actor": "mayor",
+      "name": "Green Transit Upgrade",
+      "weight": 0.9,
+      "effects": {
+        "environment": 3.1,
+        "infrastructure": 2.0,
+        "economy": 1.0,
+        "employment": 1.2,
+        "corruption": 0.5
+      },
+      "long_term_effects": [
+        {
+          "duration": 4,
+          "city_effects": {
+            "environment": 0.9,
+            "economy": 0.5
+          }
+        }
+      ],
+      "group_effects": [
+        {
+          "match": {
+            "language": "Metro Link"
+          },
+          "happiness": 1.7,
+          "alignment": 1.5
+        }
+      ],
+      "campaign_strength": 1.02,
+      "media_effects": {
+        "bias": 0.6,
+        "trust": 0.7
+      }
+    },
+    {
+      "id": "mayor_subsidy_reform",
+      "actor": "mayor",
+      "name": "Targeted Subsidy Reform",
+      "weight": 1.1,
+      "effects": {
+        "economy": 1.8,
+        "employment": 1.3,
+        "public_trust": 0.6,
+        "social_tension": -0.8,
+        "corruption": 0.6
+      },
+      "long_term_effects": [
+        {
+          "duration": 3,
+          "city_effects": {
+            "economy": 0.5,
+            "employment": 0.4,
+            "social_tension": -0.4
+          }
+        }
+      ],
+      "group_effects": [
+        {
+          "match": {
+            "caste": "Labor Collective"
+          },
+          "happiness": 1.3,
+          "alignment": 1.2
+        },
+        {
+          "match": {
+            "caste": "Merchant Network"
+          },
+          "happiness": -0.6,
+          "alignment": -0.8
+        }
+      ],
+      "campaign_strength": 1.03,
+      "media_effects": {
+        "bias": 0.9,
+        "trust": 0.4
+      }
+    },
+    {
+      "id": "mayor_civic_dialogue_forum",
+      "actor": "mayor",
+      "name": "Civic Dialogue Forum",
+      "weight": 0.95,
+      "effects": {
+        "social_tension": -2.4,
+        "public_trust": 1.6,
+        "law_and_order": 0.6,
+        "economy": -0.4
+      },
+      "long_term_effects": [
+        {
+          "duration": 3,
+          "city_effects": {
+            "social_tension": -0.8,
+            "public_trust": 0.7
+          }
+        }
+      ],
+      "group_effects": [
+        {
+          "match": {
+            "religion": "River Faith"
+          },
+          "happiness": 1.0,
+          "radicalization": -0.8
+        },
+        {
+          "match": {
+            "religion": "Sun Temple"
+          },
+          "happiness": 0.8,
+          "radicalization": -0.5
+        }
+      ],
+      "campaign_strength": 1.0,
+      "media_effects": {
+        "bias": 0.2,
+        "trust": 1.0,
+        "sensationalism": -1.1
+      }
+    },
+    {
+      "id": "opp_protest_mobilization",
+      "actor": "opposition",
+      "name": "Protest Mobilization",
+      "weight": 1.15,
+      "effects": {
+        "social_tension": 3.6,
+        "law_and_order": -2.1,
+        "public_trust": -1.4,
+        "media_freedom": 0.8
+      },
+      "group_effects": [
+        {
+          "match": {
+            "caste": "Labor Collective"
+          },
+          "alignment": -2.5,
+          "radicalization": 1.4
+        },
+        {
+          "match": {
+            "language": "Metro Link"
+          },
+          "alignment": -1.3,
+          "radicalization": 1.0
+        }
+      ],
+      "campaign_strength": 1.1,
+      "media_effects": {
+        "bias": -1.2,
+        "sensationalism": 2.4,
+        "trust": -0.9
+      }
+    },
+    {
+      "id": "opp_expose_scandal",
+      "actor": "opposition",
+      "name": "Expose Procurement Scandal",
+      "weight": 1.0,
+      "effects": {
+        "corruption": 2.6,
+        "public_trust": -2.5,
+        "social_tension": 1.2,
+        "media_freedom": 0.9
+      },
+      "group_effects": [
+        {
+          "match": {
+            "language": "Metro Link"
+          },
+          "alignment": -2.2,
+          "happiness": -0.6
+        },
+        {
+          "match": {
+            "caste": "Merchant Network"
+          },
+          "alignment": -1.1
+        }
+      ],
+      "campaign_strength": 1.09,
+      "media_effects": {
+        "bias": -1.6,
+        "sensationalism": 1.5,
+        "trust": -1.0
+      }
+    },
+    {
+      "id": "opp_grassroots_coalition",
+      "actor": "opposition",
+      "name": "Grassroots Coalition",
+      "weight": 0.95,
+      "effects": {
+        "social_tension": 0.8,
+        "public_trust": -0.6,
+        "employment": 0.4
+      },
+      "long_term_effects": [
+        {
+          "duration": 3,
+          "city_effects": {
+            "social_tension": 0.4,
+            "public_trust": -0.5
+          },
+          "group_effects": [
+            {
+              "match": {
+                "religion": "River Faith"
+              },
+              "alignment": -0.7
+            },
+            {
+              "match": {
+                "religion": "Plural"
+              },
+              "alignment": -0.9
+            }
+          ]
+        }
+      ],
+      "group_effects": [
+        {
+          "match": {
+            "religion": "River Faith"
+          },
+          "alignment": -1.6,
+          "happiness": 0.6
+        }
+      ],
+      "campaign_strength": 1.05,
+      "media_effects": {
+        "bias": -0.8,
+        "sensationalism": 0.8
+      }
+    },
+    {
+      "id": "opp_media_pressure_campaign",
+      "actor": "opposition",
+      "name": "Media Pressure Campaign",
+      "weight": 1.1,
+      "effects": {
+        "public_trust": -1.1,
+        "social_tension": 1.5,
+        "media_freedom": 1.6
+      },
+      "group_effects": [
+        {
+          "match": {
+            "language": "Trade Creole"
+          },
+          "alignment": -0.9
+        },
+        {
+          "match": {
+            "language": "Metro Link"
+          },
+          "alignment": -1.2
+        }
+      ],
+      "campaign_strength": 1.08,
+      "media_effects": {
+        "bias": -1.0,
+        "sensationalism": 2.1,
+        "trust": -0.7
+      }
+    },
+    {
+      "id": "opp_welfare_manifesto",
+      "actor": "opposition",
+      "name": "Welfare Manifesto",
+      "weight": 0.9,
+      "effects": {
+        "employment": 0.8,
+        "economy": -0.6,
+        "public_trust": 0.5,
+        "social_tension": -0.4
+      },
+      "long_term_effects": [
+        {
+          "duration": 2,
+          "city_effects": {
+            "employment": 0.5,
+            "economy": -0.3
+          }
+        }
+      ],
+      "group_effects": [
+        {
+          "match": {
+            "caste": "Labor Collective"
+          },
+          "happiness": 1.2,
+          "alignment": -1.0
+        },
+        {
+          "match": {
+            "caste": "Merchant Network"
+          },
+          "happiness": -0.5,
+          "alignment": 0.4
+        }
+      ],
+      "campaign_strength": 1.03,
+      "media_effects": {
+        "bias": -0.5,
+        "trust": 0.3
+      }
+    },
+    {
+      "id": "opp_campus_rally",
+      "actor": "opposition",
+      "name": "Campus Rally",
+      "weight": 1.0,
+      "effects": {
+        "social_tension": 2.0,
+        "public_trust": -0.7,
+        "media_freedom": 1.0
+      },
+      "group_effects": [
+        {
+          "match": {
+            "language": "Metro Link"
+          },
+          "alignment": -2.4,
+          "radicalization": 1.5,
+          "happiness": 0.8
+        }
+      ],
+      "campaign_strength": 1.07,
+      "media_effects": {
+        "bias": -0.9,
+        "sensationalism": 1.8,
+        "trust": -0.6
+      }
+    }
+  ]
+}
