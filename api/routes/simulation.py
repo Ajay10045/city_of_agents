@@ -8,7 +8,6 @@ from fastapi import APIRouter, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
-from agents.agent_engine import AgentEngine
 from core.game_state import GameState
 from core.turn_manager import TurnManager
 from events.event_engine import EventEngine
