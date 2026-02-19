@@ -32,6 +32,38 @@ DEFAULT_GAME_ID = "default"
 MAX_BUFFERED_EVENTS = 3000
 MAX_BUFFERED_ACTION_RESULTS = 1000
 ALLOWED_PARTICIPANT_ROLES = {"mayor", "opposition", "spectator"}
+ALLOWED_LLM_SAMPLING_STRATEGIES = {"stratified", "uniform", "none"}
+
+CITY_OPTIONS = [
+    {"id": "new_delhi", "name": "New Delhi"},
+    {"id": "new_york", "name": "New York"},
+    {"id": "london", "name": "London"},
+    {"id": "tokyo", "name": "Tokyo"},
+    {"id": "dubai", "name": "Dubai"},
+]
+CITY_NAMES_BY_ID = {item["id"]: item["name"] for item in CITY_OPTIONS}
+
+SETUP_DEFAULTS: dict[str, Any] = {
+    "turns_to_election": 10,
+    "city_id": "new_delhi",
+    "population_scale": 50_000,
+    "agent_count": 5_000,
+    "llm_panel_size": 500,
+    "llm_sampling_strategy": "stratified",
+    "llm_micro_batch_size": 20,
+    "max_parallel_llm_requests": 8,
+    "randomness_scale": 0.10,
+}
+
+SETUP_LIMITS: dict[str, dict[str, Any]] = {
+    "turns_to_election": {"min": 3, "max": 100},
+    "population_scale": {"min": 10_000, "max": 200_000},
+    "agent_count": {"min": 1_000, "max": 50_000},
+    "llm_panel_size": {"min": 0, "max": 5_000},
+    "llm_micro_batch_size": {"min": 1, "max": 100},
+    "max_parallel_llm_requests": {"min": 1, "max": 32},
+    "randomness_scale": {"min": 0.0, "max": 1.0},
+}
 
 
 @dataclass(frozen=True)
@@ -54,6 +86,7 @@ class GameSession:
     game_id: str
     turn_manager: TurnManager
     agent_engine: AgentEngine
+    setup: dict[str, Any] = field(default_factory=dict)
     events: list[dict] = field(default_factory=list)
     next_event_id: int = 1
     participants: dict[str, dict[str, str]] = field(default_factory=dict)
@@ -81,6 +114,7 @@ def _build_game(
     seed: int | None = None,
     turns: int = 50,
     election_turn: int = 50,
+    simulation_profile: dict[str, Any] | None = None,
 ) -> tuple[TurnManager, AgentEngine]:
     if seed is None:
         seed = random.SystemRandom().randrange(1, 10**9)
@@ -112,6 +146,7 @@ def _build_game(
         media_state=MediaState(),
         rng=rng,
         rng_seed=seed,
+        simulation_profile=dict(simulation_profile or {}),
     )
 
     policy_engine = PolicyEngine(CONFIG_DIR / "policies.json")
@@ -135,12 +170,19 @@ def _create_session(
     turns: int = 50,
     election_turn: int = 50,
     game_id: str | None = None,
+    setup: dict[str, Any] | None = None,
 ) -> GameSession:
-    tm, agent_engine = _build_game(seed=seed, turns=turns, election_turn=election_turn)
+    tm, agent_engine = _build_game(
+        seed=seed,
+        turns=turns,
+        election_turn=election_turn,
+        simulation_profile=setup,
+    )
     return GameSession(
         game_id=game_id or str(uuid.uuid4()),
         turn_manager=tm,
         agent_engine=agent_engine,
+        setup=dict(setup or {}),
     )
 
 
@@ -286,6 +328,195 @@ def _parse_int(value: str | None, fallback: int, lower: int | None = None, upper
     if upper is not None:
         parsed = min(upper, parsed)
     return parsed
+
+
+def _parse_bounded_int(
+    raw: Any,
+    field_name: str,
+    lower: int,
+    upper: int,
+) -> tuple[int | None, str | None]:
+    try:
+        parsed = int(raw)
+    except (TypeError, ValueError):
+        return None, f"{field_name} must be an integer"
+    if parsed < lower or parsed > upper:
+        return None, f"{field_name} must be between {lower} and {upper}"
+    return parsed, None
+
+
+def _parse_bounded_float(
+    raw: Any,
+    field_name: str,
+    lower: float,
+    upper: float,
+) -> tuple[float | None, str | None]:
+    try:
+        parsed = float(raw)
+    except (TypeError, ValueError):
+        return None, f"{field_name} must be a number"
+    if parsed < lower or parsed > upper:
+        return None, f"{field_name} must be between {lower} and {upper}"
+    return parsed, None
+
+
+def _normalize_city_id(value: Any) -> str:
+    return str(value).strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _parse_v1_create_game_request(body: dict) -> tuple[dict[str, Any] | None, tuple[int, str] | None]:
+    seed = body.get("seed")
+
+    turns, turns_err = _parse_bounded_int(body.get("turns", 50), "turns", 1, 300)
+    if turns_err is not None:
+        return None, (400, turns_err)
+    assert turns is not None
+
+    if "turns_to_election" in body:
+        turns_to_election, election_err = _parse_bounded_int(
+            body.get("turns_to_election"),
+            "turns_to_election",
+            int(SETUP_LIMITS["turns_to_election"]["min"]),
+            int(SETUP_LIMITS["turns_to_election"]["max"]),
+        )
+        if election_err is not None:
+            return None, (400, election_err)
+        assert turns_to_election is not None
+        election_turn = min(turns_to_election, turns)
+    elif "election_turn" in body:
+        election_turn, election_err = _parse_bounded_int(
+            body.get("election_turn"), "election_turn", 1, turns
+        )
+        if election_err is not None:
+            return None, (400, election_err)
+        assert election_turn is not None
+        turns_to_election = election_turn
+    else:
+        turns_to_election = int(SETUP_DEFAULTS["turns_to_election"])
+        election_turn = min(turns_to_election, turns)
+
+    city_id = _normalize_city_id(body.get("city_id", SETUP_DEFAULTS["city_id"]))
+    if city_id not in CITY_NAMES_BY_ID:
+        allowed = ", ".join(sorted(CITY_NAMES_BY_ID))
+        return None, (400, f"city_id must be one of: {allowed}")
+
+    population_scale, population_err = _parse_bounded_int(
+        body.get("population_scale", SETUP_DEFAULTS["population_scale"]),
+        "population_scale",
+        int(SETUP_LIMITS["population_scale"]["min"]),
+        int(SETUP_LIMITS["population_scale"]["max"]),
+    )
+    if population_err is not None:
+        return None, (400, population_err)
+    assert population_scale is not None
+
+    agent_count, agent_count_err = _parse_bounded_int(
+        body.get("agent_count", SETUP_DEFAULTS["agent_count"]),
+        "agent_count",
+        int(SETUP_LIMITS["agent_count"]["min"]),
+        int(SETUP_LIMITS["agent_count"]["max"]),
+    )
+    if agent_count_err is not None:
+        return None, (400, agent_count_err)
+    assert agent_count is not None
+
+    sampling_strategy = str(
+        body.get("llm_sampling_strategy", SETUP_DEFAULTS["llm_sampling_strategy"])
+    ).strip().lower()
+    if sampling_strategy not in ALLOWED_LLM_SAMPLING_STRATEGIES:
+        allowed = ", ".join(sorted(ALLOWED_LLM_SAMPLING_STRATEGIES))
+        return None, (400, f"llm_sampling_strategy must be one of: {allowed}")
+
+    llm_panel_size, llm_panel_err = _parse_bounded_int(
+        body.get("llm_panel_size", SETUP_DEFAULTS["llm_panel_size"]),
+        "llm_panel_size",
+        int(SETUP_LIMITS["llm_panel_size"]["min"]),
+        int(SETUP_LIMITS["llm_panel_size"]["max"]),
+    )
+    if llm_panel_err is not None:
+        return None, (400, llm_panel_err)
+    assert llm_panel_size is not None
+
+    if sampling_strategy == "none":
+        llm_panel_size = 0
+    elif llm_panel_size < 50:
+        return None, (400, "llm_panel_size must be >= 50 unless llm_sampling_strategy is 'none'")
+
+    if llm_panel_size > agent_count:
+        return None, (400, "llm_panel_size must be <= agent_count")
+
+    llm_micro_batch_size, batch_err = _parse_bounded_int(
+        body.get("llm_micro_batch_size", SETUP_DEFAULTS["llm_micro_batch_size"]),
+        "llm_micro_batch_size",
+        int(SETUP_LIMITS["llm_micro_batch_size"]["min"]),
+        int(SETUP_LIMITS["llm_micro_batch_size"]["max"]),
+    )
+    if batch_err is not None:
+        return None, (400, batch_err)
+    assert llm_micro_batch_size is not None
+
+    max_parallel_llm_requests, parallel_err = _parse_bounded_int(
+        body.get("max_parallel_llm_requests", SETUP_DEFAULTS["max_parallel_llm_requests"]),
+        "max_parallel_llm_requests",
+        int(SETUP_LIMITS["max_parallel_llm_requests"]["min"]),
+        int(SETUP_LIMITS["max_parallel_llm_requests"]["max"]),
+    )
+    if parallel_err is not None:
+        return None, (400, parallel_err)
+    assert max_parallel_llm_requests is not None
+
+    randomness_scale, randomness_err = _parse_bounded_float(
+        body.get("randomness_scale", SETUP_DEFAULTS["randomness_scale"]),
+        "randomness_scale",
+        float(SETUP_LIMITS["randomness_scale"]["min"]),
+        float(SETUP_LIMITS["randomness_scale"]["max"]),
+    )
+    if randomness_err is not None:
+        return None, (400, randomness_err)
+    assert randomness_scale is not None
+
+    setup = {
+        "turns_to_election": election_turn,
+        "city_id": city_id,
+        "city_name": CITY_NAMES_BY_ID[city_id],
+        "population_scale": population_scale,
+        "agent_count": agent_count,
+        "llm_panel_size": llm_panel_size,
+        "llm_sampling_strategy": sampling_strategy,
+        "llm_micro_batch_size": llm_micro_batch_size,
+        "max_parallel_llm_requests": max_parallel_llm_requests,
+        "randomness_scale": round(randomness_scale, 4),
+        "profile_version": "builtin-v2-draft",
+    }
+
+    return {
+        "seed": seed,
+        "turns": turns,
+        "election_turn": election_turn,
+        "setup": setup,
+    }, None
+
+
+def _setup_options_payload() -> dict[str, Any]:
+    return {
+        "api_version": "v1",
+        "cities": list(CITY_OPTIONS),
+        "defaults": {
+            "turns_to_election": SETUP_DEFAULTS["turns_to_election"],
+            "city_id": SETUP_DEFAULTS["city_id"],
+            "population_scale": SETUP_DEFAULTS["population_scale"],
+            "agent_count": SETUP_DEFAULTS["agent_count"],
+            "llm_panel_size": SETUP_DEFAULTS["llm_panel_size"],
+            "llm_sampling_strategy": SETUP_DEFAULTS["llm_sampling_strategy"],
+            "llm_micro_batch_size": SETUP_DEFAULTS["llm_micro_batch_size"],
+            "max_parallel_llm_requests": SETUP_DEFAULTS["max_parallel_llm_requests"],
+            "randomness_scale": SETUP_DEFAULTS["randomness_scale"],
+        },
+        "limits": {
+            **SETUP_LIMITS,
+            "llm_sampling_strategy": sorted(ALLOWED_LLM_SAMPLING_STRATEGIES),
+        },
+    }
 
 
 def _json_response(handler: BaseHTTPRequestHandler, data: dict, status: int = 200) -> None:
@@ -484,6 +715,10 @@ class GameHandler(BaseHTTPRequestHandler):
 
     def _handle_v1_get(self, path: str) -> bool:
         parts = [part for part in path.strip("/").split("/") if part]
+        if len(parts) == 3 and parts[0] == "v1" and parts[1] == "setup" and parts[2] == "options":
+            self._handle_v1_setup_options()
+            return True
+
         if len(parts) < 2 or parts[0] != "v1" or parts[1] != "games":
             return False
 
@@ -521,11 +756,22 @@ class GameHandler(BaseHTTPRequestHandler):
         return False
 
     def _handle_v1_create_game(self, body: dict) -> None:
-        seed = body.get("seed")
-        turns = _parse_int(str(body.get("turns", 50)), 50, lower=1, upper=300)
-        election_turn = _parse_int(str(body.get("election_turn", turns)), turns, lower=1, upper=turns)
+        parsed, parse_error = _parse_v1_create_game_request(body)
+        if parse_error is not None:
+            status, message = parse_error
+            _json_response(self, {"api_version": "v1", "error": message}, status)
+            return
 
-        session = _create_session(seed=seed, turns=turns, election_turn=election_turn)
+        if parsed is None:
+            _json_response(self, {"api_version": "v1", "error": "Invalid game setup payload"}, 400)
+            return
+
+        session = _create_session(
+            seed=parsed["seed"],
+            turns=parsed["turns"],
+            election_turn=parsed["election_turn"],
+            setup=parsed["setup"],
+        )
         with _sessions_lock:
             _sessions[session.game_id] = session
 
@@ -534,17 +780,29 @@ class GameHandler(BaseHTTPRequestHandler):
             {
                 "api_version": "v1",
                 "game_id": session.game_id,
+                "setup": dict(session.setup),
                 "state": _snapshot_for_session(session),
             },
             status=201,
         )
+
+    def _handle_v1_setup_options(self) -> None:
+        _json_response(self, _setup_options_payload())
 
     def _handle_v1_state(self, game_id: str) -> None:
         session = _get_session(game_id)
         if session is None:
             _json_response(self, {"error": f"Unknown game_id: {game_id}"}, 404)
             return
-        _json_response(self, {"api_version": "v1", "game_id": game_id, "state": _snapshot_for_session(session)})
+        _json_response(
+            self,
+            {
+                "api_version": "v1",
+                "game_id": game_id,
+                "setup": dict(session.setup),
+                "state": _snapshot_for_session(session),
+            },
+        )
 
     def _handle_v1_policies(self, game_id: str) -> None:
         session = _get_session(game_id)

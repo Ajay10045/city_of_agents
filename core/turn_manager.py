@@ -284,6 +284,7 @@ class TurnManager:
             "credibility_score": round(self.game_state.credibility_score, 2),
             "last_credibility_delta": round(self.game_state.last_credibility_delta, 3),
             "open_promises": len([p for p in self.game_state.promise_ledger if not p.get("resolved")]),
+            "simulation_profile": dict(self.game_state.simulation_profile),
             "long_term_effects": [
                 {"source_id": e.source_id, "actor": e.actor, "remaining_turns": e.remaining_turns}
                 for e in self.game_state.long_term_effects

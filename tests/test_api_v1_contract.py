@@ -96,6 +96,79 @@ def test_v1_create_game_and_state_contract(api_server: str) -> None:
     assert payload["state"]["total_turns"] == 5
 
 
+def test_v1_setup_options_contract(api_server: str) -> None:
+    status, payload = _http_json("GET", f"{api_server}/v1/setup/options")
+    assert status == 200
+    assert payload["api_version"] == "v1"
+
+    city_ids = {item["id"] for item in payload["cities"]}
+    assert city_ids == {"new_delhi", "new_york", "london", "tokyo", "dubai"}
+    assert payload["defaults"]["turns_to_election"] == 10
+    assert payload["defaults"]["agent_count"] == 5000
+    assert payload["defaults"]["llm_panel_size"] == 500
+    assert payload["defaults"]["llm_sampling_strategy"] == "stratified"
+    assert payload["limits"]["agent_count"]["min"] == 1000
+    assert payload["limits"]["agent_count"]["max"] == 50000
+    assert sorted(payload["limits"]["llm_sampling_strategy"]) == ["none", "stratified", "uniform"]
+
+
+def test_v1_create_game_accepts_agent_impact_setup_fields(api_server: str) -> None:
+    status, payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games",
+        {
+            "seed": 123,
+            "turns": 30,
+            "turns_to_election": 9,
+            "city_id": "new_delhi",
+            "population_scale": 60000,
+            "agent_count": 5000,
+            "llm_panel_size": 600,
+            "llm_sampling_strategy": "stratified",
+            "llm_micro_batch_size": 24,
+            "max_parallel_llm_requests": 10,
+            "randomness_scale": 0.17,
+        },
+    )
+    assert status == 201
+    assert payload["setup"]["turns_to_election"] == 9
+    assert payload["setup"]["city_id"] == "new_delhi"
+    assert payload["setup"]["population_scale"] == 60000
+    assert payload["setup"]["agent_count"] == 5000
+    assert payload["setup"]["llm_panel_size"] == 600
+    assert payload["setup"]["llm_sampling_strategy"] == "stratified"
+    assert payload["setup"]["llm_micro_batch_size"] == 24
+    assert payload["setup"]["max_parallel_llm_requests"] == 10
+    assert payload["setup"]["randomness_scale"] == 0.17
+    assert payload["state"]["simulation_profile"]["agent_count"] == 5000
+    assert payload["state"]["simulation_profile"]["randomness_scale"] == 0.17
+    assert payload["state"]["election_turn"] == 9
+
+    state_status, state_payload = _http_json(
+        "GET", f"{api_server}/v1/games/{payload['game_id']}/state"
+    )
+    assert state_status == 200
+    assert state_payload["setup"]["agent_count"] == 5000
+    assert state_payload["state"]["simulation_profile"]["llm_panel_size"] == 600
+
+
+@pytest.mark.parametrize(
+    ("request_payload", "error_contains"),
+    [
+        ({"city_id": "unknown_city"}, "city_id must be one of"),
+        ({"agent_count": 1000, "llm_panel_size": 2000}, "llm_panel_size must be <= agent_count"),
+        ({"llm_sampling_strategy": "bad"}, "llm_sampling_strategy must be one of"),
+        ({"randomness_scale": 1.5}, "randomness_scale must be between"),
+    ],
+)
+def test_v1_create_game_rejects_invalid_agent_impact_setup(
+    api_server: str, request_payload: dict, error_contains: str
+) -> None:
+    status, payload = _http_json("POST", f"{api_server}/v1/games", request_payload)
+    assert status == 400
+    assert error_contains in payload["error"]
+
+
 def test_v1_policies_actions_and_events_stream(api_server: str) -> None:
     create_status, game_payload = _http_json("POST", f"{api_server}/v1/games", {"seed": 11, "turns": 5})
     assert create_status == 201
