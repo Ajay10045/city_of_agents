@@ -112,6 +112,20 @@ Mayor options should explicitly include at least one:
 
 This prevents single-path collapse and supports strategic tradeoffs.
 
+### 5.4 Agent-First Impact at Scale
+
+Simulation must remain bottom-up:
+
+- Every agent is evaluated each turn for policy impact.
+- v2 default runtime profile is 5,000 agents.
+- LLM is used for sampled deliberation plus narrative synthesis, not full per-agent inference.
+
+Hybrid default:
+
+- deterministic evaluation for all agents
+- stratified LLM panel for a sampled subset (default 500/5000)
+- panel influence is aggregated back to cohorts and fronts
+
 ---
 
 ## 6) City Scenario System

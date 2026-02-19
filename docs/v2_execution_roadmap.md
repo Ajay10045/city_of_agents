@@ -29,7 +29,64 @@ Exit criteria:
 - CI green
 - no UI regression
 
-## Milestone B — Turn Archive (Expandable Logs)
+## Milestone B — Agent Impact Contracts
+
+Branch:
+
+- `feature/v2-agent-impact-contracts`
+
+Deliverables:
+
+- define agent impact schema fields and evaluation components
+- add setup config contract fields:
+  - `agent_count`
+  - `llm_panel_size`
+  - `llm_sampling_strategy`
+  - `llm_micro_batch_size`
+  - `max_parallel_llm_requests`
+- add validation and defaults in API contracts
+
+Exit criteria:
+
+- setup payloads validate correctly
+- API contract tests for new setup fields
+
+## Milestone C — Agent Impact Engine (Deterministic Core)
+
+Branch:
+
+- `feature/v2-agent-impact-engine`
+
+Deliverables:
+
+- deterministic per-agent policy impact evaluation for all agents each turn
+- cohort aggregation pipeline for bottom-up stats/group updates
+- deterministic seeded randomness for bounded noise
+
+Exit criteria:
+
+- 5000-agent simulation runs within acceptable local runtime
+- deterministic replay works for same seed
+
+## Milestone D — Hybrid LLM Panel and Calibration
+
+Branch:
+
+- `feature/v2-agent-impact-calibration`
+
+Deliverables:
+
+- stratified panel sampling (default 500 agents)
+- LLM micro-batching + bounded parallelism
+- panel narrative shift injection back into cohort aggregates
+- calibration harness for win-rate and collapse-rate tuning
+
+Exit criteria:
+
+- no per-agent LLM calls in standard mode
+- panel influence is observable and stable across seed sweeps
+
+## Milestone E — Turn Archive (Expandable Logs)
 
 Branch:
 
@@ -48,7 +105,7 @@ Exit criteria:
 - every turn appears with expandable details
 - integration tests for archive endpoints
 
-## Milestone C — Narrative Duel Engine
+## Milestone F — Narrative Duel Engine
 
 Branch:
 
@@ -65,7 +122,7 @@ Exit criteria:
 - event order tests pass
 - no missing `turn_closed` events
 
-## Milestone D — Media Narrative Board
+## Milestone G — Media Narrative Board
 
 Branch:
 
@@ -82,7 +139,7 @@ Exit criteria:
 - at least one media card per turn
 - UI renders feed without blocking turn controls
 
-## Milestone E — Advisor Explainability
+## Milestone H — Advisor Explainability
 
 Branch:
 
@@ -99,7 +156,7 @@ Exit criteria:
 - 5/5 options consistently include rationale fields
 - parse failures degrade gracefully via fallback
 
-## Milestone F — Game Setup Config
+## Milestone I — Game Setup Config
 
 Branch:
 
@@ -111,6 +168,7 @@ Deliverables:
   - turns to election (default 10)
   - city select
   - population scale (default 50,000)
+  - agent count and LLM panel settings (with safe defaults)
 - pass setup to `POST /v1/games`
 
 Exit criteria:
@@ -118,7 +176,7 @@ Exit criteria:
 - game starts with selected setup
 - setup reflected in game state snapshot
 
-## Milestone G — City Scenario Profiles
+## Milestone J — City Scenario Profiles
 
 Branch:
 
@@ -135,7 +193,7 @@ Exit criteria:
 - all configured cities load
 - invalid profile fails with actionable error
 
-## Milestone H — Balance and Regression Suite
+## Milestone K — Balance and Regression Suite
 
 Branch:
 
@@ -146,6 +204,7 @@ Deliverables:
 - simulation balance tests (seed sweeps)
 - fairness envelope checks
 - narrative dominance regression checks
+- hybrid impact throughput checks (5000+ agents)
 
 Exit criteria:
 
@@ -190,8 +249,8 @@ Global nightly:
 
 Start with:
 
-- `feature/v2-turn-archive-ledger`
+- `feature/v2-agent-impact-contracts`
 
 Reason:
 
-- Provides observability first (expandable logs), which will de-risk all later narrative and media tuning.
+- Locks the simulation foundation first so all UI/narrative layers build on accurate bottom-up agent impact.

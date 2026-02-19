@@ -10,6 +10,7 @@ This document defines implementable backend/UI contracts for:
 - Advisor explainability payloads
 - Pre-game setup configuration
 - City scenario loading
+- Hybrid agent-impact simulation at scale
 
 ---
 
@@ -124,6 +125,27 @@ Payload:
 - `popularity_delta`
 - `key_events` string[]
 
+### 4.5 Agent Impact Events
+
+- `agent_impact_assessed`
+- `cohort_shift_aggregated`
+
+`agent_impact_assessed` payload:
+
+- `turn`
+- `agent_count_evaluated`
+- `llm_panel_count`
+- `dominant_fronts` string[]
+
+`cohort_shift_aggregated` payload:
+
+- `cohort_id`
+- `size`
+- `happiness_delta`
+- `radicalization_delta`
+- `alignment_delta`
+- `narrative_shift_delta`
+
 ---
 
 ## 5) API Contract Changes
@@ -137,6 +159,11 @@ Request body additions:
 - `turns_to_election` integer (default 10)
 - `city_id` string (required for v2 setup flow)
 - `population_scale` integer (default 50000)
+- `agent_count` integer (default 5000 for v2 rollout)
+- `llm_panel_size` integer (default 500)
+- `llm_sampling_strategy` string (`stratified` default)
+- `llm_micro_batch_size` integer (default 20)
+- `max_parallel_llm_requests` integer (default 8)
 
 Response adds:
 
@@ -179,7 +206,62 @@ Returns media cards across turns.
 
 ---
 
-## 6) City Profile Contract
+## 6) Agent Impact Framework (Hybrid)
+
+### 6.1 Core Decision
+
+- Every agent is evaluated each turn via deterministic policy-impact math.
+- LLM calls are restricted to a stratified panel sample and synthesis roles.
+- Default rollout profile:
+  - `agent_count=5000`
+  - `llm_panel_size=500`
+  - `llm_sampling_strategy=stratified`
+
+### 6.2 Deterministic Per-Agent Evaluation
+
+For each agent on each turn, evaluate:
+
+- direct relevance to policy
+- socioeconomic need match
+- identity resonance
+- district/local condition influence
+- media exposure susceptibility
+- social influence drift
+- bounded stochastic term
+
+Outputs per agent:
+
+- `happiness_delta`
+- `radicalization_delta`
+- `alignment_delta`
+- `issue_front_shift`
+
+### 6.3 LLM Panel Influence
+
+LLM panel agents are sampled by cohort strata, not pure random.
+
+Panel outputs are transformed into:
+
+- cohort-level `narrative_shift` vectors
+- front-level momentum modifiers
+
+These modifiers are then applied to full-population cohort aggregates.
+
+### 6.4 Prohibited/Restricted Modes
+
+- No per-agent LLM calls in normal production/dev simulation mode.
+- Optional debug mode `full_llm` is allowed only for tiny runs (`agent_count <= 300`).
+
+### 6.5 Parallelism and Batching
+
+- LLM panel calls use micro-batches and bounded concurrency.
+- Batch guidance:
+  - `llm_micro_batch_size=20`
+  - `max_parallel_llm_requests=8`
+
+---
+
+## 7) City Profile Contract
 
 File path:
 
@@ -203,36 +285,56 @@ LLM-generated profiles must pass schema validation before being accepted.
 
 ---
 
-## 7) Data Model Additions
+## 8) Data Model Additions
 
 `GameState` additions:
 
 - `setup`: setup config snapshot
 - `narrative_fronts`: control/risk values per issue front
 - `turn_archive`: compact list of per-turn summaries
+- `simulation_profile`: agent/LLM panel configuration
+- `cohort_metrics`: aggregated cohort runtime values
 
 `TurnManager` additions:
 
 - structured `run_turn_duel(...)`
 - emits canonical event sequence in section 2
+- runs deterministic impact pass before turn close
 
 `MediaEngine` additions:
 
 - build `cards` payload with lean/virality/trust impact
 
+`AgentEngine` additions:
+
+- deterministic policy impact evaluator for all agents
+- cohort aggregation pipeline
+- stratified panel sampler
+
+`ImpactEngine` (new module) additions:
+
+- computes per-agent impact components and final deltas
+- supports seeded stochastic term
+- emits aggregate diagnostics
+
 ---
 
-## 8) Validation Rules
+## 9) Validation Rules
 
 - `turns_to_election`: 3-100
 - `population_scale`: 10000-200000
+- `agent_count`: 1000-50000 (v2 practical rollout default: 5000)
+- `llm_panel_size`: 50-5000 and must be `<= agent_count`
+- `llm_sampling_strategy`: one of `stratified`, `uniform`, `none`
+- `llm_micro_batch_size`: 1-100
+- `max_parallel_llm_requests`: 1-32
 - `city_id`: must exist in setup options
 - advisor options must be exactly 5
 - every closed turn must emit one `turn_closed` event
 
 ---
 
-## 9) Compatibility Policy
+## 10) Compatibility Policy
 
 - Keep legacy `/api/*` routes until UI fully migrates.
 - v1 endpoint contract remains backward compatible for current clients.
@@ -240,7 +342,7 @@ LLM-generated profiles must pass schema validation before being accepted.
 
 ---
 
-## 10) Observability Requirements
+## 11) Observability Requirements
 
 Emit diagnostics (dev mode):
 
@@ -248,5 +350,9 @@ Emit diagnostics (dev mode):
 - LLM call count by role (`advisor`, `opposition`, `media`, `citizen`)
 - parse/repair fallback count
 - event emission count per turn
+- deterministic impact evaluations per turn
+- LLM panel coverage ratio (`llm_panel_size / agent_count`)
+- LLM batch latency percentile
+- per-turn token usage by role
 
 These metrics are needed for balance and cost tuning.
