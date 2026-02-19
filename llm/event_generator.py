@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from llm.llm_client import LLMClient
 from llm.context_builder import build_city_context
-from llm.dynamic_policy import _clamp, VALID_STATS, VALID_MEDIA, VALID_GROUP_FIELDS, VALID_MATCH_KEYS
+from llm.dynamic_policy import (
+    _clamp,
+    _to_float,
+    VALID_STATS,
+    VALID_MEDIA,
+    VALID_GROUP_FIELDS,
+    VALID_MATCH_KEYS,
+)
 
 if TYPE_CHECKING:
     from core.game_state import GameState
@@ -75,15 +82,21 @@ class EventGenerator:
         if not raw:
             return None
 
-        city_effects = {
-            k: _clamp(float(v), -10.0, 10.0)
-            for k, v in raw.get("city_effects", {}).items()
-            if k in VALID_STATS
-        }
+        city_effects: dict[str, float] = {}
+        raw_city_effects = raw.get("city_effects", {})
+        if isinstance(raw_city_effects, dict):
+            for k, v in raw_city_effects.items():
+                if k not in VALID_STATS:
+                    continue
+                numeric = _to_float(v)
+                if numeric is not None:
+                    city_effects[k] = _clamp(numeric, -10.0, 10.0)
 
         raw_ge = raw.get("group_effects", [])
         group_effects = []
         for ge in raw_ge if isinstance(raw_ge, list) else []:
+            if not isinstance(ge, dict):
+                continue
             raw_match = ge.get("match", {})
             if not isinstance(raw_match, dict):
                 raw_match = {}
@@ -91,16 +104,23 @@ class EventGenerator:
             clean: dict[str, Any] = {"match": match}
             for f in VALID_GROUP_FIELDS:
                 if f in ge:
-                    clean[f] = _clamp(float(ge[f]), -8.0, 8.0)
+                    numeric = _to_float(ge[f])
+                    if numeric is not None:
+                        clean[f] = _clamp(numeric, -8.0, 8.0)
             group_effects.append(clean)
 
-        media_effects = {
-            k: _clamp(float(v), -10.0, 10.0)
-            for k, v in raw.get("media_effects", {}).items()
-            if k in VALID_MEDIA
-        }
+        media_effects: dict[str, float] = {}
+        raw_media_effects = raw.get("media_effects", {})
+        if isinstance(raw_media_effects, dict):
+            for k, v in raw_media_effects.items():
+                if k not in VALID_MEDIA:
+                    continue
+                numeric = _to_float(v)
+                if numeric is not None:
+                    media_effects[k] = _clamp(numeric, -10.0, 10.0)
 
-        duration = max(1, min(3, int(raw.get("duration", 2))))
+        duration_value = _to_float(raw.get("duration"), 2.0) or 2.0
+        duration = max(1, min(3, int(duration_value)))
         severity = raw.get("severity", "moderate")
         if severity not in ("minor", "moderate", "major"):
             severity = "moderate"

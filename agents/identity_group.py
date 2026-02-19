@@ -39,10 +39,3 @@ class IdentityGroup:
                 str(k): float(v) for k, v in payload.get("issue_sensitivity", {}).items()
             },
         )
-
-    def identity_dict(self) -> dict[str, str]:
-        return {
-            "religion": self.religion,
-            "caste": self.caste,
-            "language": self.language,
-        }

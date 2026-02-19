@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import Any
+from typing import Any, Iterable, Protocol
 
 from agents.agent_engine import AgentEngine
 from core.game_state import GameState
@@ -10,11 +10,42 @@ from events.event import ActiveEvent
 from media.media_engine import MediaEngine
 from politics.election_engine import ElectionEngine
 from politics.policy_engine import PolicyEngine
+from core.credibility import apply_credibility_turn
 from llm.mayor_advisor import MayorAdvisor
 from llm.opposition_agent import OppositionAgent
 from llm.citizen_debates import CitizenDebates
 from llm.event_generator import EventGenerator
 from llm.dynamic_policy import DynamicPolicy
+
+
+class MayorAdvisorPort(Protocol):
+    def generate_options(self, game_state: GameState) -> list[DynamicPolicy]: ...
+
+
+class OppositionAgentPort(Protocol):
+    def decide_action(self, game_state: GameState, mayor_action: DynamicPolicy) -> DynamicPolicy: ...
+
+
+class CitizenDebatesPort(Protocol):
+    def run_debates(
+        self,
+        game_state: GameState,
+        mayor_action: DynamicPolicy,
+        opp_action: DynamicPolicy,
+        triggered_events: list[str],
+    ) -> list[Any]: ...
+
+    def stream_debates(
+        self,
+        game_state: GameState,
+        mayor_action: DynamicPolicy,
+        opp_action: DynamicPolicy,
+        triggered_events: list[str],
+    ) -> Iterable[Any]: ...
+
+
+class EventGeneratorPort(Protocol):
+    def maybe_generate_event(self, game_state: GameState) -> Any | None: ...
 
 
 class TurnManager:
@@ -26,6 +57,10 @@ class TurnManager:
         event_engine: EventEngine,
         media_engine: MediaEngine,
         election_engine: ElectionEngine,
+        mayor_advisor: MayorAdvisorPort | None = None,
+        opposition_agent: OppositionAgentPort | None = None,
+        citizen_debates: CitizenDebatesPort | None = None,
+        event_generator: EventGeneratorPort | None = None,
     ) -> None:
         self.game_state = game_state
         self.agent_engine = agent_engine
@@ -34,10 +69,10 @@ class TurnManager:
         self.media_engine = media_engine
         self.election_engine = election_engine
 
-        self.mayor_advisor = MayorAdvisor()
-        self.opposition_agent = OppositionAgent()
-        self.citizen_debates = CitizenDebates()
-        self.event_generator = EventGenerator()
+        self.mayor_advisor = mayor_advisor or MayorAdvisor()
+        self.opposition_agent = opposition_agent or OppositionAgent()
+        self.citizen_debates = citizen_debates or CitizenDebates()
+        self.event_generator = event_generator or EventGenerator()
 
         # Cache of current turn's mayor options (id -> DynamicPolicy)
         self._cached_mayor_options: dict[str, DynamicPolicy] = {}
@@ -151,11 +186,25 @@ class TurnManager:
         mayor_pop, opp_pop = self.agent_engine.recalculate_popularity(
             self.game_state, media_modifiers
         )
+
+        post_stats = self.game_state.city_stats.as_dict()
+        credibility_result = apply_credibility_turn(
+            self.game_state,
+            mayor_policy,
+            pre_stats,
+            post_stats,
+        )
+
+        credibility_shift = (self.game_state.credibility_score - 50.0) / 50.0
+        mayor_pop += credibility_shift * 2.0 + float(self.game_state.last_credibility_delta) * 0.55
+        opp_pop -= credibility_shift * 2.0 + float(self.game_state.last_credibility_delta) * 0.55
+
+        mayor_pop = max(0.0, min(100.0, mayor_pop))
+        opp_pop = max(0.0, min(100.0, opp_pop))
         self.game_state.mayor_popularity = mayor_pop
         self.game_state.opposition_popularity = opp_pop
 
         # ── Build result dict ───────────────────────────────────────────────
-        post_stats = self.game_state.city_stats.as_dict()
         stat_changes = {
             k: round(post_stats[k] - pre_stats[k], 3)
             for k in post_stats
@@ -181,6 +230,7 @@ class TurnManager:
             "rumor_pressure": round(rumor_pressure, 4),
             "debate_results": [dr.to_dict() for dr in debate_results],
             "generated_event": generated_event.to_dict() if generated_event else None,
+            "credibility": credibility_result,
             "election_result": election_result,
             "game_over": turn >= self.game_state.total_turns,
             "state": self._build_state_snapshot(group_metrics),
@@ -231,6 +281,9 @@ class TurnManager:
             "policy_history": list(self.game_state.policy_history),
             "event_history": list(self.game_state.event_history),
             "election_results": list(self.game_state.election_results),
+            "credibility_score": round(self.game_state.credibility_score, 2),
+            "last_credibility_delta": round(self.game_state.last_credibility_delta, 3),
+            "open_promises": len([p for p in self.game_state.promise_ledger if not p.get("resolved")]),
             "long_term_effects": [
                 {"source_id": e.source_id, "actor": e.actor, "remaining_turns": e.remaining_turns}
                 for e in self.game_state.long_term_effects
@@ -329,10 +382,24 @@ class TurnManager:
         # ── Popularity recalculation + final state ───────────────────────────
         media_modifiers = self.media_engine.popularity_modifiers(self.game_state.media_state)
         mayor_pop, opp_pop = self.agent_engine.recalculate_popularity(self.game_state, media_modifiers)
+
+        post_stats = self.game_state.city_stats.as_dict()
+        credibility_result = apply_credibility_turn(
+            self.game_state,
+            mayor_policy,
+            pre_stats,
+            post_stats,
+        )
+
+        credibility_shift = (self.game_state.credibility_score - 50.0) / 50.0
+        mayor_pop += credibility_shift * 2.0 + float(self.game_state.last_credibility_delta) * 0.55
+        opp_pop -= credibility_shift * 2.0 + float(self.game_state.last_credibility_delta) * 0.55
+
+        mayor_pop = max(0.0, min(100.0, mayor_pop))
+        opp_pop = max(0.0, min(100.0, opp_pop))
         self.game_state.mayor_popularity = mayor_pop
         self.game_state.opposition_popularity = opp_pop
 
-        post_stats = self.game_state.city_stats.as_dict()
         stat_changes = {
             k: round(post_stats[k] - pre_stats[k], 3)
             for k in post_stats
@@ -355,6 +422,7 @@ class TurnManager:
             "escalated_events": event_result.escalated_events,
             "event_chances": {k: round(v, 4) for k, v in event_result.event_chances.items()},
             "rumor_pressure": round(rumor_pressure, 4),
+            "credibility": credibility_result,
             "election_result": election_result,
             "game_over": turn >= self.game_state.total_turns,
             "state": self._build_state_snapshot(group_metrics),

@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 
 def _clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
+
+
+def _to_float(value: Any, default: float | None = None) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 VALID_STATS = {
@@ -36,29 +43,46 @@ class DynamicPolicy:
     @classmethod
     def from_llm(cls, data: dict, actor: str = "mayor") -> "DynamicPolicy":
         """Parse and validate LLM-returned dict into a DynamicPolicy."""
-        effects = {
-            k: _clamp(float(v), -10.0, 10.0)
-            for k, v in data.get("effects", {}).items()
-            if k in VALID_STATS
-        }
+        effects: dict[str, float] = {}
+        raw_effects = data.get("effects", {})
+        if isinstance(raw_effects, dict):
+            for k, v in raw_effects.items():
+                if k not in VALID_STATS:
+                    continue
+                numeric = _to_float(v)
+                if numeric is None:
+                    continue
+                effects[k] = _clamp(numeric, -10.0, 10.0)
 
         raw_ge = data.get("group_effects", [])
         group_effects: list[dict[str, Any]] = []
         for ge in raw_ge if isinstance(raw_ge, list) else []:
-            match = {k: str(v) for k, v in ge.get("match", {}).items() if k in VALID_MATCH_KEYS}
+            if not isinstance(ge, dict):
+                continue
+            raw_match = ge.get("match", {})
+            if not isinstance(raw_match, dict):
+                raw_match = {}
+            match = {k: str(v) for k, v in raw_match.items() if k in VALID_MATCH_KEYS}
             clean: dict[str, Any] = {"match": match}
             for field_name in VALID_GROUP_FIELDS:
                 if field_name in ge:
-                    clean[field_name] = _clamp(float(ge[field_name]), -8.0, 8.0)
+                    numeric = _to_float(ge[field_name])
+                    if numeric is not None:
+                        clean[field_name] = _clamp(numeric, -8.0, 8.0)
             group_effects.append(clean)
 
-        media_effects = {
-            k: _clamp(float(v), -10.0, 10.0)
-            for k, v in data.get("media_effects", {}).items()
-            if k in VALID_MEDIA
-        }
+        media_effects: dict[str, float] = {}
+        raw_media = data.get("media_effects", {})
+        if isinstance(raw_media, dict):
+            for k, v in raw_media.items():
+                if k not in VALID_MEDIA:
+                    continue
+                numeric = _to_float(v)
+                if numeric is None:
+                    continue
+                media_effects[k] = _clamp(numeric, -10.0, 10.0)
 
-        campaign_strength = _clamp(float(data.get("campaign_strength", 1.0)), 0.8, 1.5)
+        campaign_strength = _clamp(_to_float(data.get("campaign_strength"), 1.0) or 1.0, 0.8, 1.5)
 
         return cls(
             id=str(uuid.uuid4()),

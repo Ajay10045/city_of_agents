@@ -70,7 +70,7 @@ def build_game_state(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="City of Power - Simulation MVP")
+    parser = argparse.ArgumentParser(description="City of Agents - Simulation MVP")
     parser.add_argument("--seed", type=int, default=None, help="Deterministic RNG seed")
     parser.add_argument("--turns", type=int, default=50, help="Number of simulation turns")
     parser.add_argument(
@@ -113,7 +113,7 @@ def main() -> None:
     media_engine = MediaEngine()
     election_engine = ElectionEngine()
 
-    print("City of Power - MVP Simulation")
+    print("City of Agents - MVP Simulation")
     print(f"Seed: {seed}")
     print(f"Turns: {turns}")
     print(f"Election Turn: {election_turn}\n")

@@ -23,7 +23,7 @@ Return a JSON object with a single "policy" object containing:
 - "campaign_strength": float 0.9 to 1.4
 - "media_effects": object with some of: "bias" (-5 to 0 typically for opposition, to shift media away from mayor), "sensationalism" (0 to 5, opposition thrives on drama), "trust" (-5 to 0)
 
-Be strategic: if Mayor just invested in infrastructure, counter with a scandal expose or welfare promise. If city has high corruption, exploit it. If a group is radicalized, mobilize them."""
+Be strategic: if Mayor just invested in infrastructure, counter with a scandal expose or welfare promise. If city has high corruption, exploit it. If a group is radicalized, mobilize them. If mayor credibility is low or there are missed promises, directly weaponize that in your rationale and policy effects."""
 
 
 class OppositionAgent:

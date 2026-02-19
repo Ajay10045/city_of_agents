@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from llm.llm_client import LLMClient
-from llm.dynamic_policy import DynamicPolicy, _clamp
+from llm.dynamic_policy import DynamicPolicy, _clamp, _to_float
 
 if TYPE_CHECKING:
     from core.game_state import GameState
@@ -115,8 +115,8 @@ class CitizenDebates:
             group_name=info.name,
             debate_summary=str(data.get("debate_summary", ""))[:500],
             notable_quote=str(data.get("notable_quote", ""))[:120],
-            alignment_delta=_clamp(float(data.get("alignment_delta", 0)), -5, 5),
-            happiness_delta=_clamp(float(data.get("happiness_delta", 0)), -5, 5),
-            radicalization_delta=_clamp(float(data.get("radicalization_delta", 0)), -5, 5),
-            trust_delta=_clamp(float(data.get("trust_delta", 0)), -5, 5),
+            alignment_delta=_clamp(_to_float(data.get("alignment_delta"), 0.0) or 0.0, -5, 5),
+            happiness_delta=_clamp(_to_float(data.get("happiness_delta"), 0.0) or 0.0, -5, 5),
+            radicalization_delta=_clamp(_to_float(data.get("radicalization_delta"), 0.0) or 0.0, -5, 5),
+            trust_delta=_clamp(_to_float(data.get("trust_delta"), 0.0) or 0.0, -5, 5),
         )

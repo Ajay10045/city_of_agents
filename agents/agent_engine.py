@@ -9,6 +9,7 @@ from agents.relationship import Relationship
 
 if TYPE_CHECKING:
     import random
+    from core.game_state import GameState
 
 
 @dataclass(frozen=True)

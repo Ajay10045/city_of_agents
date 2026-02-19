@@ -52,6 +52,9 @@ def build_city_context(game_state: "GameState") -> str:
     lines.append(
         f"Popularity: Mayor {s.mayor_popularity:.1f}% | Opposition {s.opposition_popularity:.1f}%."
     )
+    lines.append(
+        f"Mayor credibility: {s.credibility_score:.1f}/100 (delta this turn {s.last_credibility_delta:+.2f})."
+    )
 
     stat_parts = []
     for key, label in _STAT_LABELS.items():
@@ -88,6 +91,14 @@ def build_city_context(game_state: "GameState") -> str:
     if s.long_term_effects:
         lt_parts = [f"{e.source_id} ({e.actor}, {e.remaining_turns} turns left)" for e in s.long_term_effects]
         lines.append("Ongoing policy effects: " + "; ".join(lt_parts) + ".")
+
+    open_promises = [p for p in s.promise_ledger if not p.get("resolved")]
+    if open_promises:
+        prom_parts = [
+            f"{p.get('stat_key')} target {p.get('target')} by turn {p.get('due_turn')}"
+            for p in open_promises[:4]
+        ]
+        lines.append("Outstanding mayor promises: " + "; ".join(prom_parts) + ".")
 
     recent_history = (s.policy_history[-6:] + s.event_history[-3:])
     if recent_history:
