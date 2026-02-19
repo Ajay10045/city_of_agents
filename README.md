@@ -54,6 +54,50 @@ If you prefer pip instead of uv:
 pip install openai anthropic
 ```
 
+## Testing
+
+Run the full local quality suite:
+
+```bash
+uvx ruff check .
+uv run python -m compileall -q .
+uv run pytest -q
+cd city_of_agents_ui && npm ci && npm run build
+```
+
+Current automated coverage includes:
+- 50-turn simulation invariants and seed reproducibility.
+- `/v1` API contract tests (create/join/actions/events).
+- Optimistic concurrency (`expected_turn`) and idempotent replay (`action_id`).
+- LLM JSON parsing resilience tests.
+
+## CI
+
+GitHub Actions workflow: `/Users/ajaynehra/Desktop/projects/city_of_agents/.github/workflows/ci.yml`
+
+Pipeline jobs:
+- `backend`: `uv sync`, `ruff`, `compileall`, `pytest`.
+- `frontend`: `npm ci` + React build.
+- `docker`: image build validation.
+
+## Container
+
+Build and run with Docker:
+
+```bash
+docker build -t city-of-agents:test .
+docker run --rm -p 8000:8000 \
+  -e LLM_PROVIDER=openai \
+  -e OPENAI_API_KEY=your_key_here \
+  city-of-agents:test
+```
+
+Or use Compose:
+
+```bash
+docker compose up --build
+```
+
 ## Architecture
 
 ```text
