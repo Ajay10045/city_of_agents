@@ -85,6 +85,7 @@ logs/
 # Compiled files
 *.pyc
 *.pyo
+.env
 
 # Node / frontend
 ui/node_modules/
