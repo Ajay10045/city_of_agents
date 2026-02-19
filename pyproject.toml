@@ -1,0 +1,14 @@
+[project]
+name = "city-of-agents"
+version = "0.1.0"
+description = "City of Power simulation backend"
+requires-python = ">=3.9"
+dependencies = [
+  "fastapi>=0.110.0",
+  "uvicorn[standard]>=0.27.0",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.0.0",
+]

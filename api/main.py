@@ -17,4 +17,4 @@ app.include_router(router, prefix="/api")
 
 @app.get("/")
 def health():
-    return {"status": "ok", "app": "City of Power"}
+    return {"status": "ok", "app": "City of Agents"}
