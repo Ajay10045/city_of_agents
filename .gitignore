@@ -85,3 +85,4 @@ logs/
 # Compiled files
 *.pyc
 *.pyo
+.env
