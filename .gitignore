@@ -85,3 +85,10 @@ logs/
 # Compiled files
 *.pyc
 *.pyo
+
+# Node / frontend
+ui/node_modules/
+ui/dist/
+
+# Simulation output
+output.json
