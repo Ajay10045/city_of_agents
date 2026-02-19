@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Mapping
 
 
@@ -36,7 +36,6 @@ class Agent:
     identity: AgentIdentity
     group_id: str
     population_weight: float
-    traits: list[str] = field(default_factory=list)
 
     def clamp_state(self) -> None:
         self.wealth = clamp(self.wealth, 0.0, 100.0)

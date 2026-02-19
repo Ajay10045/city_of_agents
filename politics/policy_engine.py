@@ -149,6 +149,38 @@ class PolicyEngine:
 
         return self._weighted_choice(rng, options, dynamic_weights)
 
+    def apply_dynamic_action(self, game_state: "GameState", policy: "Any") -> ActionResolution:
+        """Apply a DynamicPolicy (LLM-generated) to the game state."""
+        immediate_changes = game_state.city_stats.apply_delta(policy.effects)
+
+        current = game_state.campaign_strength.get(policy.actor, 1.0)
+        game_state.campaign_strength[policy.actor] = _clamp(
+            current * 0.9 + policy.campaign_strength * 0.1,
+            0.6,
+            1.8,
+        )
+
+        game_state.policy_history.append(f"Turn {game_state.turn_number}: {policy.actor} -> {policy.name}")
+
+        # Build a stub PolicyDefinition-like object for ActionResolution
+        stub = PolicyDefinition(
+            id=policy.id,
+            actor=policy.actor,
+            name=policy.name,
+            weight=1.0,
+            effects=policy.effects,
+            group_effects=policy.group_effects,
+            campaign_strength=policy.campaign_strength,
+            media_effects=policy.media_effects,
+        )
+        return ActionResolution(
+            policy=stub,
+            immediate_changes=immediate_changes,
+            group_effects=list(policy.group_effects),
+            campaign_strength=policy.campaign_strength,
+            media_effects=dict(policy.media_effects),
+        )
+
     def apply_action(self, game_state: "GameState", policy: PolicyDefinition) -> ActionResolution:
         immediate_changes = game_state.city_stats.apply_delta(policy.effects)
 

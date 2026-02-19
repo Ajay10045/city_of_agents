@@ -1,178 +1,162 @@
-# 🏛️ City of Power
+# City of Agents
 
-> **AI-driven political simulation** — Two players compete for control of a living city. The Mayor governs and passes policies. The Opposition challenges decisions, influences public opinion, and attempts to win elections. 90 autonomous AI agents react dynamically, generating emergent crises and political outcomes.
+A political strategy simulation where you govern a city as Mayor, making policy decisions that affect identity groups, the economy, public trust, and your re-election chances. Every turn, LLM-powered agents react dynamically — the opposition plots against you, citizens debate in the streets, and crises emerge organically from city conditions.
 
----
+## How it works
 
-## What is this?
+Each turn:
 
-City of Power is an open-source political strategy simulation engine. It is **not a scripted game** — every run produces a unique emergent narrative driven by:
+1. **You choose** a mayor policy (LLM-generated options tailored to the current city state)
+2. **Opposition agent** (GPT-4o) reads the city state and your move, then decides its own counter-action
+3. **Event oracle** (GPT-4o-mini) decides whether a crisis emerges based on city conditions
+4. **Citizen groups** (GPT-4o-mini) debate internally — their conversations shift alignment, happiness, and radicalization
+5. All of this streams to the UI in real time as each agent finishes
 
-- **Identity-aware AI agents** with wealth, influence, happiness, radicalization, and political alignment
-- **9 city stats** (Economy, Employment, Law & Order, Infrastructure, Environment, Corruption, Social Tension, Media Freedom, Public Trust)
-- **Crisis events** that trigger based on city conditions (Social Conflict, Financial Fraud, Political Scandal, Economic Shock, Natural Disaster)
-- **Media system** that amplifies rumors and shifts public opinion
-- **Election engine** with undecided blocs, swing voters, and momentum mechanics
+The simulation runs for 50 turns, culminating in an election.
 
----
+## Setup
 
-## Project Structure
+### Requirements
 
+- Python 3.10+
+- OpenAI API key or Anthropic API key
+
+### Install
+
+```bash
+uv sync
 ```
+
+### Configure
+
+```bash
+cp .env.example .env
+# Edit .env and set:
+# - LLM_PROVIDER=openai or anthropic
+# - OPENAI_API_KEY or ANTHROPIC_API_KEY
+```
+
+### Run
+
+```bash
+# build the UI once (or after UI changes)
+cd city_of_agents_ui && npm run build && cd ..
+
+# run backend + static UI server
+python server.py
+```
+
+Open [http://localhost:8000](http://localhost:8000) in your browser.
+
+If you prefer pip instead of uv:
+
+```bash
+pip install openai anthropic
+```
+
+## Architecture
+
+```text
 city_of_agents/
-├── api/                    # FastAPI backend
-│   ├── main.py             # App entry point + CORS
-│   └── routes/
-│       └── simulation.py   # POST /api/simulate endpoint
-├── agents/                 # Agent data model + engine
-│   ├── agent.py
-│   ├── agent_engine.py
-│   ├── identity_group.py
-│   └── relationship.py
-├── config/                 # Simulation configuration (JSON)
-│   ├── events.json         # 5 crisis event templates
-│   ├── identities.json     # 3 identity groups + initial city stats
-│   └── policies.json       # 12 policy actions (6 mayor, 6 opposition)
-├── core/                   # Game state + turn loop
-│   ├── city_stats.py
-│   ├── game_state.py
-│   └── turn_manager.py
-├── events/                 # Crisis/event engine
-├── media/                  # Media narrative engine
-├── politics/               # Election + policy engines
-├── tests/                  # Integration tests
-├── ui/                     # React + Vite + Tailwind frontend
-│   └── src/
-│       ├── App.tsx
-│       └── components/
-│           ├── SimulationConfig.tsx
-│           ├── ElectionBanner.tsx
-│           ├── PopularityChart.tsx
-│           ├── CityStatsChart.tsx
-│           ├── TurnFeed.tsx
-│           └── MetricCard.tsx
-├── main.py                 # CLI entry point
-├── requirements.txt        # Python dependencies
-└── Makefile                # Dev shortcuts
+├── server.py               # stdlib HTTP server + SSE streaming endpoint
+├── city_of_agents_ui/      # React + TypeScript UI (served from dist/ by server.py)
+│   ├── src/
+│   └── dist/
+├── core/
+│   ├── game_state.py       # Central simulation state
+│   └── turn_manager.py     # Turn execution (step() + stream_step() generator)
+├── agents/
+│   └── agent_engine.py     # Agent population, happiness/radicalization updates
+├── llm/
+│   ├── llm_client.py       # Provider adapter (OpenAI/Anthropic)
+│   ├── context_builder.py  # GameState → natural language context for prompts
+│   ├── dynamic_policy.py   # DynamicPolicy dataclass with LLM output validation
+│   ├── mayor_advisor.py    # Generates 5 mayor policy options per turn (GPT-4o)
+│   ├── opposition_agent.py # Opposition reasons and acts strategically (GPT-4o)
+│   ├── citizen_debates.py  # Per-group street debates, streamed one by one (GPT-4o-mini)
+│   └── event_generator.py  # Contextual crisis generation (GPT-4o-mini)
+├── politics/
+│   ├── policy_engine.py    # Applies policy effects to city stats and agent state
+│   └── election_engine.py  # Vote share calculation
+├── events/
+│   └── event_engine.py     # Rule-based event escalation for active events
+├── media/
+│   └── media_engine.py     # Sensationalism, bias, rumor spread
+├── config/
+│   ├── identities.json     # Identity groups, city starting stats
+│   ├── policies.json       # Static policy definitions (CLI mode)
+│   └── events.json         # Static event definitions (rule-based escalation)
+└── main.py                 # Headless CLI simulation mode
 ```
 
----
+## Environment variables
 
-## Quickstart
+| Variable | Default | Description |
+| -------- | ------- | ----------- |
+| `LLM_PROVIDER` | `openai` | LLM backend: `openai` or `anthropic`. |
+| `OPENAI_API_KEY` | — | OpenAI key (required when provider is `openai`). |
+| `ANTHROPIC_API_KEY` | — | Anthropic key (required when provider is `anthropic`). |
+| `LLM_API_KEY` | — | Optional shared key variable (can replace provider-specific key vars). |
+| `LLM_MODEL` | `gpt-4o` | Model for mayor advisor and opposition agent. |
+| `LLM_DEBATE_MODEL` | `gpt-4o-mini` | Model for citizen debates and event generation. |
+| `LLM_TEMPERATURE` | `0.8` | Shared temperature for both providers. |
+| `LLM_MAX_TOKENS` | `2500` | Max output tokens (used by Anthropic calls). |
 
-### Prerequisites
+## Runtime modes
 
-- Python 3.9+
-- Node.js 18+
-- [uv](https://github.com/astral-sh/uv) (fast Python package manager)
+1. `main.py`: headless CLI simulation, fully formula/rule-based (no LLM turn loop).
+2. `server.py`: local HTTP server + SSE streaming for interactive LLM-driven turns (used by UI).
 
-### 1. Clone & set up
+## Versioned API (`v1`)
 
-```bash
-git clone https://github.com/Ajay10045/city_of_agents.git
-cd city_of_agents
-```
+The backend now exposes a versioned contract under `/v1` for forward-compatible multiplayer/event-driven evolution.
 
-### 2. Python environment
+- `POST /v1/games`
+  - Creates a game session.
+  - Body: `{ "seed"?: number, "turns"?: number, "election_turn"?: number }`
+  - Returns: `{ "api_version": "v1", "game_id": string, "state": StateSnapshot }`
+- `GET /v1/games/{game_id}/state`
+  - Returns latest authoritative snapshot for a game.
+- `GET /v1/games/{game_id}/policies`
+  - Returns current mayor policy options for the next turn.
+- `POST /v1/games/{game_id}/join`
+  - Registers a participant for multiplayer-compatible session metadata.
+  - Body: `{ "role"?: "mayor"|"opposition"|"spectator", "player_name"?: string }`
+- `POST /v1/games/{game_id}/actions`
+  - Submits an actor action.
+  - Body:
+    - `actor`: currently `mayor` (opposition reserved for future multiplayer phases)
+    - `policy_id`: selected policy id
+    - `participant_id` (optional): validates actor ownership
+    - `expected_turn` (optional): optimistic concurrency check; returns `409` on mismatch
+    - `action_id` (optional): idempotency key; duplicate submissions replay cached result
+  - Runs a turn and appends structured events to that game's event buffer.
+- `GET /v1/games/{game_id}/events`
+  - SSE endpoint for event envelopes.
+  - Query: `after_event_id` (default `0`), `follow` (`0/1`), `timeout` (seconds).
 
-```bash
-uv venv
-source .venv/bin/activate
-uv pip install -r requirements.txt
-```
+Event envelope format (SSE `data:` payload):
 
-### 3. Frontend dependencies
-
-```bash
-cd ui && npm install && cd ..
-```
-
-### 4. Run locally (full stack)
-
-Open **two terminals**:
-
-**Terminal 1 — API:**
-```bash
-source .venv/bin/activate && uvicorn api.main:app --reload --port 8000
-```
-
-**Terminal 2 — UI:**
-```bash
-cd ui && npm run dev
-```
-
-Then open **http://localhost:5173** in your browser.
-
----
-
-## CLI Usage (no UI)
-
-```bash
-source .venv/bin/activate
-python main.py                                          # random seed, 50 turns
-python main.py --turns 100 --election-turn 75 --seed 42
-python main.py --turns 50 --save-snapshot output.json  # save full JSON snapshot
-```
-
----
-
-## Run Tests
-
-```bash
-source .venv/bin/activate
-python -m pytest tests/
-```
-
----
-
-## How It Works
-
-### Turn Loop (per turn)
-1. Mayor selects 1 policy action
-2. Opposition selects 1 action
-3. City stats update based on policy effects
-4. Agent happiness, radicalization, and alignment recalculate
-5. Media narrative updates (rumor pressure, bias, sensationalism)
-6. Crisis events trigger based on city conditions
-7. Popularity recalculates from agent alignment × media modifiers
-8. On election turn → election resolves
-
-### Event Probability Formula
-```
-EventChance = base_risk
-            + (social_tension × 0.3)
-            + (corruption × 0.2)
-            + (avg_radicalization × 0.2)
-            − (law_and_order × 0.25)
-            − (public_trust × 0.15)
-```
-
-### Identity Groups (default config)
-| Group | Population | Grievance | Key sensitivities |
-|---|---|---|---|
-| River Union | 43% | High (0.58) | Economy, Social Tension |
-| Merchant Bloc | 31% | Low (0.34) | Economy, Corruption |
-| Campus Front | 26% | Medium (0.47) | Media Freedom, Law & Order |
-
----
-
-## API
-
-### `POST /api/simulate`
-
-**Request:**
 ```json
 {
-  "turns": 50,
-  "election_turn": 50,
-  "seed": 42
+  "event_id": 12,
+  "game_id": "f4c1...",
+  "turn": 4,
+  "type": "mayor_action",
+  "actor": "mayor",
+  "timestamp": 1739970000.123,
+  "payload": { "...": "event-specific data" }
 }
 ```
 
-**Response:** Full simulation result with per-turn structured data, final city stats, election result, agent averages, and history logs.
+Legacy `/api/*` routes are still available for current UI compatibility and can be phased out after UI migration.
 
----
+`TurnManager` now supports dependency-injected orchestration ports (mayor advisor, opposition agent, citizen debates, event generator), so agent orchestration can be scaled/replaced without changing turn math.
 
-## License
+### CLI mode
 
-MIT — free to use, modify, and build on.
+Run the simulation headlessly (formula-based, no LLM calls):
+
+```bash
+python main.py
+```

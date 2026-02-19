@@ -46,6 +46,9 @@ class GameState:
     election_results: list[dict[str, Any]] = field(default_factory=list)
     policy_history: list[str] = field(default_factory=list)
     event_history: list[str] = field(default_factory=list)
+    credibility_score: float = 60.0
+    last_credibility_delta: float = 0.0
+    promise_ledger: list[dict[str, Any]] = field(default_factory=list)
     governing_party: str = "Mayor"
 
     def average_agent_field(self, field_name: str) -> float:
@@ -85,6 +88,9 @@ class GameState:
             "policy_history": list(self.policy_history),
             "event_history": list(self.event_history),
             "election_results": list(self.election_results),
+            "credibility_score": self.credibility_score,
+            "last_credibility_delta": self.last_credibility_delta,
+            "promise_ledger": list(self.promise_ledger),
         }
 
     def save_snapshot(self, path: str | Path) -> None:

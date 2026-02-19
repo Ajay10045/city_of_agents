@@ -48,13 +48,3 @@ class CityStats:
             setattr(self, key, after)
             applied[key] = after - before
         return applied
-
-    def stability_index(self) -> float:
-        stability = (
-            self.law_and_order * 0.3
-            + self.public_trust * 0.3
-            + self.economy * 0.2
-            - self.social_tension * 0.1
-            - self.corruption * 0.1
-        )
-        return clamp(stability)
