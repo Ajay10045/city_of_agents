@@ -23,6 +23,14 @@ export default function TurnArchivePanel({ gameId, refreshKey }: Props) {
 
   useEffect(() => {
     if (!gameId) return
+    if (refreshKey <= 0) {
+      setTurns([])
+      setDetails({})
+      setExpandedTurn(null)
+      setLoading(false)
+      setError(null)
+      return
+    }
     setLoading(true)
     setError(null)
     fetchTurns(gameId)
