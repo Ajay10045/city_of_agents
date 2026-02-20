@@ -236,7 +236,7 @@ export default function App() {
         lastEventId,
         (msg: StreamMessage, eventId: number) => {
           setLastEventId((prev) => Math.max(prev, eventId))
-          if (msg.type === 'mayor_action_submitted' || msg.type === 'mayor_action') {
+          if (msg.type === 'mayor_action_submitted' || (msg.type === 'mayor_action' && !mayorAction)) {
             const action = msg.action
             mayorAction = action
             setTurnMayorAction(action)
@@ -254,7 +254,10 @@ export default function App() {
               },
             ])
           }
-          if (msg.type === 'opposition_frame_primary' || msg.type === 'opposition_action') {
+          if (
+            msg.type === 'opposition_frame_primary' ||
+            (msg.type === 'opposition_action' && !oppAction)
+          ) {
             const action = msg.action
             oppAction = action
             setTurnOppAction(action)
