@@ -1,0 +1,130 @@
+{
+  "meta": {
+    "city_id": "new_york",
+    "city_name": "New York",
+    "profile_version": "v2026.02.20",
+    "generated_at": "2026-02-20T00:00:00Z",
+    "generator_provider": "seeded_profile",
+    "generator_model": "city_of_agents_baseline_v2",
+    "evidence_sources": [
+      {
+        "title": "NYC Open Data",
+        "url": "https://opendata.cityofnewyork.us/",
+        "snippet": "Economic, housing, transit and safety city metrics."
+      },
+      {
+        "title": "NYC Mayor's Management Report",
+        "url": "https://www.nyc.gov/site/operations/performance/mmr.page",
+        "snippet": "Service delivery and public trust indicators."
+      }
+    ]
+  },
+  "identity_groups": [
+    {
+      "id": "borough_service_workers",
+      "name": "Borough Service Workers",
+      "religion": "Plural",
+      "caste": "Working Households",
+      "language": "English-Spanish",
+      "population_percent": 0.33,
+      "economic_modifier": 0.90,
+      "education_modifier": 0.88,
+      "grievance_score": 0.58,
+      "radicalization_base_rate": 0.09,
+      "issue_sensitivity": {
+        "employment": 1.28,
+        "services": 1.22,
+        "housing": 1.20,
+        "public_trust": 1.14,
+        "law_and_order": 1.02
+      }
+    },
+    {
+      "id": "professional_commuters",
+      "name": "Professional Commuters",
+      "religion": "Plural",
+      "caste": "Professional",
+      "language": "English",
+      "population_percent": 0.27,
+      "economic_modifier": 1.16,
+      "education_modifier": 1.18,
+      "grievance_score": 0.35,
+      "radicalization_base_rate": 0.05,
+      "issue_sensitivity": {
+        "infrastructure": 1.20,
+        "public_trust": 1.22,
+        "corruption": 1.10,
+        "environment": 1.05,
+        "law_and_order": 0.95
+      }
+    },
+    {
+      "id": "small_business_blocks",
+      "name": "Small Business Blocks",
+      "religion": "Plural",
+      "caste": "Entrepreneurs",
+      "language": "English-Mixed",
+      "population_percent": 0.20,
+      "economic_modifier": 1.10,
+      "education_modifier": 1.00,
+      "grievance_score": 0.42,
+      "radicalization_base_rate": 0.06,
+      "issue_sensitivity": {
+        "economy": 1.34,
+        "law_and_order": 1.16,
+        "corruption": 1.05,
+        "public_trust": 1.00,
+        "media_freedom": 0.82
+      }
+    },
+    {
+      "id": "student_creative_network",
+      "name": "Student & Creative Network",
+      "religion": "Plural",
+      "caste": "Students",
+      "language": "Global English",
+      "population_percent": 0.20,
+      "economic_modifier": 0.95,
+      "education_modifier": 1.20,
+      "grievance_score": 0.46,
+      "radicalization_base_rate": 0.08,
+      "issue_sensitivity": {
+        "environment": 1.26,
+        "social_tension": 1.22,
+        "public_trust": 1.16,
+        "media_freedom": 1.15,
+        "employment": 1.02
+      }
+    }
+  ],
+  "role_distribution": {
+    "Worker": 0.33,
+    "BusinessOwner": 0.16,
+    "Politician": 0.08,
+    "Journalist": 0.11,
+    "Student": 0.32
+  },
+  "initial_city_stats": {
+    "economy": 64,
+    "employment": 57,
+    "law_and_order": 52,
+    "infrastructure": 61,
+    "environment": 55,
+    "corruption": 47,
+    "social_tension": 53,
+    "media_freedom": 67,
+    "public_trust": 49
+  },
+  "issue_front_baseline": {
+    "economy": 60,
+    "corruption": 52,
+    "safety": 54,
+    "services": 59,
+    "social_cohesion": 56
+  },
+  "starter_issues": [
+    "Housing and cost-of-living pressure is eroding confidence in city leadership.",
+    "Transit reliability and public safety perceptions are central campaign battlegrounds.",
+    "Public debate is polarized around policing reform, accountability, and neighborhood equity."
+  ]
+}

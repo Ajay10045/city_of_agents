@@ -13,14 +13,22 @@ from urllib.parse import parse_qs, urlparse
 
 from agents.agent_engine import AgentEngine
 from agents.identity_group import IdentityGroup
+from core.advisor_session import AdvisorSession, new_advisor_session
+from core.city_profile import (
+    CityProfileError,
+    city_profile_status,
+    load_city_profile,
+)
 from core.city_stats import CityStats
 from core.game_state import GameState
 from core.turn_manager import TurnManager
 from events.event_engine import EventEngine
+from llm.advisor_chat import AdvisorChat
 from llm.llm_client import _load_env
 from media.media_engine import MediaEngine, MediaState
 from politics.election_engine import ElectionEngine
 from politics.policy_engine import PolicyEngine
+from setup.profile_generator import CityProfileGenerator
 
 _load_env()
 
@@ -42,6 +50,9 @@ CITY_OPTIONS = [
     {"id": "dubai", "name": "Dubai"},
 ]
 CITY_NAMES_BY_ID = {item["id"]: item["name"] for item in CITY_OPTIONS}
+
+_profile_generator = CityProfileGenerator()
+_advisor_chat = AdvisorChat()
 
 SETUP_DEFAULTS: dict[str, Any] = {
     "turns_to_election": 10,
@@ -92,6 +103,8 @@ class GameSession:
     participants: dict[str, dict[str, str]] = field(default_factory=dict)
     action_results: dict[str, CachedActionResult] = field(default_factory=dict)
     action_order: list[str] = field(default_factory=list)
+    advisor_sessions: dict[str, AdvisorSession] = field(default_factory=dict)
+    advisor_session_by_turn: dict[int, str] = field(default_factory=dict)
     action_lock: object = field(default_factory=Lock, repr=False)
 
 
@@ -99,8 +112,7 @@ _sessions: dict[str, GameSession] = {}
 _sessions_lock = Lock()
 
 
-def _load_identity_config(path: Path) -> tuple[list[IdentityGroup], dict[str, float], CityStats]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
+def _load_identity_config(payload: dict[str, Any]) -> tuple[list[IdentityGroup], dict[str, float], CityStats]:
     groups = [IdentityGroup.from_dict(item) for item in payload.get("identity_groups", [])]
     role_distribution = {
         str(role): float(weight)
@@ -120,12 +132,14 @@ def _build_game(
         seed = random.SystemRandom().randrange(1, 10**9)
 
     rng = random.Random(seed)
-    identity_groups, role_distribution, city_stats = _load_identity_config(
-        CONFIG_DIR / "identities.json"
-    )
+    profile = dict(simulation_profile or {})
+    city_id = _normalize_city_id(profile.get("city_id", SETUP_DEFAULTS["city_id"]))
+    city_bundle = load_city_profile(city_id)
+    profile_payload = city_bundle.payload
+
+    identity_groups, role_distribution, city_stats = _load_identity_config(profile_payload)
 
     agent_engine = AgentEngine()
-    profile = dict(simulation_profile or {})
     target_agent_count: int | None = None
     try:
         raw_target = int(profile.get("agent_count", 0))
@@ -141,6 +155,15 @@ def _build_game(
         representatives_per_cell=6,
         target_agent_count=target_agent_count,
     )
+    meta = profile_payload.get("meta", {})
+    profile["city_id"] = city_id
+    profile["city_name"] = str(meta.get("city_name", CITY_NAMES_BY_ID.get(city_id, city_id)))
+    profile["profile_version"] = str(meta.get("profile_version", "unknown"))
+    profile["profile_generated_at"] = str(meta.get("generated_at", ""))
+    profile["profile_source_path"] = str(city_bundle.source_path)
+    profile["issue_front_baseline"] = dict(profile_payload.get("issue_front_baseline", {}))
+    profile["starter_issues"] = list(profile_payload.get("starter_issues", []))
+    profile["evidence_sources"] = list(meta.get("evidence_sources", []))
     profile["actual_agent_count"] = len(agents)
 
     game_state = GameState(
@@ -224,11 +247,20 @@ def _snapshot_for_session(session: GameSession) -> dict:
 
 
 def _actor_for_message(message_type: str, payload: dict) -> str | None:
-    if message_type == "mayor_action":
+    if message_type in {"mayor_action", "mayor_action_submitted", "mayor_counter_frame"}:
         return "mayor"
-    if message_type == "opposition_action":
+    if message_type in {"opposition_action", "opposition_frame_primary", "opposition_frame_followup"}:
         return "opposition"
-    if message_type in {"agent_impact_assessed", "cohort_shift_aggregated"}:
+    if message_type == "media_narrative_published":
+        return "media"
+    if message_type in {
+        "agent_impact_assessed",
+        "cohort_shift_aggregated",
+        "street_chatter_synthesized",
+        "simulation_stats_applied",
+        "popularity_recalculated",
+        "turn_closed",
+    }:
         return "simulation"
     if message_type == "debate":
         debate = payload.get("debate", {})
@@ -259,6 +291,229 @@ def _append_event(session: GameSession, game_id: str, payload: dict) -> dict:
         session.events = session.events[-MAX_BUFFERED_EVENTS:]
 
     return envelope
+
+
+def _coerce_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _compact_event_payload(envelope: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "event_id": int(envelope.get("event_id", 0)),
+        "type": str(envelope.get("type", "unknown")),
+        "actor": envelope.get("actor"),
+        "timestamp": float(envelope.get("timestamp", 0.0)),
+        "payload": envelope.get("payload", {}),
+    }
+
+
+def _build_turn_record(turn: int, events: list[dict[str, Any]]) -> dict[str, Any]:
+    mayor_action: str | None = None
+    opposition_action: str | None = None
+    winner_fronts: list[str] = []
+    key_events: list[str] = []
+    media_cards: list[dict[str, Any]] = []
+    done_payload: dict[str, Any] | None = None
+
+    for envelope in events:
+        payload = envelope.get("payload", {})
+        if not isinstance(payload, dict):
+            continue
+        payload_type = str(payload.get("type", "unknown"))
+
+        if payload_type in {"mayor_action", "mayor_action_submitted"}:
+            action = payload.get("action", {})
+            if isinstance(action, dict):
+                candidate = action.get("name")
+                if isinstance(candidate, str) and candidate.strip():
+                    mayor_action = candidate
+
+        elif payload_type in {"opposition_action", "opposition_frame_primary"}:
+            action = payload.get("action", {})
+            if isinstance(action, dict):
+                candidate = action.get("name")
+                if isinstance(candidate, str) and candidate.strip():
+                    opposition_action = candidate
+
+        elif payload_type == "agent_impact_assessed":
+            summary = payload.get("summary", {})
+            if isinstance(summary, dict):
+                fronts = summary.get("dominant_fronts", [])
+                if isinstance(fronts, list):
+                    winner_fronts = [str(front) for front in fronts if str(front).strip()]
+
+        elif payload_type == "generated_event":
+            generated = payload.get("event")
+            if isinstance(generated, dict):
+                name = generated.get("name")
+                if isinstance(name, str) and name.strip():
+                    key_events.append(name)
+
+        elif payload_type == "media_narrative_published":
+            cards = payload.get("cards", [])
+            if isinstance(cards, list):
+                for card in cards:
+                    if isinstance(card, dict):
+                        media_cards.append({"turn": turn, **card})
+
+        elif payload_type == "turn_closed":
+            done_payload = payload
+            key_events.extend(
+                [
+                    str(item)
+                    for item in payload.get("key_events", [])
+                    if isinstance(item, str) and item.strip()
+                ]
+            )
+
+        elif payload_type == "done":
+            done_payload = payload
+
+    if done_payload:
+        for event_name in done_payload.get("triggered_events", []):
+            if isinstance(event_name, str) and event_name.strip():
+                key_events.append(event_name)
+
+    deduped_key_events: list[str] = []
+    seen_events: set[str] = set()
+    for item in key_events:
+        if item in seen_events:
+            continue
+        seen_events.add(item)
+        deduped_key_events.append(item)
+
+    if deduped_key_events:
+        headline = f"Triggered {deduped_key_events[0]}"
+    elif mayor_action and opposition_action:
+        headline = f"{mayor_action} vs {opposition_action}"
+    elif mayor_action:
+        headline = mayor_action
+    else:
+        headline = f"Turn {turn}"
+
+    state_payload = {}
+    if isinstance(done_payload, dict) and isinstance(done_payload.get("state"), dict):
+        state_payload = done_payload.get("state", {})
+
+    stat_changes = (
+        done_payload.get("stat_changes", done_payload.get("stat_deltas", {}))
+        if isinstance(done_payload, dict) and isinstance(done_payload.get("stat_changes"), dict)
+        else (
+            done_payload.get("stat_deltas", {})
+            if isinstance(done_payload, dict) and isinstance(done_payload.get("stat_deltas"), dict)
+            else {}
+        )
+    )
+
+    mayor_pop = state_payload.get("mayor_popularity")
+    opposition_pop = state_payload.get("opposition_popularity")
+
+    popularity = {
+        "mayor": float(mayor_pop) if isinstance(mayor_pop, (int, float)) else None,
+        "opposition": float(opposition_pop) if isinstance(opposition_pop, (int, float)) else None,
+    }
+
+    return {
+        "turn": turn,
+        "headline": headline,
+        "winner_fronts": winner_fronts,
+        "event_count": len(events),
+        "mayor_action": mayor_action,
+        "opposition_action": opposition_action,
+        "key_events": deduped_key_events,
+        "in_power": state_payload.get("governing_party"),
+        "stat_deltas": stat_changes,
+        "popularity": popularity,
+        "media_cards": media_cards,
+        "events": [_compact_event_payload(envelope) for envelope in events],
+    }
+
+
+def _build_turn_archive(session: GameSession) -> list[dict[str, Any]]:
+    events_by_turn: dict[int, list[dict[str, Any]]] = {}
+    for envelope in session.events:
+        turn = _coerce_int(envelope.get("turn"))
+        if turn is None or turn <= 0:
+            continue
+        events_by_turn.setdefault(turn, []).append(envelope)
+
+    records: list[dict[str, Any]] = []
+    for turn in sorted(events_by_turn):
+        turn_events = sorted(events_by_turn[turn], key=lambda item: int(item.get("event_id", 0)))
+        records.append(_build_turn_record(turn, turn_events))
+    return records
+
+
+def _turn_summary_payload(record: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "turn": record["turn"],
+        "headline": record.get("headline"),
+        "winner_fronts": record.get("winner_fronts", []),
+        "event_count": record.get("event_count", 0),
+        "mayor_action": record.get("mayor_action"),
+        "opposition_action": record.get("opposition_action"),
+        "key_events": record.get("key_events", []),
+        "in_power": record.get("in_power"),
+        "popularity": record.get("popularity", {}),
+    }
+
+
+def _media_timeline(records: list[dict[str, Any]], since_turn: int) -> list[dict[str, Any]]:
+    timeline: list[dict[str, Any]] = []
+    for record in records:
+        turn = int(record.get("turn", 0))
+        if turn < since_turn:
+            continue
+        for card in record.get("media_cards", []):
+            if isinstance(card, dict):
+                timeline.append(card)
+    timeline.sort(key=lambda item: int(item.get("turn", 0)), reverse=True)
+    return timeline
+
+
+def _planned_turn_number(session: GameSession) -> int:
+    state = session.turn_manager.game_state
+    return min(state.turn_number + 1, state.total_turns)
+
+
+def _sync_mayor_option_cache(session: GameSession, options: list[Any]) -> None:
+    session.turn_manager._cached_mayor_options = {str(option.id): option for option in options}
+
+
+def _ensure_advisor_session_unlocked(
+    session: GameSession,
+    force_refresh: bool = False,
+    guidance: str | None = None,
+) -> AdvisorSession:
+    turn_number = _planned_turn_number(session)
+    existing_id = session.advisor_session_by_turn.get(turn_number)
+    if existing_id and not force_refresh:
+        existing = session.advisor_sessions.get(existing_id)
+        if existing is not None:
+            _sync_mayor_option_cache(session, existing.options)
+            return existing
+
+    if guidance:
+        options = session.turn_manager.mayor_advisor.generate_options(
+            session.turn_manager.game_state,
+            guidance=guidance,
+        )
+    else:
+        options = session.turn_manager.get_mayor_options()
+
+    options = list(options[:5])
+    advisor_session = new_advisor_session(turn_number=turn_number, options=options)
+    session.advisor_sessions[advisor_session.advisor_session_id] = advisor_session
+    session.advisor_session_by_turn[turn_number] = advisor_session.advisor_session_id
+    _sync_mayor_option_cache(session, advisor_session.options)
+    return advisor_session
+
+
+def _get_advisor_session_unlocked(session: GameSession, advisor_session_id: str) -> AdvisorSession | None:
+    return session.advisor_sessions.get(advisor_session_id)
 
 
 def _run_turn_and_capture_events_unlocked(
@@ -488,6 +743,7 @@ def _parse_v1_create_game_request(body: dict) -> tuple[dict[str, Any] | None, tu
         return None, (400, randomness_err)
     assert randomness_scale is not None
 
+    profile = city_profile_status(city_id)
     setup = {
         "turns_to_election": election_turn,
         "city_id": city_id,
@@ -499,7 +755,9 @@ def _parse_v1_create_game_request(body: dict) -> tuple[dict[str, Any] | None, tu
         "llm_micro_batch_size": llm_micro_batch_size,
         "max_parallel_llm_requests": max_parallel_llm_requests,
         "randomness_scale": round(randomness_scale, 4),
-        "profile_version": "builtin-v2-draft",
+        "profile_version": profile.get("profile_version"),
+        "profile_ready": bool(profile.get("profile_ready")),
+        "profile_last_generated_at": profile.get("last_generated_at"),
     }
 
     return {
@@ -511,9 +769,23 @@ def _parse_v1_create_game_request(body: dict) -> tuple[dict[str, Any] | None, tu
 
 
 def _setup_options_payload() -> dict[str, Any]:
+    cities_with_status: list[dict[str, Any]] = []
+    for city in CITY_OPTIONS:
+        status = city_profile_status(city["id"])
+        cities_with_status.append(
+            {
+                "id": city["id"],
+                "name": city["name"],
+                "profile_ready": bool(status.get("profile_ready")),
+                "profile_version": status.get("profile_version"),
+                "last_generated_at": status.get("last_generated_at"),
+                "last_error": status.get("last_error"),
+            }
+        )
+
     return {
         "api_version": "v1",
-        "cities": list(CITY_OPTIONS),
+        "cities": cities_with_status,
         "defaults": {
             "turns_to_election": SETUP_DEFAULTS["turns_to_election"],
             "city_id": SETUP_DEFAULTS["city_id"],
@@ -653,7 +925,9 @@ class GameHandler(BaseHTTPRequestHandler):
             _json_response(self, {"error": "No game initialised"}, 500)
             return
         try:
-            options = session.turn_manager.get_mayor_options()
+            with session.action_lock:
+                advisor_session = _ensure_advisor_session_unlocked(session, force_refresh=False)
+                options = advisor_session.options
         except Exception as exc:
             _json_response(self, {"error": "Failed to generate policies", "detail": str(exc)}, 500)
             return
@@ -732,6 +1006,26 @@ class GameHandler(BaseHTTPRequestHandler):
             self._handle_v1_setup_options()
             return True
 
+        if (
+            len(parts) == 5
+            and parts[0] == "v1"
+            and parts[1] == "setup"
+            and parts[2] == "cities"
+            and parts[4] == "status"
+        ):
+            self._handle_v1_setup_city_status(parts[3])
+            return True
+
+        if (
+            len(parts) == 5
+            and parts[0] == "v1"
+            and parts[1] == "setup"
+            and parts[2] == "cities"
+            and parts[4] == "profile"
+        ):
+            self._handle_v1_setup_city_profile(parts[3])
+            return True
+
         if len(parts) < 2 or parts[0] != "v1" or parts[1] != "games":
             return False
 
@@ -747,10 +1041,36 @@ class GameHandler(BaseHTTPRequestHandler):
             self._handle_v1_events(parts[2])
             return True
 
+        if len(parts) == 4 and parts[3] == "turns":
+            self._handle_v1_turns(parts[2])
+            return True
+
+        if len(parts) == 5 and parts[3] == "turns":
+            self._handle_v1_turn_detail(parts[2], parts[4])
+            return True
+
+        if len(parts) == 4 and parts[3] == "media":
+            self._handle_v1_media(parts[2])
+            return True
+
+        if len(parts) == 6 and parts[3] == "advisor" and parts[4] == "sessions":
+            self._handle_v1_advisor_session_get(parts[2], parts[5])
+            return True
+
         return False
 
     def _handle_v1_post(self, path: str, body: dict) -> bool:
         parts = [part for part in path.strip("/").split("/") if part]
+        if (
+            len(parts) == 5
+            and parts[0] == "v1"
+            and parts[1] == "setup"
+            and parts[2] == "cities"
+            and parts[4] == "generate"
+        ):
+            self._handle_v1_setup_city_generate(parts[3], body)
+            return True
+
         if len(parts) == 2 and parts[0] == "v1" and parts[1] == "games":
             self._handle_v1_create_game(body)
             return True
@@ -766,6 +1086,28 @@ class GameHandler(BaseHTTPRequestHandler):
             self._handle_v1_actions(parts[2], body)
             return True
 
+        if len(parts) == 5 and parts[3] == "advisor" and parts[4] == "sessions":
+            self._handle_v1_advisor_session_create(parts[2], body)
+            return True
+
+        if (
+            len(parts) == 7
+            and parts[3] == "advisor"
+            and parts[4] == "sessions"
+            and parts[6] == "messages"
+        ):
+            self._handle_v1_advisor_session_message(parts[2], parts[5], body)
+            return True
+
+        if (
+            len(parts) == 7
+            and parts[3] == "advisor"
+            and parts[4] == "sessions"
+            and parts[6] == "revise"
+        ):
+            self._handle_v1_advisor_session_revise(parts[2], parts[5], body)
+            return True
+
         return False
 
     def _handle_v1_create_game(self, body: dict) -> None:
@@ -779,12 +1121,37 @@ class GameHandler(BaseHTTPRequestHandler):
             _json_response(self, {"api_version": "v1", "error": "Invalid game setup payload"}, 400)
             return
 
-        session = _create_session(
-            seed=parsed["seed"],
-            turns=parsed["turns"],
-            election_turn=parsed["election_turn"],
-            setup=parsed["setup"],
-        )
+        try:
+            session = _create_session(
+                seed=parsed["seed"],
+                turns=parsed["turns"],
+                election_turn=parsed["election_turn"],
+                setup=parsed["setup"],
+            )
+        except CityProfileError as exc:
+            _json_response(
+                self,
+                {
+                    "api_version": "v1",
+                    "error": "City profile unavailable",
+                    "detail": str(exc),
+                    "city_id": parsed["setup"].get("city_id"),
+                    "hint": "Run POST /v1/setup/cities/{city_id}/generate first.",
+                },
+                status=400,
+            )
+            return
+        except Exception as exc:
+            _json_response(
+                self,
+                {
+                    "api_version": "v1",
+                    "error": "Failed to initialize game",
+                    "detail": str(exc),
+                },
+                status=500,
+            )
+            return
         with _sessions_lock:
             _sessions[session.game_id] = session
 
@@ -801,6 +1168,96 @@ class GameHandler(BaseHTTPRequestHandler):
 
     def _handle_v1_setup_options(self) -> None:
         _json_response(self, _setup_options_payload())
+
+    def _handle_v1_setup_city_status(self, city_id: str) -> None:
+        normalized = _normalize_city_id(city_id)
+        if normalized not in CITY_NAMES_BY_ID:
+            _json_response(
+                self,
+                {
+                    "api_version": "v1",
+                    "error": f"city_id must be one of: {', '.join(sorted(CITY_NAMES_BY_ID))}",
+                },
+                400,
+            )
+            return
+        status = _profile_generator.get_status(normalized)
+        _json_response(
+            self,
+            {
+                "api_version": "v1",
+                **status,
+            },
+        )
+
+    def _handle_v1_setup_city_profile(self, city_id: str) -> None:
+        normalized = _normalize_city_id(city_id)
+        if normalized not in CITY_NAMES_BY_ID:
+            _json_response(
+                self,
+                {
+                    "api_version": "v1",
+                    "error": f"city_id must be one of: {', '.join(sorted(CITY_NAMES_BY_ID))}",
+                },
+                400,
+            )
+            return
+        try:
+            profile = _profile_generator.get_profile(normalized)
+        except Exception as exc:
+            _json_response(
+                self,
+                {
+                    "api_version": "v1",
+                    "city_id": normalized,
+                    "error": str(exc),
+                },
+                404,
+            )
+            return
+        _json_response(
+            self,
+            {
+                "api_version": "v1",
+                "city_id": normalized,
+                "profile": profile,
+            },
+        )
+
+    def _handle_v1_setup_city_generate(self, city_id: str, body: dict) -> None:
+        normalized = _normalize_city_id(city_id)
+        if normalized not in CITY_NAMES_BY_ID:
+            _json_response(
+                self,
+                {
+                    "api_version": "v1",
+                    "error": f"city_id must be one of: {', '.join(sorted(CITY_NAMES_BY_ID))}",
+                },
+                400,
+            )
+            return
+
+        force_refresh = bool(body.get("force_refresh", False))
+        provider = body.get("provider")
+        model = body.get("model")
+        research_mode = body.get("research_mode")
+        result = _profile_generator.generate(
+            city_id=normalized,
+            force_refresh=force_refresh,
+            provider=str(provider) if provider else None,
+            model=str(model) if model else None,
+            research_mode=str(research_mode) if research_mode else None,
+        )
+
+        code = 200 if result.status in {"generated", "cached"} else 500
+        _json_response(
+            self,
+            {
+                "api_version": "v1",
+                **result.to_dict(),
+            },
+            code,
+        )
 
     def _handle_v1_state(self, game_id: str) -> None:
         session = _get_session(game_id)
@@ -823,7 +1280,9 @@ class GameHandler(BaseHTTPRequestHandler):
             _json_response(self, {"error": f"Unknown game_id: {game_id}"}, 404)
             return
         try:
-            options = session.turn_manager.get_mayor_options()
+            with session.action_lock:
+                advisor_session = _ensure_advisor_session_unlocked(session, force_refresh=False)
+                options = list(advisor_session.options)
         except Exception as exc:
             _json_response(
                 self,
@@ -841,7 +1300,309 @@ class GameHandler(BaseHTTPRequestHandler):
             {
                 "api_version": "v1",
                 "game_id": game_id,
+                "advisor_session_id": advisor_session.advisor_session_id,
+                "turn_number": advisor_session.turn_number,
                 "policies": [p.to_dict() for p in options],
+            },
+        )
+
+    def _handle_v1_advisor_session_create(self, game_id: str, body: dict) -> None:
+        session = _get_session(game_id)
+        if session is None:
+            _json_response(self, {"error": f"Unknown game_id: {game_id}"}, 404)
+            return
+
+        force_refresh = bool(body.get("force_refresh", False))
+        guidance = str(body.get("constraints", "")).strip() or None
+
+        try:
+            with session.action_lock:
+                advisor_session = _ensure_advisor_session_unlocked(
+                    session,
+                    force_refresh=force_refresh,
+                    guidance=guidance,
+                )
+                payload = advisor_session.to_dict()
+        except Exception as exc:
+            _json_response(
+                self,
+                {
+                    "api_version": "v1",
+                    "game_id": game_id,
+                    "error": "Failed to create advisor session",
+                    "detail": str(exc),
+                },
+                500,
+            )
+            return
+
+        _json_response(
+            self,
+            {
+                "api_version": "v1",
+                "game_id": game_id,
+                "session": payload,
+            },
+            201 if force_refresh else 200,
+        )
+
+    def _handle_v1_advisor_session_get(self, game_id: str, advisor_session_id: str) -> None:
+        session = _get_session(game_id)
+        if session is None:
+            _json_response(self, {"error": f"Unknown game_id: {game_id}"}, 404)
+            return
+
+        with session.action_lock:
+            advisor_session = _get_advisor_session_unlocked(session, advisor_session_id)
+            if advisor_session is None:
+                _json_response(
+                    self,
+                    {
+                        "api_version": "v1",
+                        "game_id": game_id,
+                        "error": f"Unknown advisor_session_id: {advisor_session_id}",
+                    },
+                    404,
+                )
+                return
+            payload = advisor_session.to_dict()
+
+        _json_response(
+            self,
+            {
+                "api_version": "v1",
+                "game_id": game_id,
+                "session": payload,
+            },
+        )
+
+    def _handle_v1_advisor_session_message(
+        self,
+        game_id: str,
+        advisor_session_id: str,
+        body: dict,
+    ) -> None:
+        session = _get_session(game_id)
+        if session is None:
+            _json_response(self, {"error": f"Unknown game_id: {game_id}"}, 404)
+            return
+
+        thread_scope = str(body.get("thread_scope", "global")).strip().lower()
+        if thread_scope not in {"global", "option"}:
+            _json_response(
+                self,
+                {
+                    "api_version": "v1",
+                    "game_id": game_id,
+                    "error": "thread_scope must be 'global' or 'option'",
+                },
+                400,
+            )
+            return
+
+        option_id = body.get("option_id")
+        option_id = str(option_id).strip() if option_id is not None else None
+        if thread_scope == "option" and not option_id:
+            _json_response(
+                self,
+                {
+                    "api_version": "v1",
+                    "game_id": game_id,
+                    "error": "option_id is required when thread_scope='option'",
+                },
+                400,
+            )
+            return
+
+        question = str(body.get("question", "")).strip()
+        if not question:
+            _json_response(
+                self,
+                {
+                    "api_version": "v1",
+                    "game_id": game_id,
+                    "error": "question is required",
+                },
+                400,
+            )
+            return
+
+        try:
+            with session.action_lock:
+                advisor_session = _get_advisor_session_unlocked(session, advisor_session_id)
+                if advisor_session is None:
+                    _json_response(
+                        self,
+                        {
+                            "api_version": "v1",
+                            "game_id": game_id,
+                            "error": f"Unknown advisor_session_id: {advisor_session_id}",
+                        },
+                        404,
+                    )
+                    return
+
+                if thread_scope == "option" and option_id not in {o.id for o in advisor_session.options}:
+                    _json_response(
+                        self,
+                        {
+                            "api_version": "v1",
+                            "game_id": game_id,
+                            "error": f"option_id not found in session: {option_id}",
+                        },
+                        400,
+                    )
+                    return
+
+                if thread_scope == "option":
+                    history = [
+                        message.to_dict()
+                        for message in advisor_session.option_threads.get(option_id or "", [])
+                    ]
+                else:
+                    history = [message.to_dict() for message in advisor_session.global_thread]
+
+                advisor_session.append_message(
+                    role="user",
+                    content=question,
+                    thread_scope=thread_scope,
+                    option_id=option_id,
+                )
+
+                answer = _advisor_chat.answer_question(
+                    game_state=session.turn_manager.game_state,
+                    options=advisor_session.options,
+                    thread_scope=thread_scope,
+                    option_id=option_id,
+                    question=question,
+                    history=history,
+                )
+
+                structured = answer.answer if isinstance(answer.answer, dict) else {}
+                summary = str(structured.get("summary", "")).strip()
+                if not summary:
+                    summary = "Advisor response generated."
+
+                advisor_session.append_message(
+                    role="advisor",
+                    content=summary,
+                    thread_scope=thread_scope,
+                    option_id=option_id,
+                    structured=structured,
+                )
+                payload = advisor_session.to_dict()
+        except Exception as exc:
+            _json_response(
+                self,
+                {
+                    "api_version": "v1",
+                    "game_id": game_id,
+                    "error": "Advisor message failed",
+                    "detail": str(exc),
+                },
+                500,
+            )
+            return
+
+        _json_response(
+            self,
+            {
+                "api_version": "v1",
+                "game_id": game_id,
+                "session": payload,
+                **answer.to_dict(),
+            },
+        )
+
+    def _handle_v1_advisor_session_revise(
+        self,
+        game_id: str,
+        advisor_session_id: str,
+        body: dict,
+    ) -> None:
+        session = _get_session(game_id)
+        if session is None:
+            _json_response(self, {"error": f"Unknown game_id: {game_id}"}, 404)
+            return
+
+        mode = str(body.get("mode", "full")).strip().lower()
+        if mode not in {"single", "full"}:
+            _json_response(
+                self,
+                {
+                    "api_version": "v1",
+                    "game_id": game_id,
+                    "error": "mode must be 'single' or 'full'",
+                },
+                400,
+            )
+            return
+
+        option_id_raw = body.get("option_id")
+        option_id = str(option_id_raw).strip() if option_id_raw is not None else None
+        if mode == "single" and not option_id:
+            _json_response(
+                self,
+                {
+                    "api_version": "v1",
+                    "game_id": game_id,
+                    "error": "option_id is required when mode='single'",
+                },
+                400,
+            )
+            return
+
+        constraints = str(body.get("constraints", "")).strip()
+
+        try:
+            with session.action_lock:
+                advisor_session = _get_advisor_session_unlocked(session, advisor_session_id)
+                if advisor_session is None:
+                    _json_response(
+                        self,
+                        {
+                            "api_version": "v1",
+                            "game_id": game_id,
+                            "error": f"Unknown advisor_session_id: {advisor_session_id}",
+                        },
+                        404,
+                    )
+                    return
+
+                updated_options, diff = _advisor_chat.revise_options(
+                    game_state=session.turn_manager.game_state,
+                    current_options=advisor_session.options,
+                    mayor_advisor=session.turn_manager.mayor_advisor,
+                    mode=mode,
+                    constraints=constraints,
+                    option_id=option_id,
+                )
+                advisor_session.options = list(updated_options[:5])
+                advisor_session.ensure_option_threads()
+                advisor_session.updated_at = time.time()
+                _sync_mayor_option_cache(session, advisor_session.options)
+                payload = advisor_session.to_dict()
+        except Exception as exc:
+            _json_response(
+                self,
+                {
+                    "api_version": "v1",
+                    "game_id": game_id,
+                    "error": "Advisor revise failed",
+                    "detail": str(exc),
+                },
+                500,
+            )
+            return
+
+        _json_response(
+            self,
+            {
+                "api_version": "v1",
+                "game_id": game_id,
+                "session": payload,
+                "options": [option.to_dict() for option in advisor_session.options],
+                "diff_summary": diff,
             },
         )
 
@@ -1058,6 +1819,94 @@ class GameHandler(BaseHTTPRequestHandler):
                 time.sleep(0.25)
         except Exception:
             pass
+
+    def _handle_v1_turns(self, game_id: str) -> None:
+        session = _get_session(game_id)
+        if session is None:
+            _json_response(self, {"error": f"Unknown game_id: {game_id}"}, 404)
+            return
+
+        qs = parse_qs(urlparse(self.path).query)
+        limit = _parse_int(qs.get("limit", ["50"])[0], 50, lower=1, upper=200)
+
+        with session.action_lock:
+            records = _build_turn_archive(session)
+
+        summaries = [_turn_summary_payload(record) for record in reversed(records)]
+        _json_response(
+            self,
+            {
+                "api_version": "v1",
+                "game_id": game_id,
+                "turns": summaries[:limit],
+            },
+        )
+
+    def _handle_v1_turn_detail(self, game_id: str, turn_raw: str) -> None:
+        session = _get_session(game_id)
+        if session is None:
+            _json_response(self, {"error": f"Unknown game_id: {game_id}"}, 404)
+            return
+
+        turn_number = _coerce_int(turn_raw)
+        if turn_number is None or turn_number <= 0:
+            _json_response(
+                self,
+                {
+                    "api_version": "v1",
+                    "game_id": game_id,
+                    "error": "turn must be a positive integer",
+                },
+                400,
+            )
+            return
+
+        with session.action_lock:
+            records = _build_turn_archive(session)
+
+        selected = next((record for record in records if int(record.get("turn", 0)) == turn_number), None)
+        if selected is None:
+            _json_response(
+                self,
+                {
+                    "api_version": "v1",
+                    "game_id": game_id,
+                    "error": f"turn {turn_number} not found",
+                },
+                404,
+            )
+            return
+
+        _json_response(
+            self,
+            {
+                "api_version": "v1",
+                "game_id": game_id,
+                "turn": selected,
+            },
+        )
+
+    def _handle_v1_media(self, game_id: str) -> None:
+        session = _get_session(game_id)
+        if session is None:
+            _json_response(self, {"error": f"Unknown game_id: {game_id}"}, 404)
+            return
+
+        qs = parse_qs(urlparse(self.path).query)
+        since_turn = _parse_int(qs.get("since_turn", ["0"])[0], 0, lower=0, upper=1000)
+
+        with session.action_lock:
+            records = _build_turn_archive(session)
+
+        _json_response(
+            self,
+            {
+                "api_version": "v1",
+                "game_id": game_id,
+                "since_turn": since_turn,
+                "media": _media_timeline(records, since_turn),
+            },
+        )
 
 
 def main() -> None:

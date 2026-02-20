@@ -29,7 +29,40 @@ Be strategic: if Mayor just invested in infrastructure, counter with a scandal e
 class OppositionAgent:
     def __init__(self) -> None:
         model = os.environ.get("LLM_MODEL", "gpt-4o")
-        self._client = LLMClient(model=model)
+        self._client: LLMClient | None
+        key = os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY") or ""
+        self._disable_live = key.startswith("test-")
+        try:
+            self._client = LLMClient(model=model)
+        except Exception:
+            self._client = None
+
+    @staticmethod
+    def _fallback_action(mayor_action: DynamicPolicy) -> DynamicPolicy:
+        return DynamicPolicy.from_llm(
+            {
+                "name": f"Expose {mayor_action.name[:22]}",
+                "description": "Frame the mayor's latest move as elite optics and demand accountability.",
+                "rationale": "Re-anchor public attention on delivery risk, corruption exposure, and unmet promises.",
+                "effects": {
+                    "public_trust": -2.2,
+                    "social_tension": 1.6,
+                    "corruption": 1.3,
+                },
+                "group_effects": [],
+                "campaign_strength": 1.12,
+                "media_effects": {"bias": -1.4, "sensationalism": 2.0, "trust": -0.6},
+                "target_groups": ["Undecided voters"],
+                "expected_stat_delta": {"public_trust": -2.0, "social_tension": 1.5},
+                "opposition_counter_risk": 0.42,
+                "narrative_fronts_impacted": {"corruption": 2.2, "public_trust": 1.8},
+                "confidence": 0.6,
+                "assumptions": ["Media amplification stays high"],
+                "tradeoffs": ["Can overheat social tension if overused"],
+                "counter_narrative_risk": "Mayor may neutralize this with transparent implementation proofs.",
+            },
+            actor="opposition",
+        )
 
     def decide_action(self, game_state: "GameState", mayor_action: DynamicPolicy) -> DynamicPolicy:
         context = build_city_context(game_state)
@@ -38,6 +71,11 @@ class OppositionAgent:
             f"The Mayor just played: '{mayor_action.name}' — {mayor_action.description}\n\n"
             f"Decide your opposition action this turn."
         )
-        data = self._client.chat(_SYSTEM, user)
-        raw = data.get("policy", data)
-        return DynamicPolicy.from_llm(raw, actor="opposition")
+        if self._client is not None and not self._disable_live:
+            try:
+                data = self._client.chat(_SYSTEM, user)
+                raw = data.get("policy", data)
+                return DynamicPolicy.from_llm(raw, actor="opposition")
+            except Exception:
+                pass
+        return self._fallback_action(mayor_action)

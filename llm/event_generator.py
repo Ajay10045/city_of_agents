@@ -68,15 +68,54 @@ class GeneratedEvent:
 class EventGenerator:
     def __init__(self) -> None:
         model = os.environ.get("LLM_DEBATE_MODEL", "gpt-4o-mini")
-        self._client = LLMClient(model=model)
+        key = (
+            os.environ.get("LLM_API_KEY")
+            or os.environ.get("OPENAI_API_KEY")
+            or os.environ.get("ANTHROPIC_API_KEY")
+            or ""
+        )
+        self._disable_live = key.startswith("test-")
+        self._client: LLMClient | None
+        try:
+            self._client = LLMClient(model=model)
+        except Exception:
+            self._client = None
 
     def maybe_generate_event(self, game_state: "GameState") -> GeneratedEvent | None:
         context = build_city_context(game_state)
         user = f"City state:\n{context}\n\nShould a crisis event emerge this turn? If yes, describe it."
-        data = self._client.chat(_SYSTEM, user)
+        data: dict[str, Any]
+        if self._client is not None and not self._disable_live:
+            try:
+                data = self._client.chat(_SYSTEM, user)
+            except Exception:
+                data = {"generate": False}
+        else:
+            data = {"generate": False}
 
         if not data.get("generate", False):
-            return None
+            # deterministic fallback trigger for stressed conditions
+            stress = (
+                float(game_state.city_stats.social_tension) * 0.30
+                + float(game_state.city_stats.corruption) * 0.22
+                - float(game_state.city_stats.public_trust) * 0.18
+            ) / 100.0
+            chance = max(0.03, min(0.45, 0.08 + max(0.0, stress)))
+            if game_state.rng.random() > chance:
+                return None
+            return GeneratedEvent(
+                name="Public Discontent Wave",
+                description=(
+                    "Localized protests intensify around service access and governance credibility, "
+                    "forcing an emergency narrative battle."
+                ),
+                type="social",
+                severity="moderate",
+                duration=2,
+                city_effects={"public_trust": -2.2, "social_tension": 2.8, "law_and_order": -1.0},
+                group_effects=[],
+                media_effects={"sensationalism": 2.0, "trust": -0.8},
+            )
 
         raw = data.get("event", {})
         if not raw:

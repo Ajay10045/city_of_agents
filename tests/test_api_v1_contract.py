@@ -79,8 +79,79 @@ def _install_stubbed_turn_flow(game_id: str) -> None:
         self.game_state.turn_number = turn
 
         policy = self._cached_mayor_options["p1"]
+        yield {"type": "mayor_action_submitted", "turn": turn, "action": policy.to_dict()}
         yield {"type": "mayor_action", "turn": turn, "action": policy.to_dict()}
+        yield {"type": "opposition_frame_primary", "turn": turn, "action": policy.to_dict()}
         yield {"type": "opposition_action", "turn": turn, "action": policy.to_dict()}
+        yield {
+            "type": "mayor_counter_frame",
+            "turn": turn,
+            "message": "Mayor counter frame",
+            "target_groups": [],
+            "front_weights": {},
+            "estimated_shift": {},
+        }
+        yield {
+            "type": "opposition_frame_followup",
+            "turn": turn,
+            "message": "Opposition follow-up",
+            "target_groups": [],
+            "front_weights": {},
+            "estimated_shift": {},
+        }
+        yield {
+            "type": "street_chatter_synthesized",
+            "turn": turn,
+            "summary": ["Stub street chatter"],
+            "dominant_fronts": ["economy"],
+            "triggered_events": [],
+        }
+        yield {
+            "type": "media_narrative_published",
+            "turn": turn,
+            "cards": [
+                {
+                    "headline": "Stub media narrative",
+                    "source": "Contract Desk",
+                    "lean": "neutral",
+                    "virality": 52,
+                    "trust_impact": 1.2,
+                    "front": "governance",
+                }
+            ],
+        }
+        yield {
+            "type": "simulation_stats_applied",
+            "turn": turn,
+            "stat_deltas": {"economy": 1.0},
+            "triggered_events": [],
+            "escalated_events": [],
+            "event_chances": {},
+        }
+        yield {
+            "type": "popularity_recalculated",
+            "turn": turn,
+            "mayor_popularity": 50.0,
+            "opposition_popularity": 50.0,
+            "governing_party": "Mayor",
+        }
+        yield {
+            "type": "turn_closed",
+            "turn": turn,
+            "turn_summary": {
+                "mayor_action": policy.name,
+                "opposition_action": policy.name,
+                "dominant_fronts": ["economy"],
+                "events_triggered": [],
+            },
+            "stat_deltas": {"economy": 1.0},
+            "popularity_delta": {"mayor": 50.0, "opposition": 50.0},
+            "key_events": [],
+            "state": self._build_state_snapshot(),
+            "media_cards": [],
+            "election_result": None,
+            "game_over": False,
+        }
         yield {"type": "done", "turn": turn, "state": self._build_state_snapshot()}
 
     session.turn_manager.get_mayor_options = MethodType(fake_get_mayor_options, session.turn_manager)
@@ -114,6 +185,36 @@ def test_v1_setup_options_contract(api_server: str) -> None:
     assert payload["limits"]["agent_count"]["min"] == 1000
     assert payload["limits"]["agent_count"]["max"] == 50000
     assert sorted(payload["limits"]["llm_sampling_strategy"]) == ["none", "stratified", "uniform"]
+    assert all("profile_ready" in city for city in payload["cities"])
+    assert all("profile_version" in city for city in payload["cities"])
+
+
+def test_v1_setup_city_status_and_profile_contract(api_server: str) -> None:
+    status_code, status_payload = _http_json("GET", f"{api_server}/v1/setup/cities/new_delhi/status")
+    assert status_code == 200
+    assert status_payload["api_version"] == "v1"
+    assert status_payload["city_id"] == "new_delhi"
+    assert status_payload["profile_ready"] is True
+    assert isinstance(status_payload["profile_version"], str)
+
+    profile_code, profile_payload = _http_json("GET", f"{api_server}/v1/setup/cities/new_delhi/profile")
+    assert profile_code == 200
+    assert profile_payload["api_version"] == "v1"
+    assert profile_payload["city_id"] == "new_delhi"
+    assert "identity_groups" in profile_payload["profile"]
+    assert profile_payload["profile"]["meta"]["city_id"] == "new_delhi"
+
+
+def test_v1_setup_city_generate_returns_cached(api_server: str) -> None:
+    status_code, payload = _http_json(
+        "POST",
+        f"{api_server}/v1/setup/cities/new_delhi/generate",
+        {"force_refresh": False},
+    )
+    assert status_code == 200
+    assert payload["api_version"] == "v1"
+    assert payload["city_id"] == "new_delhi"
+    assert payload["status"] in {"generated", "cached"}
 
 
 def test_v1_create_game_accepts_agent_impact_setup_fields(api_server: str) -> None:
@@ -155,6 +256,27 @@ def test_v1_create_game_accepts_agent_impact_setup_fields(api_server: str) -> No
     assert state_status == 200
     assert state_payload["setup"]["agent_count"] == 5000
     assert state_payload["state"]["simulation_profile"]["llm_panel_size"] == 600
+
+
+def test_v1_city_profile_changes_identity_groups_between_cities(api_server: str) -> None:
+    delhi_status, delhi_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games",
+        {"seed": 211, "turns": 5, "city_id": "new_delhi", "agent_count": 1000, "llm_panel_size": 100},
+    )
+    ny_status, ny_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games",
+        {"seed": 212, "turns": 5, "city_id": "new_york", "agent_count": 1000, "llm_panel_size": 100},
+    )
+    assert delhi_status == 201
+    assert ny_status == 201
+
+    delhi_groups = set(delhi_payload["state"]["identity_groups"].keys())
+    ny_groups = set(ny_payload["state"]["identity_groups"].keys())
+    assert delhi_groups
+    assert ny_groups
+    assert delhi_groups != ny_groups
 
 
 @pytest.mark.parametrize(
@@ -220,6 +342,126 @@ def test_v1_policies_actions_and_events_stream(api_server: str) -> None:
     assert envelopes, "SSE endpoint should emit at least one event"
     assert envelopes[-1]["payload"]["type"] == "done"
     assert sorted(event["event_id"] for event in envelopes) == [event["event_id"] for event in envelopes]
+
+    payload_types = [event["payload"]["type"] for event in envelopes]
+    expected_order = [
+        "mayor_action_submitted",
+        "opposition_frame_primary",
+        "mayor_counter_frame",
+        "opposition_frame_followup",
+        "street_chatter_synthesized",
+        "media_narrative_published",
+        "simulation_stats_applied",
+        "popularity_recalculated",
+        "turn_closed",
+    ]
+    indices = {name: payload_types.index(name) for name in expected_order}
+    assert [indices[name] for name in expected_order] == sorted(indices.values())
+
+
+def test_v1_turn_archive_and_media_timeline_contract(api_server: str) -> None:
+    create_status, game_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games",
+        {"seed": 19, "turns": 5, "agent_count": 1000, "llm_panel_size": 100},
+    )
+    assert create_status == 201
+    game_id = game_payload["game_id"]
+    _install_stubbed_turn_flow(game_id)
+
+    policies_status, policies_payload = _http_json(
+        "GET", f"{api_server}/v1/games/{game_id}/policies"
+    )
+    assert policies_status == 200
+    assert policies_payload["policies"][0]["id"] == "p1"
+
+    action_status, _ = _http_json(
+        "POST",
+        f"{api_server}/v1/games/{game_id}/actions",
+        {"actor": "mayor", "policy_id": "p1", "expected_turn": 1, "action_id": "archive-1"},
+    )
+    assert action_status == 202
+
+    turns_status, turns_payload = _http_json("GET", f"{api_server}/v1/games/{game_id}/turns")
+    assert turns_status == 200
+    assert turns_payload["api_version"] == "v1"
+    assert turns_payload["turns"][0]["turn"] == 1
+    assert turns_payload["turns"][0]["event_count"] >= 3
+
+    turn_detail_status, turn_detail_payload = _http_json(
+        "GET", f"{api_server}/v1/games/{game_id}/turns/1"
+    )
+    assert turn_detail_status == 200
+    assert turn_detail_payload["turn"]["turn"] == 1
+    assert any(
+        event["type"] == "media_narrative_published"
+        for event in turn_detail_payload["turn"]["events"]
+    )
+
+    media_status, media_payload = _http_json("GET", f"{api_server}/v1/games/{game_id}/media")
+    assert media_status == 200
+    assert media_payload["api_version"] == "v1"
+    assert media_payload["media"]
+    assert media_payload["media"][0]["headline"] == "Stub media narrative"
+
+
+def test_v1_advisor_session_message_and_revise_contract(api_server: str) -> None:
+    create_status, game_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games",
+        {"seed": 31, "turns": 5, "agent_count": 1000, "llm_panel_size": 100},
+    )
+    assert create_status == 201
+    game_id = game_payload["game_id"]
+
+    create_session_status, create_session_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games/{game_id}/advisor/sessions",
+        {},
+    )
+    assert create_session_status in {200, 201}
+    advisor_session = create_session_payload["session"]
+    session_id = advisor_session["advisor_session_id"]
+    assert len(advisor_session["options"]) >= 1
+
+    option_id = advisor_session["options"][0]["id"]
+    msg_status, msg_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games/{game_id}/advisor/sessions/{session_id}/messages",
+        {
+            "thread_scope": "option",
+            "option_id": option_id,
+            "question": "Why this option now and what is the primary tradeoff?",
+        },
+    )
+    assert msg_status == 200
+    assert "answer" in msg_payload
+    assert msg_payload["session"]["advisor_session_id"] == session_id
+
+    revise_single_status, revise_single_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games/{game_id}/advisor/sessions/{session_id}/revise",
+        {
+            "mode": "single",
+            "option_id": option_id,
+            "constraints": "Focus on corruption and trust impact.",
+        },
+    )
+    assert revise_single_status == 200
+    assert revise_single_payload["diff_summary"]["mode"] == "single"
+    assert len(revise_single_payload["options"]) == 5
+
+    revise_full_status, revise_full_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games/{game_id}/advisor/sessions/{session_id}/revise",
+        {
+            "mode": "full",
+            "constraints": "Bias options toward jobs and service delivery.",
+        },
+    )
+    assert revise_full_status == 200
+    assert revise_full_payload["diff_summary"]["mode"] == "full"
+    assert len(revise_full_payload["options"]) == 5
 
 
 def test_v1_expected_turn_conflict_and_idempotent_replay(api_server: str) -> None:
