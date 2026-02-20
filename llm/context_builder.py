@@ -100,8 +100,10 @@ def build_city_context(game_state: "GameState") -> str:
         ]
         lines.append("Outstanding mayor promises: " + "; ".join(prom_parts) + ".")
 
-    recent_history = (s.policy_history[-6:] + s.event_history[-3:])
-    if recent_history:
-        lines.append("Recent history: " + " | ".join(recent_history) + ".")
+    full_history = list(s.policy_history) + list(s.event_history)
+    if full_history:
+        lines.append("Full historical timeline (oldest to newest):")
+        for entry in full_history:
+            lines.append(f"  - {entry}")
 
     return "\n".join(lines)

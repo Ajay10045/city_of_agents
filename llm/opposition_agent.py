@@ -64,6 +64,48 @@ class OppositionAgent:
             actor="opposition",
         )
 
+    @staticmethod
+    def predict_attack_line(
+        game_state: "GameState",
+        mayor_action: DynamicPolicy,
+    ) -> dict[str, object]:
+        front_rank = sorted(
+            mayor_action.narrative_fronts_impacted.items(),
+            key=lambda item: abs(float(item[1])),
+            reverse=True,
+        )
+        primary_front = front_rank[0][0] if front_rank else "public_trust"
+        risk = max(0.15, min(1.0, float(mayor_action.opposition_counter_risk or 0.5)))
+
+        front_templates = {
+            "corruption": "Opposition will allege procurement opacity and insider favoritism in '{policy}'.",
+            "economy": "Opposition will allege '{policy}' helps connected elites while households stay strained.",
+            "services": "Opposition will allege '{policy}' overpromises while frontline delivery remains broken.",
+            "safety": "Opposition will allege '{policy}' is security theater without neighborhood-level relief.",
+            "social_cohesion": "Opposition will allege '{policy}' inflames divisions and ignores vulnerable communities.",
+            "public_trust": "Opposition will allege '{policy}' is a trust-repair stunt without enforceable accountability.",
+        }
+        allegation = front_templates.get(
+            primary_front,
+            "Opposition will allege '{policy}' is optics-first and weak on execution.",
+        ).format(policy=mayor_action.name)
+
+        recent_opp_line = ""
+        for entry in reversed(game_state.policy_history):
+            if "opposition ->" in entry:
+                recent_opp_line = entry.split("opposition ->", 1)[-1].strip()
+                break
+        if recent_opp_line:
+            allegation += f" Likely continuation of: {recent_opp_line}."
+
+        target_groups = list(mayor_action.target_groups[:3]) or ["Undecided neighborhoods"]
+        return {
+            "front": primary_front,
+            "allegation": allegation,
+            "risk": risk,
+            "target_groups": target_groups,
+        }
+
     def decide_action(self, game_state: "GameState", mayor_action: DynamicPolicy) -> DynamicPolicy:
         context = build_city_context(game_state)
         user = (

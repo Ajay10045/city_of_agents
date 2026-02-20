@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
   createGame,
-  fetchCounterFrames,
   fetchMediaTimeline,
   fetchPolicies,
   fetchSetupOptions,
@@ -9,7 +8,6 @@ import {
   streamTurn,
 } from './api'
 import type {
-  CounterFrameOption,
   DebateResult,
   DynamicPolicy,
   ElectionResult,
@@ -17,6 +15,7 @@ import type {
   MediaTimelineCard,
   SetupOptions,
   StateSnapshot,
+  StreetChatterItem,
   StreamMessage,
 } from './types'
 import HeaderBar from './components/HeaderBar'
@@ -36,6 +35,7 @@ import GameSetupOverlay from './components/GameSetupOverlay'
 import MediaNarrativePanel from './components/MediaNarrativePanel'
 import AdvisorConsole from './components/AdvisorConsole'
 import PolicyImpactModal from './components/PolicyImpactModal'
+import TopMetricsPanel from './components/TopMetricsPanel'
 
 const DEFAULT_TOTAL_TURNS = 50
 
@@ -54,6 +54,20 @@ function buildInitialSetup(options: SetupOptions): GameSetupConfig {
   }
 }
 
+function hasMayorLostElection(snapshot: StateSnapshot | null): boolean {
+  if (!snapshot || snapshot.election_results.length === 0) return false
+  const latest = snapshot.election_results[snapshot.election_results.length - 1] as Record<string, unknown>
+  const mayorRaw = latest['mayor_vote_share']
+  const oppositionRaw = latest['opposition_vote_share']
+  const mayor =
+    typeof mayorRaw === 'number' ? mayorRaw : Number(typeof mayorRaw === 'string' ? mayorRaw : NaN)
+  const opposition =
+    typeof oppositionRaw === 'number'
+      ? oppositionRaw
+      : Number(typeof oppositionRaw === 'string' ? oppositionRaw : NaN)
+  return Number.isFinite(mayor) && Number.isFinite(opposition) && mayor < opposition
+}
+
 export default function App() {
   const [gameId, setGameId] = useState<string | null>(null)
   const [lastEventId, setLastEventId] = useState(0)
@@ -65,12 +79,10 @@ export default function App() {
   const [stream, setStream] = useState<StreamCardItem[]>([])
   const [mediaTimeline, setMediaTimeline] = useState<MediaTimelineCard[]>([])
   const [debates, setDebates] = useState<DebateResult[]>([])
+  const [streetChatter, setStreetChatter] = useState<StreetChatterItem[]>([])
   const [statChanges, setStatChanges] = useState<Record<string, number>>({})
   const [eventChances, setEventChances] = useState<Record<string, number>>({})
   const [selectedPolicyId, setSelectedPolicyId] = useState<string | null>(null)
-  const [selectedCounterFrameId, setSelectedCounterFrameId] = useState<string | null>(null)
-  const [counterFrames, setCounterFrames] = useState<CounterFrameOption[]>([])
-  const [counterFramesLoading, setCounterFramesLoading] = useState(false)
   const [turnResultVisible, setTurnResultVisible] = useState(false)
   const [turnMayorAction, setTurnMayorAction] = useState<DynamicPolicy | null>(null)
   const [turnOppAction, setTurnOppAction] = useState<DynamicPolicy | null>(null)
@@ -104,19 +116,12 @@ export default function App() {
     setMediaTimeline(cards)
   }
 
-  const loadCounterFrames = async (gid: string, policyId: string) => {
-    setCounterFramesLoading(true)
-    try {
-      const frames = await fetchCounterFrames(gid, policyId)
-      setCounterFrames(frames)
-    } finally {
-      setCounterFramesLoading(false)
-    }
-  }
-
-  const resetTurnPanels = () => {
+  const resetSimulationPanels = () => {
     setDebates([])
+    setStreetChatter([])
     setStream([])
+    setMediaTimeline([])
+    setPolicies([])
     setStatChanges({})
     setEventChances({})
     setTurnResultVisible(false)
@@ -124,8 +129,17 @@ export default function App() {
     setTurnOppAction(null)
     setTurnTriggeredEvents([])
     setAdvisorFocusOptionId(null)
-    setSelectedCounterFrameId(null)
-    setCounterFrames([])
+    setImpactPolicy(null)
+  }
+
+  const prepareTurnPanels = () => {
+    setStatChanges({})
+    setEventChances({})
+    setTurnResultVisible(false)
+    setTurnMayorAction(null)
+    setTurnOppAction(null)
+    setTurnTriggeredEvents([])
+    setAdvisorFocusOptionId(null)
     setImpactPolicy(null)
   }
 
@@ -177,15 +191,17 @@ export default function App() {
       setState(snapshot)
       setSetupConfig(config)
       setAdvisorSessionId(null)
-      resetTurnPanels()
-      setMediaTimeline([])
+      resetSimulationPanels()
       setElectionResult(null)
       setGameOverVisible(false)
       setSetupVisible(false)
       setAdvisorFocusOptionId(null)
-      setSelectedCounterFrameId(null)
-      setCounterFrames([])
-      await Promise.all([loadPolicies(gid), loadMedia(gid)])
+      void loadPolicies(gid).catch((err) =>
+        setError(err instanceof Error ? err.message : 'Failed to load policies'),
+      )
+      void loadMedia(gid).catch((err) =>
+        setError(err instanceof Error ? err.message : 'Failed to load media timeline'),
+      )
     } catch (e) {
       setSetupError(e instanceof Error ? e.message : 'Failed to start simulation')
     } finally {
@@ -198,13 +214,12 @@ export default function App() {
     bootstrapSetup()
   }, [])
 
-  const runTurnForPolicy = async (policyId: string, counterFrameId: string) => {
+  const runTurnForPolicy = async (policyId: string) => {
     if (busy || !gameId || !state) return
     setBusy(true)
     setError(null)
     setSelectedPolicyId(policyId)
-    setSelectedCounterFrameId(counterFrameId)
-    resetTurnPanels()
+    prepareTurnPanels()
 
     let mayorAction: DynamicPolicy | null = null
     let oppAction: DynamicPolicy | null = null
@@ -216,7 +231,8 @@ export default function App() {
         lastEventId,
         (msg: StreamMessage, eventId: number) => {
           setLastEventId((prev) => Math.max(prev, eventId))
-          if (msg.type === 'mayor_action_submitted' || msg.type === 'mayor_action') {
+          const messageTurn = 'turn' in msg && typeof msg.turn === 'number' ? msg.turn : state.turn_number + 1
+          if (msg.type === 'mayor_action_submitted' || (msg.type === 'mayor_action' && !mayorAction)) {
             const action = msg.action
             mayorAction = action
             setTurnMayorAction(action)
@@ -224,6 +240,7 @@ export default function App() {
               ...s,
               {
                 kind: 'mayor',
+                turn: messageTurn,
                 label: '🏛 Mayor Action Submitted',
                 name: action.name,
                 description: action.description,
@@ -234,7 +251,10 @@ export default function App() {
               },
             ])
           }
-          if (msg.type === 'opposition_frame_primary' || msg.type === 'opposition_action') {
+          if (
+            msg.type === 'opposition_frame_primary' ||
+            (msg.type === 'opposition_action' && !oppAction)
+          ) {
             const action = msg.action
             oppAction = action
             setTurnOppAction(action)
@@ -242,6 +262,7 @@ export default function App() {
               ...s,
               {
                 kind: 'opposition',
+                turn: messageTurn,
                 label: '⚔ Opposition Primary Frame',
                 name: action.name,
                 description: action.description,
@@ -258,23 +279,11 @@ export default function App() {
               ...s,
               {
                 kind: 'mayor',
+                turn: messageTurn,
                 label: '🛡 Mayor Counter Frame',
                 name: 'Narrative Counter',
                 description: msg.message,
                 meta: `Targets: ${(msg.target_groups ?? []).join(', ') || 'broad coalition'}`,
-              },
-            ])
-          }
-
-          if (msg.type === 'counter_frame_selected') {
-            setStream((s) => [
-              ...s,
-              {
-                kind: 'mayor',
-                label: '🎯 Counter-Frame Selected',
-                name: msg.counter_frame.label,
-                description: msg.counter_frame.message,
-                meta: `Campaign +${(msg.counter_frame.campaign_boost ?? 0).toFixed(2)}`,
               },
             ])
           }
@@ -284,6 +293,7 @@ export default function App() {
               ...s,
               {
                 kind: 'opposition',
+                turn: messageTurn,
                 label: '🧨 Opposition Follow-up',
                 name: 'Narrative Escalation',
                 description: msg.message,
@@ -293,15 +303,25 @@ export default function App() {
           }
 
           if (msg.type === 'street_chatter_synthesized') {
-            setStream((s) => [
-              ...s,
-              {
-                kind: 'impact',
-                label: '🗣 Street Chatter',
-                name: (msg.summary ?? [])[0] ?? 'Citizen sentiment recalibrated',
-                meta: `Fronts: ${(msg.dominant_fronts ?? []).join(', ') || 'none'}`,
-              },
-            ])
+            const chatterItems = (msg.chatter_items ?? []).map((item) => ({
+              ...item,
+              turn: item.turn ?? messageTurn,
+            }))
+            if (chatterItems.length > 0) {
+              setStreetChatter((current) => [...chatterItems, ...current].slice(0, 250))
+            } else if ((msg.summary ?? []).length > 0) {
+              const fallback = (msg.summary ?? []).slice(0, 3).map((line, idx) => ({
+                turn: messageTurn,
+                speaker: `Citizen ${idx + 1}`,
+                role: 'Resident',
+                group_name: 'Citywide',
+                line,
+                sentiment: 'mixed',
+                heat: 0.5,
+                tags: ['street', 'pulse'],
+              }))
+              setStreetChatter((current) => [...fallback, ...current].slice(0, 250))
+            }
           }
 
           if (msg.type === 'simulation_stats_applied') {
@@ -312,6 +332,7 @@ export default function App() {
               ...s,
               {
                 kind: 'impact',
+                turn: messageTurn,
                 label: '📉 Simulation Stats Applied',
                 name: `${Object.keys(msg.stat_deltas ?? {}).length} major stat deltas`,
                 meta: `Events: ${(msg.triggered_events ?? []).join(', ') || 'none'}`,
@@ -324,6 +345,7 @@ export default function App() {
               ...s,
               {
                 kind: 'impact',
+                turn: messageTurn,
                 label: '📊 Popularity Recalculated',
                 name: `Mayor ${msg.mayor_popularity.toFixed(1)}% · Opp ${msg.opposition_popularity.toFixed(1)}%`,
                 meta: `In Power: ${msg.governing_party}`,
@@ -338,6 +360,7 @@ export default function App() {
                 ...s,
                 {
                   kind: 'event',
+                  turn: messageTurn,
                   label: `${ev.severity === 'major' ? '🚨' : ev.severity === 'moderate' ? '⚠️' : '⚡'} Crisis Emerged`,
                   name: ev.name,
                   description: ev.description,
@@ -355,6 +378,7 @@ export default function App() {
                 ...s,
                 {
                   kind: 'media',
+                  turn: messageTurn,
                   label: '🗞 Media Narrative',
                   name: msg.cards[0].headline,
                   meta: `${msg.cards.length} media card${msg.cards.length === 1 ? '' : 's'}`,
@@ -364,7 +388,7 @@ export default function App() {
           }
 
           if (msg.type === 'debate') {
-            setDebates((d) => [...d, msg.debate])
+            setDebates((d) => [...d, { ...msg.debate, turn: messageTurn }])
           }
 
           if (msg.type === 'agent_impact_assessed') {
@@ -372,6 +396,7 @@ export default function App() {
               ...s,
               {
                 kind: 'impact',
+                turn: messageTurn,
                 label: '🧠 Agent Impact Assessed',
                 name: `${msg.summary.agent_count_evaluated} agents re-evaluated`,
                 description:
@@ -397,6 +422,7 @@ export default function App() {
               ...s,
               {
                 kind: 'impact',
+                turn: messageTurn,
                 label: '📊 Cohort Narrative Shift',
                 name: 'Top cohort movement',
                 meta: top || 'No significant shift',
@@ -411,6 +437,7 @@ export default function App() {
               ...s,
               {
                 kind: 'event',
+                turn: messageTurn,
                 label: '🏁 Turn Closed',
                 name: `In Power: ${msg.state.governing_party}`,
                 meta: `Mayor ${msg.state.mayor_popularity.toFixed(1)}% · Opp ${msg.state.opposition_popularity.toFixed(1)}%`,
@@ -418,7 +445,7 @@ export default function App() {
             ])
             setElectionResult(msg.election_result)
             setGameOverVisible(Boolean(msg.game_over && !msg.election_result))
-            if (!msg.game_over || msg.election_result) {
+            if (!msg.game_over) {
               loadPolicies(gameId).catch(() => undefined)
               loadMedia(gameId).catch(() => undefined)
             } else {
@@ -445,7 +472,6 @@ export default function App() {
         {
           expectedTurn: state.turn_number + 1,
           advisorSessionId: advisorSessionId ?? undefined,
-          counterFrameId,
         },
       )
       setLastEventId((prev) => Math.max(prev, nextEventId))
@@ -454,33 +480,23 @@ export default function App() {
     } finally {
       setBusy(false)
       setSelectedPolicyId(null)
-      setSelectedCounterFrameId(null)
-      setCounterFrames([])
     }
   }
 
-  const onPolicySelect = async (policyId: string) => {
-    if (busy || !state || state.turn_number >= state.total_turns) return
-    if (!gameId) return
+  const onPolicySelect = (policyId: string) => {
+    if (busy || !state || state.turn_number >= state.total_turns || hasMayorLostElection(state)) return
     setSelectedPolicyId(policyId)
-    setSelectedCounterFrameId(null)
-    setCounterFrames([])
     setAdvisorFocusOptionId(policyId)
     setError(null)
-    try {
-      await loadCounterFrames(gameId, policyId)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load counter-frame options')
-    }
   }
 
   const onPlaySelectedPolicy = async () => {
-    if (!selectedPolicyId) {
-      setError('Select a policy first, then click "Play Selected Policy".')
+    if (state && hasMayorLostElection(state)) {
+      setError('Simulation is over because the Mayor lost the election.')
       return
     }
-    if (!selectedCounterFrameId) {
-      setError('Select a counter-frame before playing the turn.')
+    if (!selectedPolicyId) {
+      setError('Select a policy first, then click "Play Selected Policy".')
       return
     }
     if (!policies.some((policy) => policy.id === selectedPolicyId)) {
@@ -488,12 +504,7 @@ export default function App() {
       setError('Selected policy is no longer current. Refresh options and reselect.')
       return
     }
-    if (!counterFrames.some((frame) => frame.id === selectedCounterFrameId)) {
-      setSelectedCounterFrameId(null)
-      setError('Selected counter-frame is no longer current. Re-select counter-frame.')
-      return
-    }
-    await runTurnForPolicy(selectedPolicyId, selectedCounterFrameId)
+    await runTurnForPolicy(selectedPolicyId)
   }
 
   const onNewGame = async () => {
@@ -503,8 +514,11 @@ export default function App() {
   }
 
   const onContinueAfterElection = () => {
+    const mayorLostElection =
+      electionResult != null &&
+      electionResult.mayor_vote_share < electionResult.opposition_vote_share
     setElectionResult(null)
-    if (state && state.turn_number >= state.total_turns) {
+    if (state && (state.turn_number >= state.total_turns || mayorLostElection)) {
       setGameOverVisible(true)
     }
   }
@@ -513,17 +527,8 @@ export default function App() {
     if (!selectedPolicyId) return
     if (!policies.some((policy) => policy.id === selectedPolicyId)) {
       setSelectedPolicyId(null)
-      setSelectedCounterFrameId(null)
-      setCounterFrames([])
     }
   }, [policies, selectedPolicyId])
-
-  useEffect(() => {
-    if (!selectedCounterFrameId) return
-    if (!counterFrames.some((frame) => frame.id === selectedCounterFrameId)) {
-      setSelectedCounterFrameId(null)
-    }
-  }, [counterFrames, selectedCounterFrameId])
 
   if (loading) return <div className="page">Loading setup…</div>
 
@@ -537,12 +542,15 @@ export default function App() {
   }
 
   const gameReady = Boolean(state)
+  const gameCompleted = Boolean(
+    state && (state.turn_number >= state.total_turns || hasMayorLostElection(state)),
+  )
 
   const nextTurn = state ? state.turn_number + 1 : 1
   const policyPrompt =
     !state
       ? 'Start a simulation from game setup.'
-      : state.turn_number >= state.total_turns
+      : gameCompleted
       ? 'The simulation has ended.'
       : busy
         ? 'Simulating turn — watch agents respond in real time…'
@@ -576,38 +584,25 @@ export default function App() {
       <ErrorBanner message={error} />
 
       {gameReady && state ? (
-        <div className="layout">
-          <SidebarPanels state={state} />
+        <div className="layout layout-v2">
+          <aside className="layout-left">
+            <IdentityGroupsPanel state={state} compact />
+            <SidebarPanels state={state} panels={['media']} />
+            <MediaNarrativePanel cards={mediaTimeline} />
+          </aside>
 
-          <main>
+          <main className="layout-center">
+            <TopMetricsPanel state={state} />
             <CityStatsPanel stats={state.city_stats} changes={statChanges} />
-            <IdentityGroupsPanel state={state} />
-            <CrisesPanel state={state} eventChances={eventChances} />
-            <StreamFeedPanel items={stream} visible={busy || stream.length > 0} />
-            <DebatesPanel debates={debates} visible={debates.length > 0} />
             <PoliciesPanel
               policies={policies}
-              busy={busy || state.turn_number >= state.total_turns}
+              busy={busy || gameCompleted}
               loading={policiesLoading}
               selectedPolicyId={selectedPolicyId}
-              selectedCounterFrameId={selectedCounterFrameId}
-              counterFrames={counterFrames}
-              counterFramesLoading={counterFramesLoading}
               prompt={policyPrompt}
               onSelect={onPolicySelect}
-              onSelectCounterFrame={(counterFrameId) => {
-                setSelectedCounterFrameId(counterFrameId)
-                setError(null)
-              }}
               onPlaySelected={onPlaySelectedPolicy}
               onAskAdvisor={(optionId) => {
-                setAdvisorFocusOptionId(optionId)
-                const target = document.getElementById('advisor-console')
-                if (target) {
-                  target.scrollIntoView({ behavior: 'smooth', block: 'center' })
-                }
-              }}
-              onReviseOption={(optionId) => {
                 setAdvisorFocusOptionId(optionId)
                 const target = document.getElementById('advisor-console')
                 if (target) {
@@ -624,7 +619,7 @@ export default function App() {
               advisorSessionId={advisorSessionId}
               turnNumber={state.turn_number}
               policies={policies}
-              disabled={busy || state.turn_number >= state.total_turns}
+              disabled={busy || gameCompleted}
               focusOptionId={advisorFocusOptionId}
               onPoliciesUpdate={(nextPolicies) => {
                 setPolicies(nextPolicies)
@@ -637,9 +632,17 @@ export default function App() {
               }}
               onError={(message) => setError(message)}
             />
+            <StreamFeedPanel items={stream} visible={busy || stream.length > 0} />
             <TurnArchivePanel gameId={gameId} refreshKey={state.turn_number} />
           </main>
-          <MediaNarrativePanel cards={mediaTimeline} />
+          <aside className="layout-right">
+            <DebatesPanel
+              debates={debates}
+              streetChatter={streetChatter}
+              visible={debates.length > 0 || streetChatter.length > 0}
+            />
+            <CrisesPanel state={state} eventChances={eventChances} />
+          </aside>
         </div>
       ) : (
         <section className="panel">

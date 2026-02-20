@@ -6,7 +6,7 @@ type Props = {
 
 export default function MediaNarrativePanel({ cards }: Props) {
   return (
-    <aside className="media-board">
+    <section className="media-board">
       <section className="panel">
         <div className="panel-title">Media Narrative</div>
         {cards.length === 0 ? (
@@ -37,6 +37,6 @@ export default function MediaNarrativePanel({ cards }: Props) {
           </div>
         )}
       </section>
-    </aside>
+    </section>
   )
 }

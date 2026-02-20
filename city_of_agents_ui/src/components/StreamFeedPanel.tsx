@@ -1,5 +1,6 @@
 export type StreamCardItem = {
   kind: 'mayor' | 'opposition' | 'event' | 'impact' | 'media'
+  turn?: number
   label: string
   name: string
   description?: string
@@ -13,18 +14,19 @@ type Props = {
 }
 
 export default function StreamFeedPanel({ items, visible }: Props) {
-  if (!visible) return null
-
   return (
     <section className="panel" id="stream-panel">
       <div className="panel-title">Live Turn Feed</div>
-      {items.length === 0 ? (
+      {!visible || items.length === 0 ? (
         <div className="muted">No streamed updates yet.</div>
       ) : (
-        <div>
+        <div className="stream-list">
           {items.map((item, i) => (
             <div key={i} className={`stream-card fade-in stream-${item.kind}`}>
-              <div className="stream-card-label">{item.label}</div>
+              <div className="stream-card-label-row">
+                <div className="stream-card-label">{item.label}</div>
+                {typeof item.turn === 'number' && <div className="stream-turn-tag">T{item.turn}</div>}
+              </div>
               <div className="stream-card-name">{item.name}</div>
               {item.description && <div className="stream-card-desc">{item.description}</div>}
               {item.rationale && <div className="stream-card-rationale">💡 {item.rationale}</div>}

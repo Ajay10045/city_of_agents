@@ -149,6 +149,9 @@ export type CounterFrameOption = {
   campaign_boost: number
   effects: Record<string, number>
   risk?: string
+  reacts_to?: string
+  attack_front?: string
+  attack_intensity?: number
 }
 
 export type AdvisorMessage = {
@@ -222,6 +225,7 @@ export type GeneratedEvent = {
 }
 
 export type DebateResult = {
+  turn?: number
   group_name: string
   debate_summary: string
   notable_quote?: string
@@ -229,6 +233,17 @@ export type DebateResult = {
   happiness_delta: number
   radicalization_delta: number
   trust_delta: number
+}
+
+export type StreetChatterItem = {
+  turn?: number
+  speaker: string
+  role: string
+  group_name: string
+  line: string
+  sentiment: string
+  heat: number
+  tags: string[]
 }
 
 export type ElectionResult = {
@@ -323,6 +338,7 @@ export type StreamMessage =
       summary: string[]
       dominant_fronts: string[]
       triggered_events: string[]
+      chatter_items?: StreetChatterItem[]
     }
   | { type: 'mayor_action'; action: DynamicPolicy }
   | { type: 'opposition_action'; action: DynamicPolicy }
