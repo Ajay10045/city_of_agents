@@ -70,7 +70,7 @@ def _install_stubbed_turn_flow(game_id: str) -> None:
         self._cached_mayor_options = {policy.id: policy}
         return [policy]
 
-    def fake_stream_step(self, mayor_policy_id: str):
+    def fake_stream_step(self, mayor_policy_id: str, counter_frame_id: str | None = None):
         if mayor_policy_id != "p1":
             yield {"type": "error", "message": f"Unknown policy id: {mayor_policy_id!r}"}
             return
@@ -83,6 +83,19 @@ def _install_stubbed_turn_flow(game_id: str) -> None:
         yield {"type": "mayor_action", "turn": turn, "action": policy.to_dict()}
         yield {"type": "opposition_frame_primary", "turn": turn, "action": policy.to_dict()}
         yield {"type": "opposition_action", "turn": turn, "action": policy.to_dict()}
+        yield {
+            "type": "counter_frame_selected",
+            "turn": turn,
+            "counter_frame": {
+                "id": counter_frame_id or "delivery_receipts",
+                "label": "Delivery Receipts",
+                "message": "Stub counter frame",
+                "target_groups": [],
+                "campaign_boost": 0.03,
+                "effects": {},
+                "risk": "",
+            },
+        }
         yield {
             "type": "mayor_counter_frame",
             "turn": turn,
@@ -359,6 +372,32 @@ def test_v1_policies_actions_and_events_stream(api_server: str) -> None:
     assert [indices[name] for name in expected_order] == sorted(indices.values())
 
 
+def test_v1_counter_frames_contract(api_server: str) -> None:
+    create_status, game_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games",
+        {"seed": 27, "turns": 5, "agent_count": 1000, "llm_panel_size": 100},
+    )
+    assert create_status == 201
+    game_id = game_payload["game_id"]
+
+    policies_status, policies_payload = _http_json(
+        "GET", f"{api_server}/v1/games/{game_id}/policies"
+    )
+    assert policies_status == 200
+    policy_id = policies_payload["policies"][0]["id"]
+
+    counter_status, counter_payload = _http_json(
+        "GET", f"{api_server}/v1/games/{game_id}/counter-frames?policy_id={policy_id}"
+    )
+    assert counter_status == 200
+    assert counter_payload["api_version"] == "v1"
+    assert counter_payload["policy_id"] == policy_id
+    assert len(counter_payload["counter_frames"]) >= 1
+    assert "id" in counter_payload["counter_frames"][0]
+    assert "message" in counter_payload["counter_frames"][0]
+
+
 def test_v1_turn_archive_and_media_timeline_contract(api_server: str) -> None:
     create_status, game_payload = _http_json(
         "POST",
@@ -462,6 +501,128 @@ def test_v1_advisor_session_message_and_revise_contract(api_server: str) -> None
     assert revise_full_status == 200
     assert revise_full_payload["diff_summary"]["mode"] == "full"
     assert len(revise_full_payload["options"]) == 5
+
+
+def test_v1_stale_advisor_session_rejected_for_message_and_revise(api_server: str) -> None:
+    create_status, game_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games",
+        {"seed": 51, "turns": 5, "agent_count": 1000, "llm_panel_size": 100},
+    )
+    assert create_status == 201
+    game_id = game_payload["game_id"]
+
+    first_status, first_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games/{game_id}/advisor/sessions",
+        {},
+    )
+    assert first_status in {200, 201}
+    first_session = first_payload["session"]
+    first_id = first_session["advisor_session_id"]
+    first_option_id = first_session["options"][0]["id"]
+
+    refreshed_status, refreshed_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games/{game_id}/advisor/sessions",
+        {"force_refresh": True},
+    )
+    assert refreshed_status in {200, 201}
+    refreshed_session = refreshed_payload["session"]
+    refreshed_id = refreshed_session["advisor_session_id"]
+    assert refreshed_id != first_id
+
+    stale_msg_status, stale_msg_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games/{game_id}/advisor/sessions/{first_id}/messages",
+        {
+            "thread_scope": "option",
+            "option_id": first_option_id,
+            "question": "Why now?",
+        },
+    )
+    assert stale_msg_status == 409
+    assert stale_msg_payload["error"] == "advisor session is stale for the current turn"
+    assert stale_msg_payload["provided_advisor_session_id"] == first_id
+    assert stale_msg_payload["active_advisor_session_id"] == refreshed_id
+
+    stale_revise_status, stale_revise_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games/{game_id}/advisor/sessions/{first_id}/revise",
+        {
+            "mode": "single",
+            "option_id": first_option_id,
+            "constraints": "Focus jobs",
+        },
+    )
+    assert stale_revise_status == 409
+    assert stale_revise_payload["error"] == "advisor session is stale for the current turn"
+    assert stale_revise_payload["provided_advisor_session_id"] == first_id
+    assert stale_revise_payload["active_advisor_session_id"] == refreshed_id
+
+
+def test_v1_actions_reject_stale_policy_id_after_refresh(api_server: str) -> None:
+    create_status, game_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games",
+        {"seed": 53, "turns": 5, "agent_count": 1000, "llm_panel_size": 100},
+    )
+    assert create_status == 201
+    game_id = game_payload["game_id"]
+
+    first_status, first_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games/{game_id}/advisor/sessions",
+        {},
+    )
+    assert first_status in {200, 201}
+    first_session = first_payload["session"]
+    first_id = first_session["advisor_session_id"]
+    stale_policy_id = first_session["options"][0]["id"]
+
+    refreshed_status, refreshed_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games/{game_id}/advisor/sessions",
+        {"force_refresh": True},
+    )
+    assert refreshed_status in {200, 201}
+    refreshed_id = refreshed_payload["session"]["advisor_session_id"]
+    assert refreshed_id != first_id
+
+    stale_action_status, stale_action_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games/{game_id}/actions",
+        {
+            "actor": "mayor",
+            "policy_id": stale_policy_id,
+            "expected_turn": 1,
+            "advisor_session_id": first_id,
+        },
+    )
+    assert stale_action_status == 409
+    assert (
+        stale_action_payload["error"]
+        == "advisor session mismatch; refresh policies before playing this turn"
+    )
+    assert stale_action_payload["provided_advisor_session_id"] == first_id
+    assert stale_action_payload["active_advisor_session_id"] == refreshed_id
+
+    stale_policy_status, stale_policy_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games/{game_id}/actions",
+        {
+            "actor": "mayor",
+            "policy_id": stale_policy_id,
+            "expected_turn": 1,
+        },
+    )
+    assert stale_policy_status == 409
+    assert (
+        stale_policy_payload["error"]
+        == "policy_id is not in the current option set; refresh policies and reselect"
+    )
+    assert stale_policy_payload["active_advisor_session_id"] == refreshed_id
+    assert stale_policy_payload["policy_id"] == stale_policy_id
 
 
 def test_v1_expected_turn_conflict_and_idempotent_replay(api_server: str) -> None:

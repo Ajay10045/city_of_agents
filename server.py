@@ -87,6 +87,8 @@ class CachedActionResult:
 class ActionSubmission:
     actor: str
     policy_id: str
+    advisor_session_id: str | None = None
+    counter_frame_id: str | None = None
     participant_id: str | None = None
     expected_turn: int | None = None
     action_id: str | None = None
@@ -483,6 +485,10 @@ def _sync_mayor_option_cache(session: GameSession, options: list[Any]) -> None:
     session.turn_manager._cached_mayor_options = {str(option.id): option for option in options}
 
 
+def _active_advisor_session_unlocked(session: GameSession) -> AdvisorSession:
+    return _ensure_advisor_session_unlocked(session, force_refresh=False)
+
+
 def _ensure_advisor_session_unlocked(
     session: GameSession,
     force_refresh: bool = False,
@@ -517,17 +523,30 @@ def _get_advisor_session_unlocked(session: GameSession, advisor_session_id: str)
 
 
 def _run_turn_and_capture_events_unlocked(
-    session: GameSession, game_id: str, policy_id: str
+    session: GameSession,
+    game_id: str,
+    policy_id: str,
+    counter_frame_id: str | None = None,
 ) -> list[dict]:
     emitted: list[dict] = []
-    for msg in session.turn_manager.stream_step(policy_id):
+    for msg in session.turn_manager.stream_step(policy_id, counter_frame_id=counter_frame_id):
         emitted.append(_append_event(session, game_id, msg))
     return emitted
 
 
-def _run_turn_and_capture_events(session: GameSession, game_id: str, policy_id: str) -> list[dict]:
+def _run_turn_and_capture_events(
+    session: GameSession,
+    game_id: str,
+    policy_id: str,
+    counter_frame_id: str | None = None,
+) -> list[dict]:
     with session.action_lock:
-        return _run_turn_and_capture_events_unlocked(session, game_id, policy_id)
+        return _run_turn_and_capture_events_unlocked(
+            session,
+            game_id,
+            policy_id,
+            counter_frame_id=counter_frame_id,
+        )
 
 
 def _cache_action_result(session: GameSession, action_id: str, status: int, body: dict[str, Any]) -> None:
@@ -549,6 +568,19 @@ def _parse_action_submission(
     policy_id = str(body.get("policy_id", "")).strip()
     if not policy_id:
         return None, (400, "policy_id is required")
+
+    advisor_session_id_raw = body.get("advisor_session_id")
+    advisor_session_id = (
+        str(advisor_session_id_raw).strip()
+        if advisor_session_id_raw is not None and str(advisor_session_id_raw).strip()
+        else None
+    )
+    counter_frame_id_raw = body.get("counter_frame_id")
+    counter_frame_id = (
+        str(counter_frame_id_raw).strip()
+        if counter_frame_id_raw is not None and str(counter_frame_id_raw).strip()
+        else None
+    )
 
     participant_id_raw = body.get("participant_id")
     participant_id = (
@@ -578,6 +610,8 @@ def _parse_action_submission(
         ActionSubmission(
             actor=actor,
             policy_id=policy_id,
+            advisor_session_id=advisor_session_id,
+            counter_frame_id=counter_frame_id,
             participant_id=participant_id,
             expected_turn=expected_turn,
             action_id=action_id,
@@ -1037,6 +1071,10 @@ class GameHandler(BaseHTTPRequestHandler):
             self._handle_v1_policies(parts[2])
             return True
 
+        if len(parts) == 4 and parts[3] == "counter-frames":
+            self._handle_v1_counter_frames(parts[2])
+            return True
+
         if len(parts) == 4 and parts[3] == "events":
             self._handle_v1_events(parts[2])
             return True
@@ -1306,6 +1344,58 @@ class GameHandler(BaseHTTPRequestHandler):
             },
         )
 
+    def _handle_v1_counter_frames(self, game_id: str) -> None:
+        session = _get_session(game_id)
+        if session is None:
+            _json_response(self, {"error": f"Unknown game_id: {game_id}"}, 404)
+            return
+
+        qs = parse_qs(urlparse(self.path).query)
+        policy_id = str(qs.get("policy_id", [""])[0]).strip()
+        if not policy_id:
+            _json_response(
+                self,
+                {
+                    "api_version": "v1",
+                    "game_id": game_id,
+                    "error": "policy_id is required",
+                },
+                400,
+            )
+            return
+
+        with session.action_lock:
+            active_session = _active_advisor_session_unlocked(session)
+            active_option_ids = {option.id for option in active_session.options}
+            if policy_id not in active_option_ids:
+                _json_response(
+                    self,
+                    {
+                        "api_version": "v1",
+                        "game_id": game_id,
+                        "error": "policy_id is not in the current option set",
+                        "policy_id": policy_id,
+                        "active_advisor_session_id": active_session.advisor_session_id,
+                        "active_options": [
+                            {"id": option.id, "name": option.name}
+                            for option in active_session.options
+                        ],
+                    },
+                    409,
+                )
+                return
+            options = session.turn_manager.get_counter_frame_options(policy_id)
+
+        _json_response(
+            self,
+            {
+                "api_version": "v1",
+                "game_id": game_id,
+                "policy_id": policy_id,
+                "counter_frames": options,
+            },
+        )
+
     def _handle_v1_advisor_session_create(self, game_id: str, body: dict) -> None:
         session = _get_session(game_id)
         if session is None:
@@ -1442,6 +1532,22 @@ class GameHandler(BaseHTTPRequestHandler):
                     )
                     return
 
+                active_advisor_session = _active_advisor_session_unlocked(session)
+                if advisor_session.advisor_session_id != active_advisor_session.advisor_session_id:
+                    _json_response(
+                        self,
+                        {
+                            "api_version": "v1",
+                            "game_id": game_id,
+                            "error": "advisor session is stale for the current turn",
+                            "provided_advisor_session_id": advisor_session.advisor_session_id,
+                            "active_advisor_session_id": active_advisor_session.advisor_session_id,
+                            "active_turn_number": active_advisor_session.turn_number,
+                        },
+                        409,
+                    )
+                    return
+
                 if thread_scope == "option" and option_id not in {o.id for o in advisor_session.options}:
                     _json_response(
                         self,
@@ -1566,6 +1672,22 @@ class GameHandler(BaseHTTPRequestHandler):
                             "error": f"Unknown advisor_session_id: {advisor_session_id}",
                         },
                         404,
+                    )
+                    return
+
+                active_advisor_session = _active_advisor_session_unlocked(session)
+                if advisor_session.advisor_session_id != active_advisor_session.advisor_session_id:
+                    _json_response(
+                        self,
+                        {
+                            "api_version": "v1",
+                            "game_id": game_id,
+                            "error": "advisor session is stale for the current turn",
+                            "provided_advisor_session_id": advisor_session.advisor_session_id,
+                            "active_advisor_session_id": active_advisor_session.advisor_session_id,
+                            "active_turn_number": active_advisor_session.turn_number,
+                        },
+                        409,
                     )
                     return
 
@@ -1739,8 +1861,69 @@ class GameHandler(BaseHTTPRequestHandler):
                     _json_response(self, conflict, 409)
                     return
 
+                active_advisor_session = _active_advisor_session_unlocked(session)
+                active_session_id = active_advisor_session.advisor_session_id
+                if (
+                    submission.advisor_session_id is not None
+                    and submission.advisor_session_id != active_session_id
+                ):
+                    conflict = {
+                        "api_version": "v1",
+                        "game_id": game_id,
+                        "error": "advisor session mismatch; refresh policies before playing this turn",
+                        "provided_advisor_session_id": submission.advisor_session_id,
+                        "active_advisor_session_id": active_session_id,
+                        "expected_turn": active_advisor_session.turn_number,
+                    }
+                    if submission.action_id:
+                        _cache_action_result(session, submission.action_id, 409, conflict)
+                    _json_response(self, conflict, 409)
+                    return
+
+                active_option_ids = {option.id for option in active_advisor_session.options}
+                if submission.policy_id not in active_option_ids:
+                    conflict = {
+                        "api_version": "v1",
+                        "game_id": game_id,
+                        "error": "policy_id is not in the current option set; refresh policies and reselect",
+                        "policy_id": submission.policy_id,
+                        "active_advisor_session_id": active_session_id,
+                        "expected_turn": active_advisor_session.turn_number,
+                        "active_options": [
+                            {"id": option.id, "name": option.name}
+                            for option in active_advisor_session.options
+                        ],
+                    }
+                    if submission.action_id:
+                        _cache_action_result(session, submission.action_id, 409, conflict)
+                    _json_response(self, conflict, 409)
+                    return
+
+                if submission.counter_frame_id:
+                    available_counter_frames = session.turn_manager.get_counter_frame_options(
+                        submission.policy_id
+                    )
+                    available_ids = {str(item.get("id", "")) for item in available_counter_frames}
+                    if submission.counter_frame_id not in available_ids:
+                        conflict = {
+                            "api_version": "v1",
+                            "game_id": game_id,
+                            "error": "counter_frame_id is not valid for this policy",
+                            "policy_id": submission.policy_id,
+                            "counter_frame_id": submission.counter_frame_id,
+                            "available_counter_frames": available_counter_frames,
+                        }
+                        if submission.action_id:
+                            _cache_action_result(session, submission.action_id, 409, conflict)
+                        _json_response(self, conflict, 409)
+                        return
+
+                _sync_mayor_option_cache(session, active_advisor_session.options)
                 events = _run_turn_and_capture_events_unlocked(
-                    session, game_id, submission.policy_id
+                    session,
+                    game_id,
+                    submission.policy_id,
+                    counter_frame_id=submission.counter_frame_id,
                 )
                 if events and events[-1]["type"] == "error":
                     error_body = {
@@ -1762,6 +1945,7 @@ class GameHandler(BaseHTTPRequestHandler):
                     "turn_number": session.turn_manager.game_state.turn_number,
                     "events_emitted": len(events),
                     "last_event_id": last_event_id,
+                    "counter_frame_id": submission.counter_frame_id,
                     "action_id": submission.action_id,
                     "idempotent_replay": False,
                 }

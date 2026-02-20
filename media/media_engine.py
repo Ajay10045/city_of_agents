@@ -68,9 +68,9 @@ class MediaEngine:
         sensationalism_component = media_state.sensationalism / 100.0
         trust_component = media_state.trust / 100.0
 
-        mayor_modifier = 1.0 + bias_component * 0.18 + trust_component * 0.12 - sensationalism_component * 0.08
+        mayor_modifier = 1.0 + bias_component * 0.16 + trust_component * 0.10 - sensationalism_component * 0.07
         opposition_modifier = (
-            1.0 - bias_component * 0.18 + sensationalism_component * 0.12 + (1.0 - trust_component) * 0.08
+            1.0 - bias_component * 0.16 + sensationalism_component * 0.09 + (1.0 - trust_component) * 0.06
         )
 
         return _clamp(mayor_modifier, 0.7, 1.35), _clamp(opposition_modifier, 0.7, 1.35)
@@ -120,8 +120,8 @@ class MediaEngine:
                 "headline": f"Opposition frames {opposition_action.name}",
                 "source": "People's Pulse",
                 "lean": "opposition",
-                "virality": int(_clamp(virality_base + max(0, -media_state.bias) + 4.0, 0, 100)),
-                "trust_impact": round(_clamp(-0.8 - trust_swing * 0.6, -10.0, 10.0), 2),
+                "virality": int(_clamp(virality_base + max(0, -media_state.bias) + 1.5, 0, 100)),
+                "trust_impact": round(_clamp(-0.5 - trust_swing * 0.45, -10.0, 10.0), 2),
                 "front": opp_front,
             },
         ]

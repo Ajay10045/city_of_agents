@@ -22,6 +22,7 @@ Current pain points:
 - Logs are hard to inspect deeply (no per-turn expansion flow).
 - Media narrative is underrepresented in UI and gameplay loop.
 - City setup is too generic and does not reflect city-specific demographics/issues.
+- Policy regeneration can desync selected option IDs from active turn cache, causing `Unknown policy id` failures.
 
 ---
 
@@ -49,6 +50,7 @@ Before turn 1, player configures:
 Each turn includes:
 
 1. Mayor policy declaration
+2. Mayor counter-frame selection (explicit second click)
 2. Opposition framing attack
 3. Mayor rebuttal/counter-frame
 4. Opposition follow-up
@@ -74,6 +76,11 @@ Right-side panel displays social/media feed cards:
 - Trust impact
 
 Visual direction should feel like a live timeline feed (Twitter-style structure, not text dump).
+
+### 4.5 Advisor Console + Impact Assessment
+
+- One unified advisor composer handles both follow-up questions and option regeneration constraints.
+- Each policy card includes an Impact Assessment deep-dive panel for socio-economic and narrative risk visibility.
 
 ---
 
@@ -165,6 +172,7 @@ Product quality:
 - 100% of turns are drill-down inspectable in expanded logs.
 - 100% of mayor options contain advisor rationale fields.
 - Media board updates every turn with at least one narrative card.
+- Regenerated/stale advisor sessions are conflict-safe (clear 409 + recoverable refresh path, no opaque unknown-policy errors).
 
 Performance:
 

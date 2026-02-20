@@ -1,6 +1,7 @@
 import type {
   AdvisorAnswerPayload,
   AdvisorSession,
+  CounterFrameOption,
   CityProfileGenerateResult,
   CityProfileStatus,
   DynamicPolicy,
@@ -30,6 +31,12 @@ type PoliciesResponse = {
   advisor_session_id?: string
   turn_number?: number
   policies: DynamicPolicy[]
+}
+
+export type PoliciesFetchResult = {
+  policies: DynamicPolicy[]
+  advisorSessionId: string | null
+  turnNumber: number | null
 }
 
 type TurnsResponse = {
@@ -77,6 +84,8 @@ type ActionSubmitOptions = {
   expectedTurn?: number
   participantId?: string
   actionId?: string
+  advisorSessionId?: string
+  counterFrameId?: string
 }
 
 type AdvisorSessionEnvelope = {
@@ -88,6 +97,13 @@ type AdvisorSessionEnvelope = {
 type AdvisorReviseEnvelope = AdvisorSessionEnvelope & {
   options: DynamicPolicy[]
   diff_summary: Record<string, unknown>
+}
+
+type CounterFramesResponse = {
+  api_version: 'v1'
+  game_id: string
+  policy_id: string
+  counter_frames: CounterFrameOption[]
 }
 
 export async function fetchSetupOptions(): Promise<SetupOptions> {
@@ -146,11 +162,30 @@ export async function fetchState(gameId: string): Promise<StateSnapshot> {
   return data.state
 }
 
-export async function fetchPolicies(gameId: string): Promise<DynamicPolicy[]> {
+export async function fetchPolicies(gameId: string): Promise<PoliciesFetchResult> {
   const res = await fetch(`/v1/games/${encodeURIComponent(gameId)}/policies`)
   if (!res.ok) throw new Error(`Policy error: ${res.status}`)
   const data = (await res.json()) as PoliciesResponse
-  return data.policies ?? []
+  return {
+    policies: data.policies ?? [],
+    advisorSessionId: data.advisor_session_id ?? null,
+    turnNumber: typeof data.turn_number === 'number' ? data.turn_number : null,
+  }
+}
+
+export async function fetchCounterFrames(
+  gameId: string,
+  policyId: string,
+): Promise<CounterFrameOption[]> {
+  const res = await fetch(
+    `/v1/games/${encodeURIComponent(gameId)}/counter-frames?policy_id=${encodeURIComponent(policyId)}`,
+  )
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}))
+    throw new Error(String(errBody.error ?? `Counter-frames error: ${res.status}`))
+  }
+  const data = (await res.json()) as CounterFramesResponse
+  return data.counter_frames ?? []
 }
 
 export async function createAdvisorSession(
@@ -274,6 +309,8 @@ export async function streamTurn(
     body: JSON.stringify({
       actor: 'mayor',
       policy_id: policyId,
+      advisor_session_id: options?.advisorSessionId,
+      counter_frame_id: options?.counterFrameId,
       expected_turn: options?.expectedTurn,
       participant_id: options?.participantId,
       action_id: actionId,

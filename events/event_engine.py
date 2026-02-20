@@ -117,6 +117,18 @@ class EventEngine:
                 law_and_order=stats_norm["law_and_order"],
                 public_trust=stats_norm["public_trust"],
             )
+            previous_turn = game_state.turn_number - 1
+            recent_triggers = 0
+            if previous_turn >= 1:
+                prefix = f"Turn {previous_turn}: Triggered "
+                recent_triggers = sum(
+                    1 for item in game_state.event_history[-10:] if isinstance(item, str) and item.startswith(prefix)
+                )
+            active_pressure = len(game_state.active_events)
+            cadence_damp = 1.0 / (1.0 + active_pressure * 0.45 + recent_triggers * 0.35)
+            if game_state.turn_number <= 3:
+                cadence_damp *= 0.85
+            chance = _clamp(chance * cadence_damp, 0.0, 1.0)
             result.event_chances[definition.name] = chance
 
             if game_state.rng.random() <= chance:
@@ -144,7 +156,7 @@ class EventEngine:
                     active.escalation_level += 1
                     result.escalated_events.append(active.name)
 
-            scale = 1.0 + (active.escalation_level - 1) * 0.35
+            scale = 0.82 + (active.escalation_level - 1) * 0.22
             scaled_city_effects = {
                 key: float(value) * scale for key, value in active.city_effects.items()
             }
