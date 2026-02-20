@@ -36,8 +36,7 @@ export default function AdvisorConsole({
 }: Props) {
   const [session, setSession] = useState<AdvisorSession | null>(null)
   const [activeTab, setActiveTab] = useState<'global' | string>('global')
-  const [question, setQuestion] = useState('')
-  const [constraints, setConstraints] = useState('')
+  const [composer, setComposer] = useState('')
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
@@ -115,7 +114,7 @@ export default function AdvisorConsole({
   }, [session, activeTab])
 
   const askQuestion = async () => {
-    if (!gameId || !session || !question.trim() || busy) return
+    if (!gameId || !session || !composer.trim() || busy) return
 
     setBusy(true)
     onError(null)
@@ -123,12 +122,12 @@ export default function AdvisorConsole({
       const payload = await sendAdvisorMessage(gameId, session.advisor_session_id, {
         thread_scope: activeTab === 'global' ? 'global' : 'option',
         option_id: activeTab === 'global' ? null : activeTab,
-        question: question.trim(),
+        question: composer.trim(),
       })
       setSession(payload.session)
       onPoliciesUpdate(payload.session.options)
       onSessionUpdate(payload.session.advisor_session_id)
-      setQuestion('')
+      setComposer('')
     } catch (err) {
       onError(err instanceof Error ? err.message : 'Advisor question failed')
     } finally {
@@ -148,7 +147,7 @@ export default function AdvisorConsole({
     try {
       const result = await reviseAdvisorOptions(gameId, session.advisor_session_id, {
         mode,
-        constraints: constraints.trim(),
+        constraints: composer.trim(),
         option_id: mode === 'single' ? activeTab : undefined,
       })
       setSession(result.session)
@@ -157,6 +156,7 @@ export default function AdvisorConsole({
       if (mode === 'full') {
         setActiveTab('global')
       }
+      setComposer('')
     } catch (err) {
       onError(err instanceof Error ? err.message : 'Advisor revise failed')
     } finally {
@@ -231,30 +231,20 @@ export default function AdvisorConsole({
 
           <div className="advisor-composer">
             <textarea
-              value={question}
-              onChange={(e) => setQuestion(e.target.value)}
+              value={composer}
+              onChange={(e) => setComposer(e.target.value)}
               rows={2}
               placeholder={
                 activeTab === 'global'
-                  ? 'Ask the advisor about strategic posture for this turn...'
-                  : 'Ask follow-up on this option: why now, risks, alternatives...'
+                  ? 'Unified advisor chat: ask strategy or type constraints for regeneration...'
+                  : 'Unified advisor chat for this option: ask why/risk or provide revise constraints...'
               }
               disabled={busy || disabled}
             />
-            <button onClick={askQuestion} disabled={busy || disabled || !question.trim()}>
-              Ask Advisor
-            </button>
-          </div>
-
-          <div className="advisor-revise">
-            <textarea
-              value={constraints}
-              onChange={(e) => setConstraints(e.target.value)}
-              rows={2}
-              placeholder="Constraints for revision (example: prioritize jobs + anti-corruption in low-trust wards)."
-              disabled={busy || disabled}
-            />
-            <div className="advisor-revise-actions">
+            <div className="advisor-composer-actions">
+              <button onClick={askQuestion} disabled={busy || disabled || !composer.trim()}>
+                Ask Advisor
+              </button>
               <button
                 onClick={() => revise('single')}
                 disabled={busy || disabled || activeTab === 'global'}

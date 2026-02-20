@@ -141,6 +141,16 @@ export type DynamicPolicy = {
   }>
 }
 
+export type CounterFrameOption = {
+  id: string
+  label: string
+  message: string
+  target_groups: string[]
+  campaign_boost: number
+  effects: Record<string, number>
+  risk?: string
+}
+
 export type AdvisorMessage = {
   id: string
   role: 'user' | 'advisor' | string
@@ -318,6 +328,7 @@ export type StreamMessage =
   | { type: 'opposition_action'; action: DynamicPolicy }
   | { type: 'generated_event'; event: GeneratedEvent | null }
   | { type: 'media_narrative_published'; turn: number; cards: MediaNarrativeCard[] }
+  | { type: 'counter_frame_selected'; turn: number; counter_frame: CounterFrameOption }
   | { type: 'debate'; debate: DebateResult }
   | {
       type: 'agent_impact_assessed'

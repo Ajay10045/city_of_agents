@@ -100,7 +100,13 @@ class EventGenerator:
                 + float(game_state.city_stats.corruption) * 0.22
                 - float(game_state.city_stats.public_trust) * 0.18
             ) / 100.0
-            chance = max(0.03, min(0.45, 0.08 + max(0.0, stress)))
+            chance = max(0.02, min(0.30, 0.03 + max(0.0, stress) * 0.72))
+            # Cadence guardrail: avoid event spam when crises are already active.
+            active_pressure = len(game_state.active_events)
+            if active_pressure > 0:
+                chance *= max(0.35, 1.0 - active_pressure * 0.28)
+            if game_state.turn_number <= 2:
+                chance *= 0.7
             if game_state.rng.random() > chance:
                 return None
             return GeneratedEvent(
@@ -112,9 +118,9 @@ class EventGenerator:
                 type="social",
                 severity="moderate",
                 duration=2,
-                city_effects={"public_trust": -2.2, "social_tension": 2.8, "law_and_order": -1.0},
+                city_effects={"public_trust": -1.4, "social_tension": 1.7, "law_and_order": -0.6},
                 group_effects=[],
-                media_effects={"sensationalism": 2.0, "trust": -0.8},
+                media_effects={"sensationalism": 1.3, "trust": -0.4},
             )
 
         raw = data.get("event", {})
