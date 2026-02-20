@@ -77,6 +77,21 @@ class TurnManager:
         # Cache of current turn's mayor options (id -> DynamicPolicy)
         self._cached_mayor_options: dict[str, DynamicPolicy] = {}
 
+    def _run_agent_impact_pass(
+        self,
+        mayor_action: Any,
+        opposition_action: Any,
+        rumor_pressure: float,
+    ) -> dict[str, Any]:
+        return self.agent_engine.apply_policy_impact_pass(
+            game_state=self.game_state,
+            mayor_effects=mayor_action.effects,
+            opposition_effects=opposition_action.effects,
+            mayor_group_effects=mayor_action.group_effects,
+            opposition_group_effects=opposition_action.group_effects,
+            rumor_pressure=rumor_pressure,
+        )
+
     # ── Public API ─────────────────────────────────────────────────────────
 
     def get_mayor_options(self) -> list[DynamicPolicy]:
@@ -132,6 +147,7 @@ class TurnManager:
 
         campaign_delta = mayor_resolution.campaign_strength - opp_resolution.campaign_strength
         self.agent_engine.propagate_alignment(self.game_state, campaign_delta, rumor_pressure)
+        agent_impact = self._run_agent_impact_pass(mayor_policy, opp_policy, rumor_pressure)
 
         # ── LLM-generated event ─────────────────────────────────────────────
         generated_event = self.event_generator.maybe_generate_event(self.game_state)
@@ -224,6 +240,7 @@ class TurnManager:
             "mayor_action": mayor_policy.to_dict(),
             "opposition_action": opp_policy.to_dict(),
             "stat_changes": stat_changes,
+            "agent_impact": agent_impact,
             "triggered_events": all_triggered,
             "escalated_events": event_result.escalated_events,
             "event_chances": {k: round(v, 4) for k, v in event_result.event_chances.items()},
@@ -285,6 +302,8 @@ class TurnManager:
             "last_credibility_delta": round(self.game_state.last_credibility_delta, 3),
             "open_promises": len([p for p in self.game_state.promise_ledger if not p.get("resolved")]),
             "simulation_profile": dict(self.game_state.simulation_profile),
+            "last_agent_impact": dict(self.game_state.last_agent_impact),
+            "cohort_metrics": dict(self.game_state.cohort_metrics),
             "long_term_effects": [
                 {"source_id": e.source_id, "actor": e.actor, "remaining_turns": e.remaining_turns}
                 for e in self.game_state.long_term_effects
@@ -338,6 +357,13 @@ class TurnManager:
         self.agent_engine.update_radicalization(self.game_state, rumor_pressure)
         campaign_delta = mayor_resolution.campaign_strength - opp_resolution.campaign_strength
         self.agent_engine.propagate_alignment(self.game_state, campaign_delta, rumor_pressure)
+        agent_impact = self._run_agent_impact_pass(mayor_policy, opp_policy, rumor_pressure)
+        yield {"type": "agent_impact_assessed", "summary": agent_impact}
+        if agent_impact.get("top_cohorts"):
+            yield {
+                "type": "cohort_shift_aggregated",
+                "cohorts": agent_impact.get("top_cohorts", []),
+            }
 
         # ── LLM event generation ─────────────────────────────────────────────
         generated_event = self.event_generator.maybe_generate_event(self.game_state)
@@ -419,6 +445,7 @@ class TurnManager:
             "type": "done",
             "turn": turn,
             "stat_changes": stat_changes,
+            "agent_impact": agent_impact,
             "triggered_events": all_triggered,
             "escalated_events": event_result.escalated_events,
             "event_chances": {k: round(v, 4) for k, v in event_result.event_chances.items()},
@@ -468,6 +495,9 @@ class TurnManager:
 
             campaign_delta = mayor_resolution.campaign_strength - opposition_resolution.campaign_strength
             self.agent_engine.propagate_alignment(self.game_state, campaign_delta, rumor_pressure)
+            agent_impact = self._run_agent_impact_pass(
+                mayor_policy, opposition_policy, rumor_pressure
+            )
 
             event_result = self.event_engine.step(self.game_state)
 
@@ -493,6 +523,7 @@ class TurnManager:
                 prev_mayor_pop=prev_mayor_pop,
                 prev_opp_pop=prev_opp_pop,
                 rumor_pressure=rumor_pressure,
+                agent_impact=agent_impact,
                 event_result=event_result,
             )
 
@@ -516,7 +547,7 @@ class TurnManager:
         print(f"    Government In Power: {self.game_state.governing_party}")
 
     def _log_turn(self, turn, mayor_action, opposition_action, pre_stats, post_stats,
-                  prev_mayor_pop, prev_opp_pop, rumor_pressure, event_result) -> None:
+                  prev_mayor_pop, prev_opp_pop, rumor_pressure, agent_impact, event_result) -> None:
         popularity_leader = (
             "Mayor" if self.game_state.mayor_popularity > self.game_state.opposition_popularity
             else "Opposition" if self.game_state.opposition_popularity > self.game_state.mayor_popularity
@@ -533,6 +564,14 @@ class TurnManager:
         ]
         print("  Major Stat Changes: " + (", ".join(stat_changes) if stat_changes else "none"))
         print(f"  Rumor Pressure: {rumor_pressure:.3f}")
+        print(
+            "  Agent Impact: Δh {0:+.3f}, Δr {1:+.3f}, Δa {2:+.3f} | fronts: {3}".format(
+                float(agent_impact.get("avg_happiness_delta", 0.0)),
+                float(agent_impact.get("avg_radicalization_delta", 0.0)),
+                float(agent_impact.get("avg_alignment_delta", 0.0)),
+                ", ".join(agent_impact.get("dominant_fronts", [])) or "none",
+            )
+        )
         if event_result.triggered_events:
             print("  Triggered Events: " + ", ".join(event_result.triggered_events))
         else:

@@ -125,12 +125,23 @@ def _build_game(
     )
 
     agent_engine = AgentEngine()
+    profile = dict(simulation_profile or {})
+    target_agent_count: int | None = None
+    try:
+        raw_target = int(profile.get("agent_count", 0))
+        if raw_target > 0:
+            target_agent_count = raw_target
+    except (TypeError, ValueError):
+        target_agent_count = None
+
     agents, relationships = agent_engine.initialize_population(
         identity_groups,
         rng,
         role_distribution=role_distribution,
         representatives_per_cell=6,
+        target_agent_count=target_agent_count,
     )
+    profile["actual_agent_count"] = len(agents)
 
     game_state = GameState(
         turn_number=0,
@@ -146,7 +157,7 @@ def _build_game(
         media_state=MediaState(),
         rng=rng,
         rng_seed=seed,
-        simulation_profile=dict(simulation_profile or {}),
+        simulation_profile=profile,
     )
 
     policy_engine = PolicyEngine(CONFIG_DIR / "policies.json")
@@ -217,6 +228,8 @@ def _actor_for_message(message_type: str, payload: dict) -> str | None:
         return "mayor"
     if message_type == "opposition_action":
         return "opposition"
+    if message_type in {"agent_impact_assessed", "cohort_shift_aggregated"}:
+        return "simulation"
     if message_type == "debate":
         debate = payload.get("debate", {})
         group_id = debate.get("group_id")

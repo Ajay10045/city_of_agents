@@ -88,7 +88,11 @@ def _install_stubbed_turn_flow(game_id: str) -> None:
 
 
 def test_v1_create_game_and_state_contract(api_server: str) -> None:
-    status, payload = _http_json("POST", f"{api_server}/v1/games", {"seed": 7, "turns": 5})
+    status, payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games",
+        {"seed": 7, "turns": 5, "agent_count": 1000, "llm_panel_size": 100},
+    )
     assert status == 201
     assert payload["api_version"] == "v1"
     assert isinstance(payload["game_id"], str) and payload["game_id"]
@@ -140,6 +144,7 @@ def test_v1_create_game_accepts_agent_impact_setup_fields(api_server: str) -> No
     assert payload["setup"]["llm_micro_batch_size"] == 24
     assert payload["setup"]["max_parallel_llm_requests"] == 10
     assert payload["setup"]["randomness_scale"] == 0.17
+    assert payload["state"]["simulation_profile"]["actual_agent_count"] == 5000
     assert payload["state"]["simulation_profile"]["agent_count"] == 5000
     assert payload["state"]["simulation_profile"]["randomness_scale"] == 0.17
     assert payload["state"]["election_turn"] == 9
@@ -170,7 +175,11 @@ def test_v1_create_game_rejects_invalid_agent_impact_setup(
 
 
 def test_v1_policies_actions_and_events_stream(api_server: str) -> None:
-    create_status, game_payload = _http_json("POST", f"{api_server}/v1/games", {"seed": 11, "turns": 5})
+    create_status, game_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games",
+        {"seed": 11, "turns": 5, "agent_count": 1000, "llm_panel_size": 100},
+    )
     assert create_status == 201
     game_id = game_payload["game_id"]
     _install_stubbed_turn_flow(game_id)
@@ -214,7 +223,11 @@ def test_v1_policies_actions_and_events_stream(api_server: str) -> None:
 
 
 def test_v1_expected_turn_conflict_and_idempotent_replay(api_server: str) -> None:
-    create_status, game_payload = _http_json("POST", f"{api_server}/v1/games", {"seed": 13, "turns": 5})
+    create_status, game_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games",
+        {"seed": 13, "turns": 5, "agent_count": 1000, "llm_panel_size": 100},
+    )
     assert create_status == 201
     game_id = game_payload["game_id"]
     _install_stubbed_turn_flow(game_id)
@@ -251,7 +264,11 @@ def test_v1_expected_turn_conflict_and_idempotent_replay(api_server: str) -> Non
 
 
 def test_v1_join_role_validation_and_participant_authorization(api_server: str) -> None:
-    create_status, game_payload = _http_json("POST", f"{api_server}/v1/games", {"seed": 17, "turns": 5})
+    create_status, game_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games",
+        {"seed": 17, "turns": 5, "agent_count": 1000, "llm_panel_size": 100},
+    )
     assert create_status == 201
     game_id = game_payload["game_id"]
     _install_stubbed_turn_flow(game_id)
