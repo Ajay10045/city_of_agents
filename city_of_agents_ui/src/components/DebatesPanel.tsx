@@ -29,6 +29,7 @@ export default function DebatesPanel({ debates, visible }: Props) {
                 <div className="debate-group-head">
                   <span className="debate-avatar" aria-hidden>{avatar}</span>
                   <div className="debate-group-name">{d.group_name}</div>
+                  {typeof d.turn === 'number' && <div className="debate-turn-tag">T{d.turn}</div>}
                 </div>
                 <div className="debate-summary">{d.debate_summary}</div>
                 {d.notable_quote && <div className="debate-quote">"{d.notable_quote}"</div>}

@@ -225,6 +225,7 @@ export type GeneratedEvent = {
 }
 
 export type DebateResult = {
+  turn?: number
   group_name: string
   debate_summary: string
   notable_quote?: string

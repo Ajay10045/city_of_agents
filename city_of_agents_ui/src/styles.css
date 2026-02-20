@@ -392,12 +392,33 @@ html, body {
 	animation: sweep 3.6s ease-in-out infinite;
 	pointer-events: none;
 }
+.stream-list {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	max-height: 48vh;
+	overflow: auto;
+	padding-right: 4px;
+}
+.stream-list::-webkit-scrollbar {
+	width: 6px;
+}
+.stream-list::-webkit-scrollbar-thumb {
+	background: var(--border);
+	border-radius: 999px;
+}
 .stream-mayor { border-left-color: var(--mayor); }
 .stream-opposition { border-left-color: var(--red); }
 .stream-event { border-left-color: #ff6b35; }
 .stream-impact { border-left-color: #38bdf8; }
 .stream-media { border-left-color: #f97316; }
 
+.stream-card-label-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
 .stream-card-label {
 	font-size: 10px;
 	font-weight: 700;
@@ -405,6 +426,15 @@ html, body {
 	text-transform: uppercase;
 	letter-spacing: .06em;
 	margin-bottom: 5px;
+}
+.stream-turn-tag {
+	font-size: 10px;
+	font-weight: 700;
+	color: var(--gold-light);
+	border: 1px solid rgba(240, 184, 77, 0.38);
+	border-radius: 999px;
+	padding: 1px 7px;
+	letter-spacing: 0.06em;
 }
 .stream-card-name {
 	font-size: 14px;
@@ -711,6 +741,16 @@ html, body {
 	font-weight: 700;
 	color: var(--gold);
 }
+.debate-turn-tag {
+	margin-left: auto;
+	font-size: 10px;
+	font-weight: 700;
+	color: var(--gold-light);
+	border: 1px solid rgba(240, 184, 77, 0.38);
+	border-radius: 999px;
+	padding: 1px 7px;
+	letter-spacing: 0.06em;
+}
 .debate-summary {
 	font-size: 12px;
 	color: var(--text);
@@ -729,6 +769,18 @@ html, body {
 .debate-delta span { font-weight: 600; }
 .debate-delta span.pos { color: var(--green); }
 .debate-delta span.neg { color: var(--red); }
+#debates-container {
+	max-height: 58vh;
+	overflow: auto;
+	padding-right: 4px;
+}
+#debates-container::-webkit-scrollbar {
+	width: 6px;
+}
+#debates-container::-webkit-scrollbar-thumb {
+	background: var(--border);
+	border-radius: 999px;
+}
 @keyframes chatterPulse {
 	0%, 100% { transform: scale(1); filter: brightness(1); }
 	50% { transform: scale(1.08); filter: brightness(1.12); }

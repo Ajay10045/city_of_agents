@@ -114,9 +114,22 @@ export default function App() {
     setMediaTimeline(cards)
   }
 
-  const resetTurnPanels = () => {
+  const resetSimulationPanels = () => {
     setDebates([])
     setStream([])
+    setMediaTimeline([])
+    setPolicies([])
+    setStatChanges({})
+    setEventChances({})
+    setTurnResultVisible(false)
+    setTurnMayorAction(null)
+    setTurnOppAction(null)
+    setTurnTriggeredEvents([])
+    setAdvisorFocusOptionId(null)
+    setImpactPolicy(null)
+  }
+
+  const prepareTurnPanels = () => {
     setStatChanges({})
     setEventChances({})
     setTurnResultVisible(false)
@@ -175,9 +188,7 @@ export default function App() {
       setState(snapshot)
       setSetupConfig(config)
       setAdvisorSessionId(null)
-      resetTurnPanels()
-      setMediaTimeline([])
-      setPolicies([])
+      resetSimulationPanels()
       setElectionResult(null)
       setGameOverVisible(false)
       setSetupVisible(false)
@@ -205,7 +216,7 @@ export default function App() {
     setBusy(true)
     setError(null)
     setSelectedPolicyId(policyId)
-    resetTurnPanels()
+    prepareTurnPanels()
 
     let mayorAction: DynamicPolicy | null = null
     let oppAction: DynamicPolicy | null = null
@@ -217,6 +228,7 @@ export default function App() {
         lastEventId,
         (msg: StreamMessage, eventId: number) => {
           setLastEventId((prev) => Math.max(prev, eventId))
+          const messageTurn = 'turn' in msg && typeof msg.turn === 'number' ? msg.turn : state.turn_number + 1
           if (msg.type === 'mayor_action_submitted' || (msg.type === 'mayor_action' && !mayorAction)) {
             const action = msg.action
             mayorAction = action
@@ -225,6 +237,7 @@ export default function App() {
               ...s,
               {
                 kind: 'mayor',
+                turn: messageTurn,
                 label: '🏛 Mayor Action Submitted',
                 name: action.name,
                 description: action.description,
@@ -246,6 +259,7 @@ export default function App() {
               ...s,
               {
                 kind: 'opposition',
+                turn: messageTurn,
                 label: '⚔ Opposition Primary Frame',
                 name: action.name,
                 description: action.description,
@@ -262,6 +276,7 @@ export default function App() {
               ...s,
               {
                 kind: 'mayor',
+                turn: messageTurn,
                 label: '🛡 Mayor Counter Frame',
                 name: 'Narrative Counter',
                 description: msg.message,
@@ -275,6 +290,7 @@ export default function App() {
               ...s,
               {
                 kind: 'opposition',
+                turn: messageTurn,
                 label: '🧨 Opposition Follow-up',
                 name: 'Narrative Escalation',
                 description: msg.message,
@@ -288,6 +304,7 @@ export default function App() {
               ...s,
               {
                 kind: 'impact',
+                turn: messageTurn,
                 label: '🗣 Street Chatter',
                 name: (msg.summary ?? [])[0] ?? 'Citizen sentiment recalibrated',
                 meta: `Fronts: ${(msg.dominant_fronts ?? []).join(', ') || 'none'}`,
@@ -303,6 +320,7 @@ export default function App() {
               ...s,
               {
                 kind: 'impact',
+                turn: messageTurn,
                 label: '📉 Simulation Stats Applied',
                 name: `${Object.keys(msg.stat_deltas ?? {}).length} major stat deltas`,
                 meta: `Events: ${(msg.triggered_events ?? []).join(', ') || 'none'}`,
@@ -315,6 +333,7 @@ export default function App() {
               ...s,
               {
                 kind: 'impact',
+                turn: messageTurn,
                 label: '📊 Popularity Recalculated',
                 name: `Mayor ${msg.mayor_popularity.toFixed(1)}% · Opp ${msg.opposition_popularity.toFixed(1)}%`,
                 meta: `In Power: ${msg.governing_party}`,
@@ -329,6 +348,7 @@ export default function App() {
                 ...s,
                 {
                   kind: 'event',
+                  turn: messageTurn,
                   label: `${ev.severity === 'major' ? '🚨' : ev.severity === 'moderate' ? '⚠️' : '⚡'} Crisis Emerged`,
                   name: ev.name,
                   description: ev.description,
@@ -346,6 +366,7 @@ export default function App() {
                 ...s,
                 {
                   kind: 'media',
+                  turn: messageTurn,
                   label: '🗞 Media Narrative',
                   name: msg.cards[0].headline,
                   meta: `${msg.cards.length} media card${msg.cards.length === 1 ? '' : 's'}`,
@@ -355,7 +376,7 @@ export default function App() {
           }
 
           if (msg.type === 'debate') {
-            setDebates((d) => [...d, msg.debate])
+            setDebates((d) => [...d, { ...msg.debate, turn: messageTurn }])
           }
 
           if (msg.type === 'agent_impact_assessed') {
@@ -363,6 +384,7 @@ export default function App() {
               ...s,
               {
                 kind: 'impact',
+                turn: messageTurn,
                 label: '🧠 Agent Impact Assessed',
                 name: `${msg.summary.agent_count_evaluated} agents re-evaluated`,
                 description:
@@ -388,6 +410,7 @@ export default function App() {
               ...s,
               {
                 kind: 'impact',
+                turn: messageTurn,
                 label: '📊 Cohort Narrative Shift',
                 name: 'Top cohort movement',
                 meta: top || 'No significant shift',
@@ -402,6 +425,7 @@ export default function App() {
               ...s,
               {
                 kind: 'event',
+                turn: messageTurn,
                 label: '🏁 Turn Closed',
                 name: `In Power: ${msg.state.governing_party}`,
                 meta: `Mayor ${msg.state.mayor_popularity.toFixed(1)}% · Opp ${msg.state.opposition_popularity.toFixed(1)}%`,
