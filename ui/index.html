@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>City of Agents</title>
+  <link rel="stylesheet" href="/ui/style.css" />
+</head>
+<body>
+<div id="app">
+
+  <!-- ── Header ─────────────────────────────────────────────────── -->
+  <header class="header">
+    <h1>City of Agents</h1>
+    <div class="header-meta">
+      <span>Turn <strong id="turn-number">0</strong> / <strong id="total-turns">50</strong></span>
+      <span id="election-countdown">Election in 50 turns</span>
+      <span>In Power: <strong id="governing-party">Mayor</strong></span>
+      <span id="seed-display"></span>
+      <button class="btn-new-game" onclick="newGame()">New Game</button>
+    </div>
+  </header>
+
+  <!-- ── Turn result banner ──────────────────────────────────────── -->
+  <div id="turn-result">
+    <div class="result-row">
+      <div class="result-action">
+        <div class="actor">Mayor played</div>
+        <div class="name mayor" id="result-mayor-action">—</div>
+      </div>
+      <div class="result-action">
+        <div class="actor">Opposition played</div>
+        <div class="name opp" id="result-opp-action">—</div>
+      </div>
+    </div>
+    <div class="result-events" id="result-events" style="display:none"></div>
+    <div id="result-opp-rationale" style="display:none;font-size:11px;color:var(--muted);margin-top:6px;font-style:italic"></div>
+  </div>
+
+  <!-- ── Main layout ─────────────────────────────────────────────── -->
+  <div class="layout">
+
+    <!-- Left sidebar -->
+    <aside>
+
+      <!-- Popularity -->
+      <div class="panel">
+        <div class="panel-title">Popularity</div>
+        <div class="pop-row">
+          <span class="pop-label">Mayor</span>
+          <div class="pop-track"><div class="pop-fill mayor" id="fill-mayor" style="width:50%"></div></div>
+          <span class="pop-value mayor" id="val-mayor">50.0%</span>
+        </div>
+        <div class="pop-row">
+          <span class="pop-label">Opp</span>
+          <div class="pop-track"><div class="pop-fill opp" id="fill-opp" style="width:50%"></div></div>
+          <span class="pop-value opp" id="val-opp">50.0%</span>
+        </div>
+      </div>
+
+      <!-- Campaign strength -->
+      <div class="panel">
+        <div class="panel-title">Campaign Strength</div>
+        <div class="campaign-row"><span>Mayor</span><span id="camp-mayor">—</span></div>
+        <div class="campaign-row"><span>Opposition</span><span id="camp-opp">—</span></div>
+      </div>
+
+      <!-- Media -->
+      <div class="panel">
+        <div class="panel-title">Media</div>
+        <div class="media-row">
+          <span class="media-label">Bias</span>
+          <div class="bias-track">
+            <div class="bias-center"></div>
+            <div class="bias-dot" id="bias-dot"></div>
+          </div>
+          <span class="media-val" id="val-bias">Neutral</span>
+        </div>
+        <div class="media-row">
+          <span class="media-label">Sensational</span>
+          <div class="media-track"><div class="media-fill" id="fill-sens" style="width:46%"></div></div>
+          <span class="media-val" id="val-sens">46</span>
+        </div>
+        <div class="media-row">
+          <span class="media-label">Trust</span>
+          <div class="media-track"><div class="media-fill" id="fill-trust" style="width:54%;background:var(--green)"></div></div>
+          <span class="media-val" id="val-trust">54</span>
+        </div>
+      </div>
+
+    </aside>
+
+    <!-- Right main area -->
+    <main>
+
+      <!-- City stats -->
+      <div class="panel">
+        <div class="panel-title">City Statistics</div>
+        <div id="city-stats-rows"></div>
+      </div>
+
+      <!-- Identity groups -->
+      <div class="panel">
+        <div class="panel-title">Identity Groups</div>
+        <div id="groups-container"></div>
+      </div>
+
+      <!-- Events -->
+      <div class="panel">
+        <div class="panel-title">Active Crises</div>
+        <div id="events-container"></div>
+        <div class="crisis-risk" id="crisis-risks"></div>
+      </div>
+
+      <!-- Live turn feed (streaming cards appear here) -->
+      <div class="panel" id="stream-panel" style="display:none">
+        <div class="panel-title">Live Turn Feed</div>
+        <div id="stream-area"></div>
+      </div>
+
+      <!-- Citizen debates -->
+      <div class="panel" id="debates-panel" style="display:none">
+        <div class="panel-title">Street-Level Pulse — What Citizens Are Saying</div>
+        <div id="debates-container"></div>
+      </div>
+
+      <!-- Policy selection -->
+      <div class="panel" id="policy-section">
+        <div class="panel-title">Your Move — Mayor</div>
+        <p class="policy-prompt" id="policy-prompt">Loading…</p>
+        <div class="policy-grid" id="policy-grid"></div>
+      </div>
+
+      <!-- Turn log -->
+      <div class="panel">
+        <div class="panel-title">Turn Log</div>
+        <div id="turn-log"></div>
+      </div>
+
+    </main>
+  </div>
+
+</div><!-- #app -->
+
+<!-- ── Election overlay ────────────────────────────────────────── -->
+<div id="election-overlay">
+  <div class="election-card">
+    <h2>Election Results</h2>
+    <div class="election-bars">
+      <div class="election-bar-row">
+        <span class="election-bar-label">Mayor</span>
+        <div class="election-bar-track"><div class="election-bar-fill mayor" id="election-fill-mayor" style="width:0%"></div></div>
+        <span class="election-bar-pct" id="election-mayor-pct">—</span>
+      </div>
+      <div class="election-bar-row">
+        <span class="election-bar-label">Opposition</span>
+        <div class="election-bar-track"><div class="election-bar-fill opp" id="election-fill-opp" style="width:0%"></div></div>
+        <span class="election-bar-pct" id="election-opp-pct">—</span>
+      </div>
+    </div>
+    <div class="outcome" id="election-outcome">—</div>
+    <div class="election-meta" id="election-meta"></div>
+    <button class="btn-continue" onclick="continueAfterElection()">Continue</button>
+  </div>
+</div>
+
+<!-- ── Game over overlay ───────────────────────────────────────── -->
+<div id="gameover-overlay">
+  <div class="gameover-card">
+    <h2>Simulation Complete</h2>
+    <p>
+      Governing party: <strong id="gameover-party">—</strong><br/>
+      Final popularity — Mayor: <strong id="gameover-mayor-pop">—</strong> &nbsp; Opposition: <strong id="gameover-opp-pop">—</strong>
+    </p>
+    <button class="btn-continue" onclick="newGame()">Play Again</button>
+  </div>
+</div>
+
+<script src="/ui/app.js"></script>
+</body>
+</html>

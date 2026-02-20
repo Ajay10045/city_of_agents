@@ -18,6 +18,10 @@ from llm.event_generator import EventGenerator
 from llm.dynamic_policy import DynamicPolicy
 
 
+def _clamp(value: float, lower: float, upper: float) -> float:
+    return max(lower, min(upper, value))
+
+
 class MayorAdvisorPort(Protocol):
     def generate_options(
         self, game_state: GameState, guidance: str | None = None
@@ -102,7 +106,146 @@ class TurnManager:
         self._cached_mayor_options = {p.id: p for p in options}
         return options
 
-    def step(self, mayor_policy_id: str) -> dict:
+    def get_counter_frame_options(self, mayor_policy_id: str) -> list[dict[str, Any]]:
+        mayor_policy = self._cached_mayor_options.get(mayor_policy_id)
+        if mayor_policy is None:
+            return []
+
+        front_rank = sorted(
+            mayor_policy.narrative_fronts_impacted.items(),
+            key=lambda item: abs(float(item[1])),
+            reverse=True,
+        )
+        primary_front = front_rank[0][0] if front_rank else "public_trust"
+        secondary_front = front_rank[1][0] if len(front_rank) > 1 else "services"
+        target_groups = list(mayor_policy.target_groups[:3]) or ["Undecided neighborhoods"]
+
+        return [
+            {
+                "id": "delivery_receipts",
+                "label": "Delivery Receipts",
+                "message": (
+                    f"Publish delivery milestones on {primary_front} with weekly scorecards and third-party audit."
+                ),
+                "target_groups": target_groups,
+                "campaign_boost": 0.04,
+                "effects": {"public_trust": 1.2, "social_tension": -0.5},
+                "risk": "Backfires if implementation slips in the next 1-2 turns.",
+            },
+            {
+                "id": "empathy_relief",
+                "label": "Empathy + Relief",
+                "message": (
+                    f"Open with citizen pain acknowledgment and immediate relief in pressure points linked to {secondary_front}."
+                ),
+                "target_groups": target_groups,
+                "campaign_boost": 0.03,
+                "effects": {"public_trust": 0.8, "social_tension": -1.0, "law_and_order": 0.4},
+                "risk": "Can be framed as rhetoric if relief is not visible quickly.",
+            },
+            {
+                "id": "accountability_pivot",
+                "label": "Accountability Pivot",
+                "message": (
+                    "Shift narrative to enforcement: publish contracts, penalties, and independent grievance redress timelines."
+                ),
+                "target_groups": target_groups,
+                "campaign_boost": 0.02,
+                "effects": {"corruption": -1.0, "public_trust": 0.6, "social_tension": 0.2},
+                "risk": "Raises expectations and gives opposition a checklist to attack.",
+            },
+        ]
+
+    def _resolve_counter_frame(
+        self,
+        mayor_policy_id: str,
+        counter_frame_id: str | None,
+    ) -> dict[str, Any]:
+        options = self.get_counter_frame_options(mayor_policy_id)
+        if not options:
+            return {
+                "id": "default",
+                "label": "Default Counter Frame",
+                "message": "Mayor reframes the turn around delivery and stability.",
+                "target_groups": [],
+                "campaign_boost": 0.0,
+                "effects": {},
+                "risk": "",
+            }
+        if counter_frame_id:
+            for option in options:
+                if option["id"] == counter_frame_id:
+                    return option
+        return options[0]
+
+    def _apply_counter_frame_effects(self, counter_frame: dict[str, Any]) -> None:
+        effects = counter_frame.get("effects", {})
+        if isinstance(effects, dict):
+            safe_effects = {
+                str(key): float(value)
+                for key, value in effects.items()
+                if isinstance(value, (int, float))
+            }
+            if safe_effects:
+                self.game_state.city_stats.apply_delta(safe_effects)
+
+        boost = float(counter_frame.get("campaign_boost", 0.0))
+        current = self.game_state.campaign_strength.get("mayor", 1.0)
+        self.game_state.campaign_strength["mayor"] = _clamp(
+            current * 0.94 + (1.0 + boost) * 0.06,
+            0.6,
+            1.6,
+        )
+
+    def _stabilize_popularity(
+        self,
+        mayor_pop: float,
+        opposition_pop: float,
+        pre_stats: dict[str, float],
+        post_stats: dict[str, float],
+    ) -> tuple[float, float]:
+        previous_mayor = float(self.game_state.mayor_popularity)
+
+        service_delta = (
+            (post_stats.get("employment", 50.0) - pre_stats.get("employment", 50.0))
+            + (post_stats.get("infrastructure", 50.0) - pre_stats.get("infrastructure", 50.0))
+            + (post_stats.get("economy", 50.0) - pre_stats.get("economy", 50.0))
+        ) / 3.0
+        trust_delta = post_stats.get("public_trust", 50.0) - pre_stats.get("public_trust", 50.0)
+        tension_relief = pre_stats.get("social_tension", 50.0) - post_stats.get("social_tension", 50.0)
+        delivery_bonus = _clamp(service_delta * 0.22 + trust_delta * 0.35 + tension_relief * 0.24, -3.2, 3.2)
+
+        mayor_target = mayor_pop + delivery_bonus
+        opposition_target = opposition_pop - delivery_bonus
+        mayor_target = mayor_target * 0.84 + 50.0 * 0.16
+        opposition_target = opposition_target * 0.84 + 50.0 * 0.16
+
+        total = mayor_target + opposition_target
+        if total <= 0:
+            mayor_target = 50.0
+            opposition_target = 50.0
+        else:
+            mayor_target = (mayor_target / total) * 100.0
+            opposition_target = (opposition_target / total) * 100.0
+
+        gap = mayor_target - opposition_target
+        max_gap = 24.0
+        if abs(gap) > max_gap:
+            overflow = (abs(gap) - max_gap) * 0.5
+            if gap > 0:
+                mayor_target -= overflow
+                opposition_target += overflow
+            else:
+                mayor_target += overflow
+                opposition_target -= overflow
+
+        mayor_smooth = previous_mayor * 0.62 + mayor_target * 0.38
+        mayor_smooth = _clamp(mayor_smooth, previous_mayor - 7.0, previous_mayor + 7.0)
+        mayor_smooth = _clamp(mayor_smooth, 0.0, 100.0)
+        opposition_smooth = 100.0 - mayor_smooth
+        return mayor_smooth, opposition_smooth
+
+    def step(self, mayor_policy_id: str, counter_frame_id: str | None = None) -> dict:
         """Run a single turn with the player-chosen mayor policy."""
         turn = self.game_state.turn_number + 1
         if turn > self.game_state.total_turns:
@@ -115,6 +258,7 @@ class TurnManager:
         mayor_policy = self._cached_mayor_options.get(mayor_policy_id)
         if mayor_policy is None:
             return {"error": f"Unknown policy id: {mayor_policy_id!r}"}
+        counter_frame = self._resolve_counter_frame(mayor_policy_id, counter_frame_id)
         mayor_resolution = self.policy_engine.apply_dynamic_action(self.game_state, mayor_policy)
 
         # ── Opposition action (LLM agent reasons and decides) ───────────────
@@ -150,6 +294,7 @@ class TurnManager:
         campaign_delta = mayor_resolution.campaign_strength - opp_resolution.campaign_strength
         self.agent_engine.propagate_alignment(self.game_state, campaign_delta, rumor_pressure)
         agent_impact = self._run_agent_impact_pass(mayor_policy, opp_policy, rumor_pressure)
+        self._apply_counter_frame_effects(counter_frame)
 
         # ── LLM-generated event ─────────────────────────────────────────────
         generated_event = self.event_generator.maybe_generate_event(self.game_state)
@@ -225,8 +370,12 @@ class TurnManager:
         mayor_pop += credibility_shift * 2.0 + float(self.game_state.last_credibility_delta) * 0.55
         opp_pop -= credibility_shift * 2.0 + float(self.game_state.last_credibility_delta) * 0.55
 
-        mayor_pop = max(0.0, min(100.0, mayor_pop))
-        opp_pop = max(0.0, min(100.0, opp_pop))
+        mayor_pop, opp_pop = self._stabilize_popularity(
+            mayor_pop,
+            opp_pop,
+            pre_stats,
+            post_stats,
+        )
         self.game_state.mayor_popularity = mayor_pop
         self.game_state.opposition_popularity = opp_pop
 
@@ -321,12 +470,13 @@ class TurnManager:
             ],
         }
 
-    def stream_step(self, mayor_policy_id: str):
+    def stream_step(self, mayor_policy_id: str, counter_frame_id: str | None = None):
         """Generator: yields progress dicts after each LLM step for SSE streaming."""
         mayor_policy = self._cached_mayor_options.get(mayor_policy_id)
         if mayor_policy is None:
             yield {"type": "error", "message": f"Unknown policy id: {mayor_policy_id!r}"}
             return
+        counter_frame = self._resolve_counter_frame(mayor_policy_id, counter_frame_id)
 
         turn = self.game_state.turn_number + 1
         if turn > self.game_state.total_turns:
@@ -399,7 +549,13 @@ class TurnManager:
         dominant_fronts = list(agent_impact.get("dominant_fronts", []))
 
         # ── Duel step 3: Mayor counter frame ────────────────────────────────
-        mayor_counter_msg = mayor_policy.counter_narrative_risk or (
+        self._apply_counter_frame_effects(counter_frame)
+        yield {
+            "type": "counter_frame_selected",
+            "turn": turn,
+            "counter_frame": dict(counter_frame),
+        }
+        mayor_counter_msg = str(counter_frame.get("message", "")).strip() or mayor_policy.counter_narrative_risk or (
             f"Mayor reframes turn around {', '.join(dominant_fronts) if dominant_fronts else 'stability'}."
         )
         yield {
@@ -407,7 +563,7 @@ class TurnManager:
             "turn": turn,
             "message": mayor_counter_msg,
             "front_weights": dict(mayor_policy.narrative_fronts_impacted),
-            "target_groups": list(mayor_policy.target_groups),
+            "target_groups": list(counter_frame.get("target_groups", mayor_policy.target_groups)),
             "estimated_shift": {
                 "campaign_strength": round(mayor_resolution.campaign_strength, 4),
                 "rumor_pressure": round(rumor_pressure, 4),
@@ -514,8 +670,12 @@ class TurnManager:
         mayor_pop += credibility_shift * 2.0 + float(self.game_state.last_credibility_delta) * 0.55
         opp_pop -= credibility_shift * 2.0 + float(self.game_state.last_credibility_delta) * 0.55
 
-        mayor_pop = max(0.0, min(100.0, mayor_pop))
-        opp_pop = max(0.0, min(100.0, opp_pop))
+        mayor_pop, opp_pop = self._stabilize_popularity(
+            mayor_pop,
+            opp_pop,
+            pre_stats,
+            post_stats,
+        )
         self.game_state.mayor_popularity = mayor_pop
         self.game_state.opposition_popularity = opp_pop
 
@@ -648,6 +808,12 @@ class TurnManager:
             media_modifiers = self.media_engine.popularity_modifiers(self.game_state.media_state)
             mayor_popularity, opposition_popularity = self.agent_engine.recalculate_popularity(
                 self.game_state, media_modifiers
+            )
+            mayor_popularity, opposition_popularity = self._stabilize_popularity(
+                mayor_popularity,
+                opposition_popularity,
+                pre_stats,
+                self.game_state.city_stats.as_dict(),
             )
             self.game_state.mayor_popularity = mayor_popularity
             self.game_state.opposition_popularity = opposition_popularity

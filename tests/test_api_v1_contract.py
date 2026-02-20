@@ -70,7 +70,7 @@ def _install_stubbed_turn_flow(game_id: str) -> None:
         self._cached_mayor_options = {policy.id: policy}
         return [policy]
 
-    def fake_stream_step(self, mayor_policy_id: str):
+    def fake_stream_step(self, mayor_policy_id: str, counter_frame_id: str | None = None):
         if mayor_policy_id != "p1":
             yield {"type": "error", "message": f"Unknown policy id: {mayor_policy_id!r}"}
             return
@@ -83,6 +83,19 @@ def _install_stubbed_turn_flow(game_id: str) -> None:
         yield {"type": "mayor_action", "turn": turn, "action": policy.to_dict()}
         yield {"type": "opposition_frame_primary", "turn": turn, "action": policy.to_dict()}
         yield {"type": "opposition_action", "turn": turn, "action": policy.to_dict()}
+        yield {
+            "type": "counter_frame_selected",
+            "turn": turn,
+            "counter_frame": {
+                "id": counter_frame_id or "delivery_receipts",
+                "label": "Delivery Receipts",
+                "message": "Stub counter frame",
+                "target_groups": [],
+                "campaign_boost": 0.03,
+                "effects": {},
+                "risk": "",
+            },
+        }
         yield {
             "type": "mayor_counter_frame",
             "turn": turn,
@@ -357,6 +370,32 @@ def test_v1_policies_actions_and_events_stream(api_server: str) -> None:
     ]
     indices = {name: payload_types.index(name) for name in expected_order}
     assert [indices[name] for name in expected_order] == sorted(indices.values())
+
+
+def test_v1_counter_frames_contract(api_server: str) -> None:
+    create_status, game_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games",
+        {"seed": 27, "turns": 5, "agent_count": 1000, "llm_panel_size": 100},
+    )
+    assert create_status == 201
+    game_id = game_payload["game_id"]
+
+    policies_status, policies_payload = _http_json(
+        "GET", f"{api_server}/v1/games/{game_id}/policies"
+    )
+    assert policies_status == 200
+    policy_id = policies_payload["policies"][0]["id"]
+
+    counter_status, counter_payload = _http_json(
+        "GET", f"{api_server}/v1/games/{game_id}/counter-frames?policy_id={policy_id}"
+    )
+    assert counter_status == 200
+    assert counter_payload["api_version"] == "v1"
+    assert counter_payload["policy_id"] == policy_id
+    assert len(counter_payload["counter_frames"]) >= 1
+    assert "id" in counter_payload["counter_frames"][0]
+    assert "message" in counter_payload["counter_frames"][0]
 
 
 def test_v1_turn_archive_and_media_timeline_contract(api_server: str) -> None:

@@ -1,15 +1,20 @@
-import type { DynamicPolicy } from '../types'
+import type { CounterFrameOption, DynamicPolicy } from '../types'
 
 type Props = {
   policies: DynamicPolicy[]
+  counterFrames: CounterFrameOption[]
+  counterFramesLoading: boolean
   busy: boolean
   loading: boolean
   selectedPolicyId?: string | null
+  selectedCounterFrameId?: string | null
   prompt: string
   onSelect: (id: string) => void
+  onSelectCounterFrame: (id: string) => void
   onPlaySelected: () => void
   onAskAdvisor?: (id: string) => void
   onReviseOption?: (id: string) => void
+  onImpactAssessment?: (id: string) => void
 }
 
 function formatStat(key: string) {
@@ -18,33 +23,67 @@ function formatStat(key: string) {
 
 export default function PoliciesPanel({
   policies,
+  counterFrames,
+  counterFramesLoading,
   busy,
   loading,
   selectedPolicyId,
+  selectedCounterFrameId,
   prompt,
   onSelect,
+  onSelectCounterFrame,
   onPlaySelected,
   onAskAdvisor,
   onReviseOption,
+  onImpactAssessment,
 }: Props) {
-  const selectedPolicy = policies.find((p) => p.id === selectedPolicyId) ?? null
+  const selectedPolicy = policies.find((policy) => policy.id === selectedPolicyId) ?? null
+  const playDisabled = busy || !selectedPolicy || !selectedCounterFrameId
 
   return (
     <section className="panel" id="policy-section">
       <div className="panel-title">Your Move — Mayor</div>
       <p className="policy-prompt">{prompt}</p>
+
       <div className="policy-selection-bar">
         <div className="policy-selection-label">
-          {selectedPolicy ? `Selected: ${selectedPolicy.name}` : 'Select an option to discuss or play'}
+          {selectedPolicy ? `Policy: ${selectedPolicy.name}` : 'Step 1: Select a policy option'}
+          {' · '}
+          {selectedCounterFrameId ? 'Counter-frame selected' : 'Step 2: Choose a counter-frame'}
         </div>
-        <button
-          className="btn-continue policy-play-btn"
-          onClick={onPlaySelected}
-          disabled={busy || !selectedPolicy}
-        >
-          {busy ? 'Simulating…' : 'Play Selected Policy'}
+        <button className="btn-continue policy-play-btn" onClick={onPlaySelected} disabled={playDisabled}>
+          {busy ? 'Simulating…' : 'Play Turn'}
         </button>
       </div>
+
+      {selectedPolicy && (
+        <div className="counter-frames-panel">
+          <div className="counter-frames-title">Counter-Frame (Required)</div>
+          {counterFramesLoading ? (
+            <div className="muted">Loading counter-frame options…</div>
+          ) : (
+            <div className="counter-frames-grid">
+              {counterFrames.map((frame) => (
+                <button
+                  key={frame.id}
+                  className={`counter-frame-card ${selectedCounterFrameId === frame.id ? 'selected' : ''}`}
+                  onClick={() => onSelectCounterFrame(frame.id)}
+                  disabled={busy}
+                  title={frame.risk ?? ''}
+                >
+                  <div className="counter-frame-name">{frame.label}</div>
+                  <div className="counter-frame-message">{frame.message}</div>
+                  {frame.risk && <div className="counter-frame-risk">Risk: {frame.risk}</div>}
+                </button>
+              ))}
+              {!counterFramesLoading && counterFrames.length === 0 && (
+                <div className="muted">No counter-frame options available for this policy.</div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="policy-grid">
         {loading && <div className="loading-msg">⏳ Consulting advisors…</div>}
         {policies.map((p) => (
@@ -123,6 +162,16 @@ export default function PoliciesPanel({
                 disabled={busy}
               >
                 Revise This Option
+              </button>
+              <button
+                className="btn-ghost"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onImpactAssessment?.(p.id)
+                }}
+                disabled={busy}
+              >
+                Impact Assessment
               </button>
             </div>
           </div>

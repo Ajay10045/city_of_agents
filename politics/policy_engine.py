@@ -129,6 +129,16 @@ class PolicyEngine:
 
         return _clamp(utility, -0.7, 0.7)
 
+    def get_mayor_policies(self) -> list[PolicyDefinition]:
+        return list(self._policies_by_actor.get("mayor", []))
+
+    def get_policy_by_id(self, policy_id: str) -> PolicyDefinition:
+        for policies in self._policies_by_actor.values():
+            for policy in policies:
+                if policy.id == policy_id:
+                    return policy
+        raise ValueError(f"No policy found with id: {policy_id!r}")
+
     def choose_action(
         self,
         actor: str,
