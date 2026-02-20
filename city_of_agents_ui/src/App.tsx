@@ -179,13 +179,19 @@ export default function App() {
       setAdvisorSessionId(null)
       resetTurnPanels()
       setMediaTimeline([])
+      setPolicies([])
       setElectionResult(null)
       setGameOverVisible(false)
       setSetupVisible(false)
       setAdvisorFocusOptionId(null)
       setSelectedCounterFrameId(null)
       setCounterFrames([])
-      await Promise.all([loadPolicies(gid), loadMedia(gid)])
+      void loadPolicies(gid).catch((err) =>
+        setError(err instanceof Error ? err.message : 'Failed to load policies'),
+      )
+      void loadMedia(gid).catch((err) =>
+        setError(err instanceof Error ? err.message : 'Failed to load media timeline'),
+      )
     } catch (e) {
       setSetupError(e instanceof Error ? e.message : 'Failed to start simulation')
     } finally {
@@ -576,15 +582,14 @@ export default function App() {
       <ErrorBanner message={error} />
 
       {gameReady && state ? (
-        <div className="layout">
-          <SidebarPanels state={state} />
+        <div className="layout layout-v2">
+          <aside className="layout-left">
+            <MediaNarrativePanel cards={mediaTimeline} />
+            <SidebarPanels state={state} panels={['media']} />
+          </aside>
 
-          <main>
-            <CityStatsPanel stats={state.city_stats} changes={statChanges} />
-            <IdentityGroupsPanel state={state} />
-            <CrisesPanel state={state} eventChances={eventChances} />
-            <StreamFeedPanel items={stream} visible={busy || stream.length > 0} />
-            <DebatesPanel debates={debates} visible={debates.length > 0} />
+          <main className="layout-center">
+            <SidebarPanels state={state} panels={['popularity', 'campaign']} horizontal className="top-metrics" />
             <PoliciesPanel
               policies={policies}
               busy={busy || state.turn_number >= state.total_turns}
@@ -607,18 +612,14 @@ export default function App() {
                   target.scrollIntoView({ behavior: 'smooth', block: 'center' })
                 }
               }}
-              onReviseOption={(optionId) => {
-                setAdvisorFocusOptionId(optionId)
-                const target = document.getElementById('advisor-console')
-                if (target) {
-                  target.scrollIntoView({ behavior: 'smooth', block: 'center' })
-                }
-              }}
               onImpactAssessment={(optionId) => {
                 const selected = policies.find((policy) => policy.id === optionId) ?? null
                 setImpactPolicy(selected)
               }}
             />
+            <CityStatsPanel stats={state.city_stats} changes={statChanges} />
+            <IdentityGroupsPanel state={state} />
+            <CrisesPanel state={state} eventChances={eventChances} />
             <AdvisorConsole
               gameId={gameId}
               advisorSessionId={advisorSessionId}
@@ -639,7 +640,10 @@ export default function App() {
             />
             <TurnArchivePanel gameId={gameId} refreshKey={state.turn_number} />
           </main>
-          <MediaNarrativePanel cards={mediaTimeline} />
+          <aside className="layout-right">
+            <StreamFeedPanel items={stream} visible={busy || stream.length > 0} />
+            <DebatesPanel debates={debates} visible={debates.length > 0} />
+          </aside>
         </div>
       ) : (
         <section className="panel">

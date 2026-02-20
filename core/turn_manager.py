@@ -31,6 +31,8 @@ class MayorAdvisorPort(Protocol):
 class OppositionAgentPort(Protocol):
     def decide_action(self, game_state: GameState, mayor_action: DynamicPolicy) -> DynamicPolicy: ...
 
+    def predict_attack_line(self, game_state: GameState, mayor_action: DynamicPolicy) -> dict[str, object]: ...
+
 
 class CitizenDebatesPort(Protocol):
     def run_debates(
@@ -111,48 +113,73 @@ class TurnManager:
         if mayor_policy is None:
             return []
 
-        front_rank = sorted(
-            mayor_policy.narrative_fronts_impacted.items(),
-            key=lambda item: abs(float(item[1])),
-            reverse=True,
+        predictor = getattr(self.opposition_agent, "predict_attack_line", None)
+        predicted = (
+            predictor(self.game_state, mayor_policy)
+            if callable(predictor)
+            else {
+                "front": "public_trust",
+                "allegation": (
+                    f"Opposition will frame '{mayor_policy.name}' as optics-first without delivery guarantees."
+                ),
+                "risk": max(0.15, min(1.0, float(mayor_policy.opposition_counter_risk or 0.5))),
+                "target_groups": list(mayor_policy.target_groups[:3]) or ["Undecided neighborhoods"],
+            }
         )
-        primary_front = front_rank[0][0] if front_rank else "public_trust"
-        secondary_front = front_rank[1][0] if len(front_rank) > 1 else "services"
-        target_groups = list(mayor_policy.target_groups[:3]) or ["Undecided neighborhoods"]
+        primary_front = str(predicted.get("front", "public_trust"))
+        allegation = str(predicted.get("allegation", "")).strip() or (
+            f"Opposition will frame '{mayor_policy.name}' as symbolic and weak on execution."
+        )
+        threat_intensity = max(0.15, min(1.0, float(predicted.get("risk", mayor_policy.opposition_counter_risk or 0.5))))
+        target_groups = [
+            str(item)
+            for item in list(predicted.get("target_groups", []))[:3]
+            if str(item).strip()
+        ] or ["Undecided neighborhoods"]
+        secondary_front = "services" if primary_front != "services" else "public_trust"
 
         return [
             {
                 "id": "delivery_receipts",
                 "label": "Delivery Receipts",
                 "message": (
-                    f"Publish delivery milestones on {primary_front} with weekly scorecards and third-party audit."
+                    f"Pre-empt '{allegation}' with measurable delivery receipts on {primary_front}: weekly scorecards, audit checkpoints, and ward-level milestones."
                 ),
                 "target_groups": target_groups,
                 "campaign_boost": 0.04,
                 "effects": {"public_trust": 1.2, "social_tension": -0.5},
-                "risk": "Backfires if implementation slips in the next 1-2 turns.",
+                "risk": "Backfires if next-turn delivery misses posted milestones.",
+                "reacts_to": allegation,
+                "attack_front": primary_front,
+                "attack_intensity": round(threat_intensity, 3),
             },
             {
                 "id": "empathy_relief",
                 "label": "Empathy + Relief",
                 "message": (
-                    f"Open with citizen pain acknowledgment and immediate relief in pressure points linked to {secondary_front}."
+                    f"Counter '{allegation}' by acknowledging pain openly and delivering immediate relief on {secondary_front} pressure points."
                 ),
                 "target_groups": target_groups,
                 "campaign_boost": 0.03,
                 "effects": {"public_trust": 0.8, "social_tension": -1.0, "law_and_order": 0.4},
                 "risk": "Can be framed as rhetoric if relief is not visible quickly.",
+                "reacts_to": allegation,
+                "attack_front": primary_front,
+                "attack_intensity": round(threat_intensity, 3),
             },
             {
                 "id": "accountability_pivot",
                 "label": "Accountability Pivot",
                 "message": (
-                    "Shift narrative to enforcement: publish contracts, penalties, and independent grievance redress timelines."
+                    f"Neutralize '{allegation}' with enforcement-first transparency: contract exposure, penalties, and grievance redress timelines."
                 ),
                 "target_groups": target_groups,
                 "campaign_boost": 0.02,
                 "effects": {"corruption": -1.0, "public_trust": 0.6, "social_tension": 0.2},
                 "risk": "Raises expectations and gives opposition a checklist to attack.",
+                "reacts_to": allegation,
+                "attack_front": primary_front,
+                "attack_intensity": round(threat_intensity, 3),
             },
         ]
 

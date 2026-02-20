@@ -1701,6 +1701,28 @@ class GameHandler(BaseHTTPRequestHandler):
                 )
                 advisor_session.options = list(updated_options[:5])
                 advisor_session.ensure_option_threads()
+                diff_message = str(diff.get("message", "Options revised")).strip() or "Options revised."
+                mode_label = "single-option revision" if mode == "single" else "full regeneration"
+                constraint_label = constraints if constraints else "no explicit constraints provided"
+                summary = f"{diff_message} ({mode_label}; constraints: {constraint_label})."
+                thread_scope = "option" if mode == "single" and option_id else "global"
+                thread_option_id = option_id if thread_scope == "option" else None
+                advisor_session.append_message(
+                    role="advisor",
+                    content=summary,
+                    thread_scope=thread_scope,
+                    option_id=thread_option_id,
+                    structured={
+                        "summary": summary,
+                        "drivers": [f"Revision mode: {mode_label}"],
+                        "assumptions": [constraint_label],
+                        "tradeoffs": [
+                            "Revision quality depends on available policy headroom and model reliability."
+                        ],
+                        "risk": "Over-constrained revisions can reduce option diversity.",
+                        "confidence": 0.62,
+                    },
+                )
                 advisor_session.updated_at = time.time()
                 _sync_mayor_option_cache(session, advisor_session.options)
                 payload = advisor_session.to_dict()

@@ -13,12 +13,10 @@ type Props = {
 }
 
 export default function StreamFeedPanel({ items, visible }: Props) {
-  if (!visible) return null
-
   return (
     <section className="panel" id="stream-panel">
       <div className="panel-title">Live Turn Feed</div>
-      {items.length === 0 ? (
+      {!visible || items.length === 0 ? (
         <div className="muted">No streamed updates yet.</div>
       ) : (
         <div>

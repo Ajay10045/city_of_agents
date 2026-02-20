@@ -149,6 +149,9 @@ export type CounterFrameOption = {
   campaign_boost: number
   effects: Record<string, number>
   risk?: string
+  reacts_to?: string
+  attack_front?: string
+  attack_intensity?: number
 }
 
 export type AdvisorMessage = {

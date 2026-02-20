@@ -18,9 +18,63 @@ type Props = {
   onError: (message: string | null) => void
 }
 
+type ComposerIntent =
+  | { kind: 'ask'; question: string }
+  | { kind: 'revise-single'; constraints: string }
+  | { kind: 'revise-full'; constraints: string }
+
 function formatTime(ts: number): string {
   const d = new Date(ts * 1000)
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+function stripCommandPrefix(input: string, prefixes: string[]): string {
+  const trimmed = input.trim()
+  const lower = trimmed.toLowerCase()
+  for (const prefix of prefixes) {
+    if (lower.startsWith(prefix)) {
+      return trimmed.slice(prefix.length).trim()
+    }
+  }
+  return trimmed
+}
+
+function parseComposerIntent(input: string, activeTab: 'global' | string): ComposerIntent {
+  const trimmed = input.trim()
+  const lower = trimmed.toLowerCase()
+
+  const explicitFullPrefixes = ['/regenerate', '/revise-all', '/revise all']
+  if (explicitFullPrefixes.some((prefix) => lower.startsWith(prefix))) {
+    return {
+      kind: 'revise-full',
+      constraints: stripCommandPrefix(trimmed, explicitFullPrefixes),
+    }
+  }
+
+  const explicitSinglePrefixes = ['/revise', '/revise-this', '/revise this']
+  if (explicitSinglePrefixes.some((prefix) => lower.startsWith(prefix))) {
+    const constraints = stripCommandPrefix(trimmed, explicitSinglePrefixes)
+    if (activeTab === 'global') {
+      return { kind: 'revise-full', constraints }
+    }
+    return { kind: 'revise-single', constraints }
+  }
+
+  const asksForAll =
+    /(regenerate|refresh|replace|revise|rewrite).*(all|5|five|option set|entire set)/i.test(trimmed) ||
+    /(new|fresh).*(all|options)/i.test(trimmed)
+  if (asksForAll) {
+    return { kind: 'revise-full', constraints: trimmed }
+  }
+
+  const asksForSingle =
+    /(revise|rewrite|improve|rework|replace).*(this|option|selected)/i.test(trimmed) ||
+    /(make this|tune this)/i.test(trimmed)
+  if (asksForSingle && activeTab !== 'global') {
+    return { kind: 'revise-single', constraints: trimmed }
+  }
+
+  return { kind: 'ask', question: trimmed }
 }
 
 export default function AdvisorConsole({
@@ -113,52 +167,50 @@ export default function AdvisorConsole({
     return session.options.find((option) => option.id === activeTab)?.name ?? 'Selected Option'
   }, [session, activeTab])
 
-  const askQuestion = async () => {
+  const sendComposer = async () => {
     if (!gameId || !session || !composer.trim() || busy) return
 
     setBusy(true)
     onError(null)
     try {
-      const payload = await sendAdvisorMessage(gameId, session.advisor_session_id, {
-        thread_scope: activeTab === 'global' ? 'global' : 'option',
-        option_id: activeTab === 'global' ? null : activeTab,
-        question: composer.trim(),
-      })
-      setSession(payload.session)
-      onPoliciesUpdate(payload.session.options)
-      onSessionUpdate(payload.session.advisor_session_id)
-      setComposer('')
-    } catch (err) {
-      onError(err instanceof Error ? err.message : 'Advisor question failed')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const revise = async (mode: 'single' | 'full') => {
-    if (!gameId || !session || busy) return
-    if (mode === 'single' && activeTab === 'global') {
-      onError('Select a specific option tab before revising one option.')
-      return
-    }
-
-    setBusy(true)
-    onError(null)
-    try {
-      const result = await reviseAdvisorOptions(gameId, session.advisor_session_id, {
-        mode,
-        constraints: composer.trim(),
-        option_id: mode === 'single' ? activeTab : undefined,
-      })
-      setSession(result.session)
-      onPoliciesUpdate(result.options)
-      onSessionUpdate(result.session.advisor_session_id)
-      if (mode === 'full') {
+      const intent = parseComposerIntent(composer, activeTab)
+      if (intent.kind === 'ask') {
+        const payload = await sendAdvisorMessage(gameId, session.advisor_session_id, {
+          thread_scope: activeTab === 'global' ? 'global' : 'option',
+          option_id: activeTab === 'global' ? null : activeTab,
+          question: intent.question,
+        })
+        setSession(payload.session)
+        onPoliciesUpdate(payload.session.options)
+        onSessionUpdate(payload.session.advisor_session_id)
+        setComposer('')
+      } else if (intent.kind === 'revise-single') {
+        if (activeTab === 'global') {
+          onError('Select an option tab to revise a single option, or ask to regenerate all.')
+          return
+        }
+        const result = await reviseAdvisorOptions(gameId, session.advisor_session_id, {
+          mode: 'single',
+          constraints: intent.constraints,
+          option_id: activeTab,
+        })
+        setSession(result.session)
+        onPoliciesUpdate(result.options)
+        onSessionUpdate(result.session.advisor_session_id)
+        setComposer('')
+      } else {
+        const result = await reviseAdvisorOptions(gameId, session.advisor_session_id, {
+          mode: 'full',
+          constraints: intent.constraints,
+        })
+        setSession(result.session)
+        onPoliciesUpdate(result.options)
+        onSessionUpdate(result.session.advisor_session_id)
         setActiveTab('global')
+        setComposer('')
       }
-      setComposer('')
     } catch (err) {
-      onError(err instanceof Error ? err.message : 'Advisor revise failed')
+      onError(err instanceof Error ? err.message : 'Advisor request failed')
     } finally {
       setBusy(false)
     }
@@ -236,24 +288,18 @@ export default function AdvisorConsole({
               rows={2}
               placeholder={
                 activeTab === 'global'
-                  ? 'Unified advisor chat: ask strategy or type constraints for regeneration...'
-                  : 'Unified advisor chat for this option: ask why/risk or provide revise constraints...'
+                  ? 'Unified council chat: ask strategy, or type "regenerate all options for jobs + trust"...'
+                  : 'Unified council chat: ask this option, or type "revise this for low-income wards"...'
               }
               disabled={busy || disabled}
             />
             <div className="advisor-composer-actions">
-              <button onClick={askQuestion} disabled={busy || disabled || !composer.trim()}>
-                Ask Advisor
+              <button onClick={sendComposer} disabled={busy || disabled || !composer.trim()}>
+                {busy ? 'Council Thinking…' : 'Send to Council'}
               </button>
-              <button
-                onClick={() => revise('single')}
-                disabled={busy || disabled || activeTab === 'global'}
-              >
-                Revise This Option
-              </button>
-              <button onClick={() => revise('full')} disabled={busy || disabled}>
-                Regenerate 5 Options
-              </button>
+            </div>
+            <div className="advisor-composer-hint">
+              Tip: use natural language. Examples: "why this now?", "revise this for commuters", "regenerate all focusing corruption + jobs".
             </div>
           </div>
         </>

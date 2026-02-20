@@ -13,7 +13,6 @@ type Props = {
   onSelectCounterFrame: (id: string) => void
   onPlaySelected: () => void
   onAskAdvisor?: (id: string) => void
-  onReviseOption?: (id: string) => void
   onImpactAssessment?: (id: string) => void
 }
 
@@ -34,11 +33,16 @@ export default function PoliciesPanel({
   onSelectCounterFrame,
   onPlaySelected,
   onAskAdvisor,
-  onReviseOption,
   onImpactAssessment,
 }: Props) {
   const selectedPolicy = policies.find((policy) => policy.id === selectedPolicyId) ?? null
   const playDisabled = busy || !selectedPolicy || !selectedCounterFrameId
+  const anticipatedAttack = counterFrames[0]?.reacts_to ?? null
+  const anticipatedFront = counterFrames[0]?.attack_front ?? null
+  const attackIntensity =
+    typeof counterFrames[0]?.attack_intensity === 'number'
+      ? Math.round((counterFrames[0]!.attack_intensity as number) * 100)
+      : null
 
   return (
     <section className="panel" id="policy-section">
@@ -58,7 +62,15 @@ export default function PoliciesPanel({
 
       {selectedPolicy && (
         <div className="counter-frames-panel">
-          <div className="counter-frames-title">Counter-Frame (Required)</div>
+          <div className="counter-frames-title">Reactive Counter-Frame (Required)</div>
+          {anticipatedAttack && (
+            <div className="counter-frames-context">
+              <span className="counter-frames-context-label">Likely opposition allegation:</span>
+              <span>{anticipatedAttack}</span>
+              {anticipatedFront && <span> · Front: {anticipatedFront}</span>}
+              {typeof attackIntensity === 'number' && <span> · Threat: {attackIntensity}%</span>}
+            </div>
+          )}
           {counterFramesLoading ? (
             <div className="muted">Loading counter-frame options…</div>
           ) : (
@@ -151,17 +163,7 @@ export default function PoliciesPanel({
                 }}
                 disabled={busy}
               >
-                Ask Advisor
-              </button>
-              <button
-                className="btn-ghost"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onReviseOption?.(p.id)
-                }}
-                disabled={busy}
-              >
-                Revise This Option
+                Discuss in Council
               </button>
               <button
                 className="btn-ghost"
