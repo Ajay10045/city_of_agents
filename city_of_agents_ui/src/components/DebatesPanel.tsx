@@ -6,6 +6,8 @@ type Props = {
 }
 
 export default function DebatesPanel({ debates, visible }: Props) {
+  const avatars = ['◉', '◌', '◎', '◍', '◈', '◊']
+
   return (
     <section className="panel" id="debates-panel">
       <div className="panel-title">Street-Level Pulse — What Citizens Are Saying</div>
@@ -14,6 +16,7 @@ export default function DebatesPanel({ debates, visible }: Props) {
       ) : (
         <div id="debates-container">
           {debates.map((d, idx) => {
+            const avatar = avatars[idx % avatars.length]
             const deltas = [
               { label: 'Align', val: d.alignment_delta },
               { label: 'Morale', val: d.happiness_delta },
@@ -23,7 +26,10 @@ export default function DebatesPanel({ debates, visible }: Props) {
 
             return (
               <div className="debate-card fade-in" key={`${d.group_name}-${idx}`}>
-                <div className="debate-group-name">{d.group_name}</div>
+                <div className="debate-group-head">
+                  <span className="debate-avatar" aria-hidden>{avatar}</span>
+                  <div className="debate-group-name">{d.group_name}</div>
+                </div>
                 <div className="debate-summary">{d.debate_summary}</div>
                 {d.notable_quote && <div className="debate-quote">"{d.notable_quote}"</div>}
                 {deltas.length > 0 && (
