@@ -1,0 +1,130 @@
+{
+  "meta": {
+    "city_id": "new_delhi",
+    "city_name": "New Delhi",
+    "profile_version": "v2026.02.20",
+    "generated_at": "2026-02-20T00:00:00Z",
+    "generator_provider": "seeded_profile",
+    "generator_model": "city_of_agents_baseline_v2",
+    "evidence_sources": [
+      {
+        "title": "Delhi Statistical Handbook",
+        "url": "https://des.delhi.gov.in/",
+        "snippet": "Baseline economic, labor and infrastructure indicators for Delhi."
+      },
+      {
+        "title": "NITI Aayog SDG Dashboard",
+        "url": "https://sdgindiaindex.niti.gov.in/",
+        "snippet": "Public service and environmental progress indicators."
+      }
+    ]
+  },
+  "identity_groups": [
+    {
+      "id": "informal_worker_clusters",
+      "name": "Informal Worker Clusters",
+      "religion": "Plural",
+      "caste": "Working Class",
+      "language": "Hindi Belt",
+      "population_percent": 0.34,
+      "economic_modifier": 0.86,
+      "education_modifier": 0.78,
+      "grievance_score": 0.66,
+      "radicalization_base_rate": 0.10,
+      "issue_sensitivity": {
+        "employment": 1.35,
+        "economy": 1.25,
+        "public_trust": 1.15,
+        "social_tension": 1.20,
+        "corruption": 1.10
+      }
+    },
+    {
+      "id": "service_middle_class",
+      "name": "Service Middle Class",
+      "religion": "Plural",
+      "caste": "Professional",
+      "language": "Hindi-English",
+      "population_percent": 0.26,
+      "economic_modifier": 1.08,
+      "education_modifier": 1.12,
+      "grievance_score": 0.40,
+      "radicalization_base_rate": 0.06,
+      "issue_sensitivity": {
+        "infrastructure": 1.20,
+        "public_trust": 1.25,
+        "corruption": 1.15,
+        "environment": 0.95,
+        "law_and_order": 1.05
+      }
+    },
+    {
+      "id": "old_city_traders",
+      "name": "Old City Traders",
+      "religion": "Plural",
+      "caste": "Merchant",
+      "language": "Urdu-Hindi",
+      "population_percent": 0.20,
+      "economic_modifier": 1.03,
+      "education_modifier": 0.93,
+      "grievance_score": 0.47,
+      "radicalization_base_rate": 0.07,
+      "issue_sensitivity": {
+        "economy": 1.30,
+        "law_and_order": 1.18,
+        "corruption": 1.12,
+        "media_freedom": 0.80,
+        "social_tension": 1.05
+      }
+    },
+    {
+      "id": "peri_urban_migrants",
+      "name": "Peri-Urban Migrants",
+      "religion": "Plural",
+      "caste": "Migrant Households",
+      "language": "Hindi-Mixed",
+      "population_percent": 0.20,
+      "economic_modifier": 0.80,
+      "education_modifier": 0.70,
+      "grievance_score": 0.71,
+      "radicalization_base_rate": 0.11,
+      "issue_sensitivity": {
+        "employment": 1.32,
+        "services": 1.10,
+        "public_trust": 1.20,
+        "social_tension": 1.28,
+        "law_and_order": 1.04
+      }
+    }
+  ],
+  "role_distribution": {
+    "Worker": 0.40,
+    "BusinessOwner": 0.12,
+    "Politician": 0.09,
+    "Journalist": 0.07,
+    "Student": 0.32
+  },
+  "initial_city_stats": {
+    "economy": 56,
+    "employment": 48,
+    "law_and_order": 46,
+    "infrastructure": 45,
+    "environment": 38,
+    "corruption": 61,
+    "social_tension": 58,
+    "media_freedom": 44,
+    "public_trust": 41
+  },
+  "issue_front_baseline": {
+    "economy": 63,
+    "corruption": 70,
+    "safety": 57,
+    "services": 65,
+    "social_cohesion": 68
+  },
+  "starter_issues": [
+    "Severe winter pollution and heatwave stress are raising pressure on health services and transport reliability.",
+    "Youth and migrant underemployment is fueling frustration in outer districts.",
+    "Contract procurement scandals are driving anti-incumbent anger and trust collapse."
+  ]
+}

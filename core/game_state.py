@@ -50,6 +50,9 @@ class GameState:
     last_credibility_delta: float = 0.0
     promise_ledger: list[dict[str, Any]] = field(default_factory=list)
     governing_party: str = "Mayor"
+    simulation_profile: dict[str, Any] = field(default_factory=dict)
+    cohort_metrics: dict[str, dict[str, Any]] = field(default_factory=dict)
+    last_agent_impact: dict[str, Any] = field(default_factory=dict)
 
     def average_agent_field(self, field_name: str) -> float:
         total_weight = sum(agent.population_weight for agent in self.agents)
@@ -91,6 +94,9 @@ class GameState:
             "credibility_score": self.credibility_score,
             "last_credibility_delta": self.last_credibility_delta,
             "promise_ledger": list(self.promise_ledger),
+            "simulation_profile": dict(self.simulation_profile),
+            "cohort_metrics": dict(self.cohort_metrics),
+            "last_agent_impact": dict(self.last_agent_impact),
         }
 
     def save_snapshot(self, path: str | Path) -> None:

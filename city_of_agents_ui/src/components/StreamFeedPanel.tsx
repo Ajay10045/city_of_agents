@@ -1,5 +1,5 @@
 export type StreamCardItem = {
-  kind: 'mayor' | 'opposition' | 'event'
+  kind: 'mayor' | 'opposition' | 'event' | 'impact' | 'media'
   label: string
   name: string
   description?: string
