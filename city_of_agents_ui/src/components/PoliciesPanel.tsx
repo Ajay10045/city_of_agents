@@ -7,13 +7,24 @@ type Props = {
   selectedPolicyId?: string | null
   prompt: string
   onSelect: (id: string) => void
+  onAskAdvisor?: (id: string) => void
+  onReviseOption?: (id: string) => void
 }
 
 function formatStat(key: string) {
   return key.replace(/_/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase())
 }
 
-export default function PoliciesPanel({ policies, busy, loading, selectedPolicyId, prompt, onSelect }: Props) {
+export default function PoliciesPanel({
+  policies,
+  busy,
+  loading,
+  selectedPolicyId,
+  prompt,
+  onSelect,
+  onAskAdvisor,
+  onReviseOption,
+}: Props) {
   return (
     <section className="panel" id="policy-section">
       <div className="panel-title">Your Move — Mayor</div>
@@ -35,6 +46,7 @@ export default function PoliciesPanel({ policies, busy, loading, selectedPolicyI
             }}
           >
             {p.rationale && <div className="policy-card-rationale">💡 {p.rationale}</div>}
+            {p.why_now && <div className="policy-card-why">Why now: {p.why_now}</div>}
 
             <div className="policy-card-name">{p.name}</div>
             <div className="policy-card-desc">{p.description}</div>
@@ -74,6 +86,29 @@ export default function PoliciesPanel({ policies, busy, loading, selectedPolicyI
                 })}
               </div>
             )}
+
+            <div className="policy-card-actions">
+              <button
+                className="btn-ghost"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onAskAdvisor?.(p.id)
+                }}
+                disabled={busy}
+              >
+                Ask Advisor
+              </button>
+              <button
+                className="btn-ghost"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onReviseOption?.(p.id)
+                }}
+                disabled={busy}
+              >
+                Revise This Option
+              </button>
+            </div>
           </div>
         ))}
         {!loading && policies.length === 0 && <div className="muted">No policies available.</div>}

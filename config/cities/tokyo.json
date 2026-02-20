@@ -1,0 +1,130 @@
+{
+  "meta": {
+    "city_id": "tokyo",
+    "city_name": "Tokyo",
+    "profile_version": "v2026.02.20",
+    "generated_at": "2026-02-20T00:00:00Z",
+    "generator_provider": "seeded_profile",
+    "generator_model": "city_of_agents_baseline_v2",
+    "evidence_sources": [
+      {
+        "title": "Tokyo Metropolitan Government Statistics",
+        "url": "https://www.metro.tokyo.lg.jp/",
+        "snippet": "Urban transport, aging, and service coverage indicators."
+      },
+      {
+        "title": "Statistics Bureau of Japan",
+        "url": "https://www.stat.go.jp/english/",
+        "snippet": "Labor market and demographic trend baselines."
+      }
+    ]
+  },
+  "identity_groups": [
+    {
+      "id": "commuter_households",
+      "name": "Commuter Households",
+      "religion": "Plural",
+      "caste": "Salary Households",
+      "language": "Japanese",
+      "population_percent": 0.36,
+      "economic_modifier": 1.02,
+      "education_modifier": 1.00,
+      "grievance_score": 0.39,
+      "radicalization_base_rate": 0.05,
+      "issue_sensitivity": {
+        "infrastructure": 1.24,
+        "services": 1.15,
+        "economy": 1.10,
+        "public_trust": 1.08,
+        "law_and_order": 0.95
+      }
+    },
+    {
+      "id": "small_shop_owners",
+      "name": "Small Shop Owners",
+      "religion": "Plural",
+      "caste": "Retail Operators",
+      "language": "Japanese",
+      "population_percent": 0.24,
+      "economic_modifier": 1.05,
+      "education_modifier": 0.96,
+      "grievance_score": 0.42,
+      "radicalization_base_rate": 0.06,
+      "issue_sensitivity": {
+        "economy": 1.30,
+        "employment": 1.08,
+        "corruption": 1.00,
+        "public_trust": 1.02,
+        "social_tension": 0.90
+      }
+    },
+    {
+      "id": "youth_student_tech",
+      "name": "Youth Student-Tech",
+      "religion": "Plural",
+      "caste": "Students",
+      "language": "Japanese-Global",
+      "population_percent": 0.20,
+      "economic_modifier": 1.00,
+      "education_modifier": 1.22,
+      "grievance_score": 0.44,
+      "radicalization_base_rate": 0.07,
+      "issue_sensitivity": {
+        "environment": 1.20,
+        "public_trust": 1.12,
+        "media_freedom": 1.06,
+        "social_tension": 1.10,
+        "employment": 1.05
+      }
+    },
+    {
+      "id": "senior_care_neighborhoods",
+      "name": "Senior Care Neighborhoods",
+      "religion": "Plural",
+      "caste": "Elder Households",
+      "language": "Japanese",
+      "population_percent": 0.20,
+      "economic_modifier": 0.98,
+      "education_modifier": 0.92,
+      "grievance_score": 0.45,
+      "radicalization_base_rate": 0.05,
+      "issue_sensitivity": {
+        "services": 1.28,
+        "public_trust": 1.18,
+        "law_and_order": 1.04,
+        "infrastructure": 1.10,
+        "economy": 0.90
+      }
+    }
+  ],
+  "role_distribution": {
+    "Worker": 0.32,
+    "BusinessOwner": 0.16,
+    "Politician": 0.07,
+    "Journalist": 0.09,
+    "Student": 0.36
+  },
+  "initial_city_stats": {
+    "economy": 66,
+    "employment": 60,
+    "law_and_order": 68,
+    "infrastructure": 72,
+    "environment": 61,
+    "corruption": 32,
+    "social_tension": 42,
+    "media_freedom": 59,
+    "public_trust": 57
+  },
+  "issue_front_baseline": {
+    "economy": 56,
+    "corruption": 34,
+    "safety": 45,
+    "services": 60,
+    "social_cohesion": 49
+  },
+  "starter_issues": [
+    "Aging neighborhoods demand stronger health and care service reliability.",
+    "Household income pressure and long-commute fatigue are rising in outer wards.",
+    "Political focus is split between climate resilience and fiscal discipline."
+  ]
+}

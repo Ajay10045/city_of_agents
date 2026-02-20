@@ -36,6 +36,11 @@ class LLMClient:
             if not api_key:
                 raise RuntimeError("Missing OPENAI_API_KEY (or LLM_API_KEY) in environment")
             self.client = OpenAI(api_key=api_key)
+        elif self.provider == "ollama":
+            from openai import OpenAI
+
+            base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+            self.client = OpenAI(base_url=base_url, api_key="ollama")
         elif self.provider == "anthropic":
             from anthropic import Anthropic
 
@@ -45,7 +50,7 @@ class LLMClient:
             self.client = Anthropic(api_key=api_key)
         else:
             raise RuntimeError(
-                f"Unsupported LLM_PROVIDER={self.provider!r}. Use 'openai' or 'anthropic'."
+                f"Unsupported LLM_PROVIDER={self.provider!r}. Use 'openai', 'anthropic', or 'ollama'."
             )
 
     @staticmethod
@@ -158,6 +163,21 @@ class LLMClient:
             repaired_raw = response.choices[0].message.content
             return self._parse_json_object(repaired_raw)
 
+        if self.provider == "ollama":
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": repair_system + "\n\nReturn ONLY a valid JSON object.",
+                    },
+                    {"role": "user", "content": repair_user},
+                ],
+                temperature=0,
+            )
+            repaired_raw = response.choices[0].message.content
+            return self._parse_json_object(repaired_raw)
+
         response = self.client.messages.create(
             model=self.model,
             system=repair_system,
@@ -176,6 +196,21 @@ class LLMClient:
                 response_format={"type": "json_object"},
                 messages=[
                     {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                temperature=self.temperature,
+            )
+            raw = response.choices[0].message.content
+            try:
+                return self._parse_json_object(raw)
+            except ValueError:
+                return self._repair_json_response(raw)
+
+        if self.provider == "ollama":
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system + "\n\nReturn ONLY a valid JSON object."},
                     {"role": "user", "content": user},
                 ],
                 temperature=self.temperature,

@@ -1,19 +1,27 @@
+import { useMemo, useState } from 'react'
+
 type Props = {
   policyHistory: string[]
   eventHistory: string[]
 }
 
 export default function TurnLogPanel({ policyHistory, eventHistory }: Props) {
-  const all = [
-    ...policyHistory.map((text) => ({ text, isEvent: false })),
-    ...eventHistory.map((text) => ({ text, isEvent: true })),
-  ].reverse()
+  const [expanded, setExpanded] = useState(false)
+  const all = useMemo(
+    () =>
+      [
+        ...policyHistory.map((text) => ({ text, isEvent: false })),
+        ...eventHistory.map((text) => ({ text, isEvent: true })),
+      ].reverse(),
+    [eventHistory, policyHistory],
+  )
+  const visibleRows = expanded ? all : all.slice(0, 12)
 
   return (
     <section className="panel">
       <div className="panel-title">Turn Log</div>
       <div id="turn-log">
-        {all.map(({ text, isEvent }, idx) => {
+        {visibleRows.map(({ text, isEvent }, idx) => {
           const parts = text.split(/(mayor|opposition)/gi)
           return (
             <div key={`${text}-${idx}`} className={`log-line ${isEvent ? 'event-line' : ''}`}>
@@ -26,6 +34,13 @@ export default function TurnLogPanel({ policyHistory, eventHistory }: Props) {
           )
         })}
       </div>
+      {all.length > 12 && (
+        <div className="log-actions">
+          <button className="btn-log-toggle" onClick={() => setExpanded((current) => !current)}>
+            {expanded ? 'Collapse Log' : `Expand Log (${all.length})`}
+          </button>
+        </div>
+      )}
     </section>
   )
 }

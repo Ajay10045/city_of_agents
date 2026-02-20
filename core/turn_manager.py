@@ -19,7 +19,9 @@ from llm.dynamic_policy import DynamicPolicy
 
 
 class MayorAdvisorPort(Protocol):
-    def generate_options(self, game_state: GameState) -> list[DynamicPolicy]: ...
+    def generate_options(
+        self, game_state: GameState, guidance: str | None = None
+    ) -> list[DynamicPolicy]: ...
 
 
 class OppositionAgentPort(Protocol):
@@ -77,6 +79,21 @@ class TurnManager:
         # Cache of current turn's mayor options (id -> DynamicPolicy)
         self._cached_mayor_options: dict[str, DynamicPolicy] = {}
 
+    def _run_agent_impact_pass(
+        self,
+        mayor_action: Any,
+        opposition_action: Any,
+        rumor_pressure: float,
+    ) -> dict[str, Any]:
+        return self.agent_engine.apply_policy_impact_pass(
+            game_state=self.game_state,
+            mayor_effects=mayor_action.effects,
+            opposition_effects=opposition_action.effects,
+            mayor_group_effects=mayor_action.group_effects,
+            opposition_group_effects=opposition_action.group_effects,
+            rumor_pressure=rumor_pressure,
+        )
+
     # ── Public API ─────────────────────────────────────────────────────────
 
     def get_mayor_options(self) -> list[DynamicPolicy]:
@@ -132,6 +149,7 @@ class TurnManager:
 
         campaign_delta = mayor_resolution.campaign_strength - opp_resolution.campaign_strength
         self.agent_engine.propagate_alignment(self.game_state, campaign_delta, rumor_pressure)
+        agent_impact = self._run_agent_impact_pass(mayor_policy, opp_policy, rumor_pressure)
 
         # ── LLM-generated event ─────────────────────────────────────────────
         generated_event = self.event_generator.maybe_generate_event(self.game_state)
@@ -181,6 +199,14 @@ class TurnManager:
                     agent.trust_in_government += dr.trust_delta
                     agent.clamp_state()
 
+        media_cards = self.media_engine.build_narrative_cards(
+            mayor_action=mayor_policy,
+            opposition_action=opp_policy,
+            triggered_events=all_triggered,
+            dominant_fronts=list(agent_impact.get("dominant_fronts", [])),
+            media_state=self.game_state.media_state,
+        )
+
         # ── Popularity recalculation ────────────────────────────────────────
         media_modifiers = self.media_engine.popularity_modifiers(self.game_state.media_state)
         mayor_pop, opp_pop = self.agent_engine.recalculate_popularity(
@@ -224,12 +250,14 @@ class TurnManager:
             "mayor_action": mayor_policy.to_dict(),
             "opposition_action": opp_policy.to_dict(),
             "stat_changes": stat_changes,
+            "agent_impact": agent_impact,
             "triggered_events": all_triggered,
             "escalated_events": event_result.escalated_events,
             "event_chances": {k: round(v, 4) for k, v in event_result.event_chances.items()},
             "rumor_pressure": round(rumor_pressure, 4),
             "debate_results": [dr.to_dict() for dr in debate_results],
             "generated_event": generated_event.to_dict() if generated_event else None,
+            "media_cards": media_cards,
             "credibility": credibility_result,
             "election_result": election_result,
             "game_over": turn >= self.game_state.total_turns,
@@ -284,6 +312,9 @@ class TurnManager:
             "credibility_score": round(self.game_state.credibility_score, 2),
             "last_credibility_delta": round(self.game_state.last_credibility_delta, 3),
             "open_promises": len([p for p in self.game_state.promise_ledger if not p.get("resolved")]),
+            "simulation_profile": dict(self.game_state.simulation_profile),
+            "last_agent_impact": dict(self.game_state.last_agent_impact),
+            "cohort_metrics": dict(self.game_state.cohort_metrics),
             "long_term_effects": [
                 {"source_id": e.source_id, "actor": e.actor, "remaining_turns": e.remaining_turns}
                 for e in self.game_state.long_term_effects
@@ -305,16 +336,36 @@ class TurnManager:
         self.game_state.turn_number = turn
         pre_stats = self.game_state.city_stats.as_dict()
 
-        # ── Mayor action (instant — from cache) ─────────────────────────────
+        # ── Duel step 1: Mayor action submitted ─────────────────────────────
         mayor_resolution = self.policy_engine.apply_dynamic_action(self.game_state, mayor_policy)
-        yield {"type": "mayor_action", "action": mayor_policy.to_dict()}
+        yield {
+            "type": "mayor_action_submitted",
+            "turn": turn,
+            "action": mayor_policy.to_dict(),
+            "message": mayor_policy.rationale,
+            "target_groups": list(mayor_policy.target_groups),
+            "front_weights": dict(mayor_policy.narrative_fronts_impacted),
+            "estimated_shift": dict(mayor_policy.expected_stat_delta),
+        }
+        # legacy compatibility event
+        yield {"type": "mayor_action", "turn": turn, "action": mayor_policy.to_dict()}
 
-        # ── Opposition action (LLM) ──────────────────────────────────────────
+        # ── Duel step 2: Opposition primary frame ───────────────────────────
         opp_policy = self.opposition_agent.decide_action(self.game_state, mayor_policy)
         opp_resolution = self.policy_engine.apply_dynamic_action(self.game_state, opp_policy)
-        yield {"type": "opposition_action", "action": opp_policy.to_dict()}
+        yield {
+            "type": "opposition_frame_primary",
+            "turn": turn,
+            "action": opp_policy.to_dict(),
+            "message": opp_policy.rationale,
+            "target_groups": list(opp_policy.target_groups),
+            "front_weights": dict(opp_policy.narrative_fronts_impacted),
+            "estimated_shift": dict(opp_policy.expected_stat_delta),
+        }
+        # legacy compatibility event
+        yield {"type": "opposition_action", "turn": turn, "action": opp_policy.to_dict()}
 
-        # ── Long-term effects + media + formula agent updates ────────────────
+        # ── Core simulation effects + agent impact ───────────────────────────
         long_term_resolution = self.policy_engine.apply_long_term_effects(self.game_state)
         self.media_engine.update_narrative(
             self.game_state.media_state,
@@ -337,6 +388,47 @@ class TurnManager:
         self.agent_engine.update_radicalization(self.game_state, rumor_pressure)
         campaign_delta = mayor_resolution.campaign_strength - opp_resolution.campaign_strength
         self.agent_engine.propagate_alignment(self.game_state, campaign_delta, rumor_pressure)
+        agent_impact = self._run_agent_impact_pass(mayor_policy, opp_policy, rumor_pressure)
+        yield {"type": "agent_impact_assessed", "summary": agent_impact}
+        if agent_impact.get("top_cohorts"):
+            yield {
+                "type": "cohort_shift_aggregated",
+                "cohorts": agent_impact.get("top_cohorts", []),
+            }
+
+        dominant_fronts = list(agent_impact.get("dominant_fronts", []))
+
+        # ── Duel step 3: Mayor counter frame ────────────────────────────────
+        mayor_counter_msg = mayor_policy.counter_narrative_risk or (
+            f"Mayor reframes turn around {', '.join(dominant_fronts) if dominant_fronts else 'stability'}."
+        )
+        yield {
+            "type": "mayor_counter_frame",
+            "turn": turn,
+            "message": mayor_counter_msg,
+            "front_weights": dict(mayor_policy.narrative_fronts_impacted),
+            "target_groups": list(mayor_policy.target_groups),
+            "estimated_shift": {
+                "campaign_strength": round(mayor_resolution.campaign_strength, 4),
+                "rumor_pressure": round(rumor_pressure, 4),
+            },
+        }
+
+        # ── Duel step 4: Opposition follow-up frame ─────────────────────────
+        opposition_followup = opp_policy.counter_narrative_risk or (
+            f"Opposition doubles down on {', '.join(dominant_fronts) if dominant_fronts else 'trust concerns'}."
+        )
+        yield {
+            "type": "opposition_frame_followup",
+            "turn": turn,
+            "message": opposition_followup,
+            "front_weights": dict(opp_policy.narrative_fronts_impacted),
+            "target_groups": list(opp_policy.target_groups),
+            "estimated_shift": {
+                "campaign_strength": round(opp_resolution.campaign_strength, 4),
+                "counter_risk": round(opp_policy.opposition_counter_risk, 4),
+            },
+        }
 
         # ── LLM event generation ─────────────────────────────────────────────
         generated_event = self.event_generator.maybe_generate_event(self.game_state)
@@ -367,9 +459,12 @@ class TurnManager:
         all_triggered.extend(event_result.triggered_events)
 
         # ── Citizen debates — one yield per group ────────────────────────────
+        chatter_lines: list[str] = []
+        debate_results = []
         for dr in self.citizen_debates.stream_debates(
             self.game_state, mayor_policy, opp_policy, all_triggered
         ):
+            debate_results.append(dr)
             for agent in self.game_state.agents:
                 if agent.group_id == dr.group_id:
                     agent.alignment += dr.alignment_delta
@@ -377,7 +472,31 @@ class TurnManager:
                     agent.radicalization += dr.radicalization_delta
                     agent.trust_in_government += dr.trust_delta
                     agent.clamp_state()
+            chatter_lines.append(f"{dr.group_name}: {dr.debate_summary}")
             yield {"type": "debate", "debate": dr.to_dict()}
+
+        # ── Duel step 5: Street chatter synthesized ─────────────────────────
+        yield {
+            "type": "street_chatter_synthesized",
+            "turn": turn,
+            "summary": chatter_lines[:3],
+            "dominant_fronts": dominant_fronts,
+            "triggered_events": list(all_triggered),
+        }
+
+        # ── Duel step 6: Media publish ──────────────────────────────────────
+        media_cards = self.media_engine.build_narrative_cards(
+            mayor_action=mayor_policy,
+            opposition_action=opp_policy,
+            triggered_events=all_triggered,
+            dominant_fronts=dominant_fronts,
+            media_state=self.game_state.media_state,
+        )
+        yield {
+            "type": "media_narrative_published",
+            "turn": turn,
+            "cards": media_cards,
+        }
 
         # ── Popularity recalculation + final state ───────────────────────────
         media_modifiers = self.media_engine.popularity_modifiers(self.game_state.media_state)
@@ -406,6 +525,16 @@ class TurnManager:
             if abs(post_stats[k] - pre_stats[k]) >= 0.01
         }
 
+        # ── Duel step 7: Simulation stats applied ───────────────────────────
+        yield {
+            "type": "simulation_stats_applied",
+            "turn": turn,
+            "stat_deltas": stat_changes,
+            "triggered_events": list(all_triggered),
+            "escalated_events": list(event_result.escalated_events),
+            "event_chances": {k: round(v, 4) for k, v in event_result.event_chances.items()},
+        }
+
         election_result = None
         if turn == self.game_state.election_turn:
             metrics = self.agent_engine.group_metrics(self.game_state.agents)
@@ -414,14 +543,52 @@ class TurnManager:
 
         group_metrics = self.agent_engine.group_metrics(self.game_state.agents)
 
+        # ── Duel step 8: Popularity recalculated ─────────────────────────────
+        yield {
+            "type": "popularity_recalculated",
+            "turn": turn,
+            "mayor_popularity": round(self.game_state.mayor_popularity, 3),
+            "opposition_popularity": round(self.game_state.opposition_popularity, 3),
+            "governing_party": self.game_state.governing_party,
+            "credibility": credibility_result,
+        }
+
+        # ── Duel step 9: Turn closed ────────────────────────────────────────
+        turn_closed_payload = {
+            "type": "turn_closed",
+            "turn": turn,
+            "turn_summary": {
+                "mayor_action": mayor_policy.name,
+                "opposition_action": opp_policy.name,
+                "dominant_fronts": dominant_fronts,
+                "events_triggered": list(all_triggered),
+            },
+            "stat_deltas": stat_changes,
+            "popularity_delta": {
+                "mayor": round(self.game_state.mayor_popularity, 3),
+                "opposition": round(self.game_state.opposition_popularity, 3),
+            },
+            "key_events": list(all_triggered),
+            "state": self._build_state_snapshot(group_metrics),
+            "media_cards": media_cards,
+            "election_result": election_result,
+            "game_over": turn >= self.game_state.total_turns,
+        }
+        yield turn_closed_payload
+
+        # Backward-compatible done envelope for old clients
         yield {
             "type": "done",
             "turn": turn,
             "stat_changes": stat_changes,
+            "agent_impact": agent_impact,
             "triggered_events": all_triggered,
             "escalated_events": event_result.escalated_events,
             "event_chances": {k: round(v, 4) for k, v in event_result.event_chances.items()},
             "rumor_pressure": round(rumor_pressure, 4),
+            "debate_results": [dr.to_dict() for dr in debate_results],
+            "generated_event": generated_event.to_dict() if generated_event else None,
+            "media_cards": media_cards,
             "credibility": credibility_result,
             "election_result": election_result,
             "game_over": turn >= self.game_state.total_turns,
@@ -467,6 +634,9 @@ class TurnManager:
 
             campaign_delta = mayor_resolution.campaign_strength - opposition_resolution.campaign_strength
             self.agent_engine.propagate_alignment(self.game_state, campaign_delta, rumor_pressure)
+            agent_impact = self._run_agent_impact_pass(
+                mayor_policy, opposition_policy, rumor_pressure
+            )
 
             event_result = self.event_engine.step(self.game_state)
 
@@ -492,6 +662,7 @@ class TurnManager:
                 prev_mayor_pop=prev_mayor_pop,
                 prev_opp_pop=prev_opp_pop,
                 rumor_pressure=rumor_pressure,
+                agent_impact=agent_impact,
                 event_result=event_result,
             )
 
@@ -515,7 +686,7 @@ class TurnManager:
         print(f"    Government In Power: {self.game_state.governing_party}")
 
     def _log_turn(self, turn, mayor_action, opposition_action, pre_stats, post_stats,
-                  prev_mayor_pop, prev_opp_pop, rumor_pressure, event_result) -> None:
+                  prev_mayor_pop, prev_opp_pop, rumor_pressure, agent_impact, event_result) -> None:
         popularity_leader = (
             "Mayor" if self.game_state.mayor_popularity > self.game_state.opposition_popularity
             else "Opposition" if self.game_state.opposition_popularity > self.game_state.mayor_popularity
@@ -532,6 +703,14 @@ class TurnManager:
         ]
         print("  Major Stat Changes: " + (", ".join(stat_changes) if stat_changes else "none"))
         print(f"  Rumor Pressure: {rumor_pressure:.3f}")
+        print(
+            "  Agent Impact: Δh {0:+.3f}, Δr {1:+.3f}, Δa {2:+.3f} | fronts: {3}".format(
+                float(agent_impact.get("avg_happiness_delta", 0.0)),
+                float(agent_impact.get("avg_radicalization_delta", 0.0)),
+                float(agent_impact.get("avg_alignment_delta", 0.0)),
+                ", ".join(agent_impact.get("dominant_fronts", [])) or "none",
+            )
+        )
         if event_result.triggered_events:
             print("  Triggered Events: " + ", ".join(event_result.triggered_events))
         else:
