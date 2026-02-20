@@ -235,6 +235,17 @@ export type DebateResult = {
   trust_delta: number
 }
 
+export type StreetChatterItem = {
+  turn?: number
+  speaker: string
+  role: string
+  group_name: string
+  line: string
+  sentiment: string
+  heat: number
+  tags: string[]
+}
+
 export type ElectionResult = {
   mayor_vote_share: number
   opposition_vote_share: number
@@ -327,6 +338,7 @@ export type StreamMessage =
       summary: string[]
       dominant_fronts: string[]
       triggered_events: string[]
+      chatter_items?: StreetChatterItem[]
     }
   | { type: 'mayor_action'; action: DynamicPolicy }
   | { type: 'opposition_action'; action: DynamicPolicy }

@@ -15,6 +15,7 @@ import type {
   MediaTimelineCard,
   SetupOptions,
   StateSnapshot,
+  StreetChatterItem,
   StreamMessage,
 } from './types'
 import HeaderBar from './components/HeaderBar'
@@ -78,6 +79,7 @@ export default function App() {
   const [stream, setStream] = useState<StreamCardItem[]>([])
   const [mediaTimeline, setMediaTimeline] = useState<MediaTimelineCard[]>([])
   const [debates, setDebates] = useState<DebateResult[]>([])
+  const [streetChatter, setStreetChatter] = useState<StreetChatterItem[]>([])
   const [statChanges, setStatChanges] = useState<Record<string, number>>({})
   const [eventChances, setEventChances] = useState<Record<string, number>>({})
   const [selectedPolicyId, setSelectedPolicyId] = useState<string | null>(null)
@@ -116,6 +118,7 @@ export default function App() {
 
   const resetSimulationPanels = () => {
     setDebates([])
+    setStreetChatter([])
     setStream([])
     setMediaTimeline([])
     setPolicies([])
@@ -300,16 +303,25 @@ export default function App() {
           }
 
           if (msg.type === 'street_chatter_synthesized') {
-            setStream((s) => [
-              ...s,
-              {
-                kind: 'impact',
+            const chatterItems = (msg.chatter_items ?? []).map((item) => ({
+              ...item,
+              turn: item.turn ?? messageTurn,
+            }))
+            if (chatterItems.length > 0) {
+              setStreetChatter((current) => [...chatterItems, ...current].slice(0, 250))
+            } else if ((msg.summary ?? []).length > 0) {
+              const fallback = (msg.summary ?? []).slice(0, 3).map((line, idx) => ({
                 turn: messageTurn,
-                label: '🗣 Street Chatter',
-                name: (msg.summary ?? [])[0] ?? 'Citizen sentiment recalibrated',
-                meta: `Fronts: ${(msg.dominant_fronts ?? []).join(', ') || 'none'}`,
-              },
-            ])
+                speaker: `Citizen ${idx + 1}`,
+                role: 'Resident',
+                group_name: 'Citywide',
+                line,
+                sentiment: 'mixed',
+                heat: 0.5,
+                tags: ['street', 'pulse'],
+              }))
+              setStreetChatter((current) => [...fallback, ...current].slice(0, 250))
+            }
           }
 
           if (msg.type === 'simulation_stats_applied') {
@@ -624,7 +636,11 @@ export default function App() {
             <TurnArchivePanel gameId={gameId} refreshKey={state.turn_number} />
           </main>
           <aside className="layout-right">
-            <DebatesPanel debates={debates} visible={debates.length > 0} />
+            <DebatesPanel
+              debates={debates}
+              streetChatter={streetChatter}
+              visible={debates.length > 0 || streetChatter.length > 0}
+            />
             <CrisesPanel state={state} eventChances={eventChances} />
           </aside>
         </div>

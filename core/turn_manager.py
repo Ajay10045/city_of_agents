@@ -51,6 +51,15 @@ class CitizenDebatesPort(Protocol):
         triggered_events: list[str],
     ) -> Iterable[Any]: ...
 
+    def generate_street_chatter(
+        self,
+        game_state: GameState,
+        mayor_action: DynamicPolicy,
+        opp_action: DynamicPolicy,
+        triggered_events: list[str],
+        limit: int = 8,
+    ) -> list[Any]: ...
+
 
 class EventGeneratorPort(Protocol):
     def maybe_generate_event(self, game_state: GameState) -> Any | None: ...
@@ -426,6 +435,13 @@ class TurnManager:
                     agent.trust_in_government += dr.trust_delta
                     agent.clamp_state()
 
+        street_chatter = self.citizen_debates.generate_street_chatter(
+            self.game_state,
+            mayor_policy,
+            opp_policy,
+            all_triggered,
+        )
+
         self._apply_public_trust_feedback(len(all_triggered))
 
         media_cards = self.media_engine.build_narrative_cards(
@@ -489,6 +505,14 @@ class TurnManager:
             "event_chances": {k: round(v, 4) for k, v in event_result.event_chances.items()},
             "rumor_pressure": round(rumor_pressure, 4),
             "debate_results": [dr.to_dict() for dr in debate_results],
+            "street_chatter": [
+                item.to_dict()
+                if hasattr(item, "to_dict")
+                else item
+                if isinstance(item, dict)
+                else {"line": str(item)}
+                for item in street_chatter
+            ],
             "generated_event": generated_event.to_dict() if generated_event else None,
             "media_cards": media_cards,
             "credibility": credibility_result,
@@ -723,6 +747,12 @@ class TurnManager:
             yield {"type": "debate", "debate": dr.to_dict()}
 
         self._apply_public_trust_feedback(len(all_triggered))
+        street_chatter = self.citizen_debates.generate_street_chatter(
+            self.game_state,
+            mayor_policy,
+            opp_policy,
+            all_triggered,
+        )
 
         # ── Duel step 5: Street chatter synthesized ─────────────────────────
         yield {
@@ -731,6 +761,14 @@ class TurnManager:
             "summary": chatter_lines[:3],
             "dominant_fronts": dominant_fronts,
             "triggered_events": list(all_triggered),
+            "chatter_items": [
+                item.to_dict()
+                if hasattr(item, "to_dict")
+                else item
+                if isinstance(item, dict)
+                else {"line": str(item)}
+                for item in street_chatter
+            ],
         }
 
         # ── Duel step 6: Media publish ──────────────────────────────────────

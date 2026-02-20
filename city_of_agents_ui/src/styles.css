@@ -769,8 +769,25 @@ html, body {
 .debate-delta span { font-weight: 600; }
 .debate-delta span.pos { color: var(--green); }
 .debate-delta span.neg { color: var(--red); }
+.pulse-section {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+.pulse-section + .pulse-section {
+	margin-top: 10px;
+	padding-top: 10px;
+	border-top: 1px solid var(--border);
+}
+.pulse-subtitle {
+	font-size: 10px;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--muted);
+}
 #debates-container {
-	max-height: 58vh;
+	max-height: 30vh;
 	overflow: auto;
 	padding-right: 4px;
 }
@@ -780,6 +797,94 @@ html, body {
 #debates-container::-webkit-scrollbar-thumb {
 	background: var(--border);
 	border-radius: 999px;
+}
+.street-chatter-list {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	max-height: 34vh;
+	overflow: auto;
+	padding-right: 4px;
+}
+.street-chatter-list::-webkit-scrollbar {
+	width: 6px;
+}
+.street-chatter-list::-webkit-scrollbar-thumb {
+	background: var(--border);
+	border-radius: 999px;
+}
+.street-chatter-card {
+	background: linear-gradient(180deg, rgba(18, 32, 56, 0.78), rgba(13, 23, 39, 0.86));
+	border: 1px solid var(--border);
+	border-left: 3px solid #3aa3ff;
+	border-radius: var(--radius);
+	padding: 10px 12px;
+	animation: fadeSlideIn 0.24s ease-out;
+}
+.street-chatter-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	margin-bottom: 4px;
+}
+.street-chatter-speaker {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--mayor-light);
+}
+.street-role {
+	color: var(--muted);
+	font-size: 11px;
+	font-weight: 500;
+}
+.street-chatter-dot {
+	width: 7px;
+	height: 7px;
+	border-radius: 999px;
+	background: #3aa3ff;
+	box-shadow: 0 0 0 0 rgba(58, 163, 255, 0.6);
+	animation: pingDot 2s infinite;
+}
+@keyframes pingDot {
+	0% { box-shadow: 0 0 0 0 rgba(58, 163, 255, 0.6); }
+	70% { box-shadow: 0 0 0 7px rgba(58, 163, 255, 0); }
+	100% { box-shadow: 0 0 0 0 rgba(58, 163, 255, 0); }
+}
+.street-chatter-line {
+	font-size: 12px;
+	color: var(--text);
+	line-height: 1.52;
+	margin-bottom: 6px;
+}
+.street-chatter-meta {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	font-size: 11px;
+	color: var(--muted);
+}
+.street-chatter-meta .sent-supportive { color: var(--green); }
+.street-chatter-meta .sent-hopeful { color: #34d399; }
+.street-chatter-meta .sent-skeptical { color: var(--yellow); }
+.street-chatter-meta .sent-angry { color: var(--red); }
+.street-chatter-meta .sent-mixed { color: var(--muted); }
+.street-chatter-tags {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: 6px;
+}
+.street-chatter-tags span {
+	font-size: 10px;
+	color: var(--gold-light);
+	background: rgba(240, 184, 77, 0.08);
+	border: 1px solid rgba(240, 184, 77, 0.2);
+	border-radius: 999px;
+	padding: 1px 6px;
 }
 @keyframes chatterPulse {
 	0%, 100% { transform: scale(1); filter: brightness(1); }
