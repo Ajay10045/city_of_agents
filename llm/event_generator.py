@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from llm.llm_client import LLMClient
 from llm.context_builder import build_city_context
-from llm.dynamic_policy import _clamp, VALID_STATS, VALID_MEDIA, VALID_GROUP_FIELDS, VALID_MATCH_KEYS
+from llm.dynamic_policy import (
+    _clamp,
+    _to_float,
+    VALID_STATS,
+    VALID_MEDIA,
+    VALID_GROUP_FIELDS,
+    VALID_MATCH_KEYS,
+)
 
 if TYPE_CHECKING:
     from core.game_state import GameState
@@ -61,29 +68,80 @@ class GeneratedEvent:
 class EventGenerator:
     def __init__(self) -> None:
         model = os.environ.get("LLM_DEBATE_MODEL", "gpt-4o-mini")
-        self._client = LLMClient(model=model)
+        key = (
+            os.environ.get("LLM_API_KEY")
+            or os.environ.get("OPENAI_API_KEY")
+            or os.environ.get("ANTHROPIC_API_KEY")
+            or ""
+        )
+        self._disable_live = key.startswith("test-")
+        self._client: LLMClient | None
+        try:
+            self._client = LLMClient(model=model)
+        except Exception:
+            self._client = None
 
     def maybe_generate_event(self, game_state: "GameState") -> GeneratedEvent | None:
         context = build_city_context(game_state)
         user = f"City state:\n{context}\n\nShould a crisis event emerge this turn? If yes, describe it."
-        data = self._client.chat(_SYSTEM, user)
+        data: dict[str, Any]
+        if self._client is not None and not self._disable_live:
+            try:
+                data = self._client.chat(_SYSTEM, user)
+            except Exception:
+                data = {"generate": False}
+        else:
+            data = {"generate": False}
 
         if not data.get("generate", False):
-            return None
+            # deterministic fallback trigger for stressed conditions
+            stress = (
+                float(game_state.city_stats.social_tension) * 0.30
+                + float(game_state.city_stats.corruption) * 0.22
+                - float(game_state.city_stats.public_trust) * 0.18
+            ) / 100.0
+            chance = max(0.02, min(0.30, 0.03 + max(0.0, stress) * 0.72))
+            # Cadence guardrail: avoid event spam when crises are already active.
+            active_pressure = len(game_state.active_events)
+            if active_pressure > 0:
+                chance *= max(0.35, 1.0 - active_pressure * 0.28)
+            if game_state.turn_number <= 2:
+                chance *= 0.7
+            if game_state.rng.random() > chance:
+                return None
+            return GeneratedEvent(
+                name="Public Discontent Wave",
+                description=(
+                    "Localized protests intensify around service access and governance credibility, "
+                    "forcing an emergency narrative battle."
+                ),
+                type="social",
+                severity="moderate",
+                duration=2,
+                city_effects={"public_trust": -1.4, "social_tension": 1.7, "law_and_order": -0.6},
+                group_effects=[],
+                media_effects={"sensationalism": 1.3, "trust": -0.4},
+            )
 
         raw = data.get("event", {})
         if not raw:
             return None
 
-        city_effects = {
-            k: _clamp(float(v), -10.0, 10.0)
-            for k, v in raw.get("city_effects", {}).items()
-            if k in VALID_STATS
-        }
+        city_effects: dict[str, float] = {}
+        raw_city_effects = raw.get("city_effects", {})
+        if isinstance(raw_city_effects, dict):
+            for k, v in raw_city_effects.items():
+                if k not in VALID_STATS:
+                    continue
+                numeric = _to_float(v)
+                if numeric is not None:
+                    city_effects[k] = _clamp(numeric, -10.0, 10.0)
 
         raw_ge = raw.get("group_effects", [])
         group_effects = []
         for ge in raw_ge if isinstance(raw_ge, list) else []:
+            if not isinstance(ge, dict):
+                continue
             raw_match = ge.get("match", {})
             if not isinstance(raw_match, dict):
                 raw_match = {}
@@ -91,16 +149,23 @@ class EventGenerator:
             clean: dict[str, Any] = {"match": match}
             for f in VALID_GROUP_FIELDS:
                 if f in ge:
-                    clean[f] = _clamp(float(ge[f]), -8.0, 8.0)
+                    numeric = _to_float(ge[f])
+                    if numeric is not None:
+                        clean[f] = _clamp(numeric, -8.0, 8.0)
             group_effects.append(clean)
 
-        media_effects = {
-            k: _clamp(float(v), -10.0, 10.0)
-            for k, v in raw.get("media_effects", {}).items()
-            if k in VALID_MEDIA
-        }
+        media_effects: dict[str, float] = {}
+        raw_media_effects = raw.get("media_effects", {})
+        if isinstance(raw_media_effects, dict):
+            for k, v in raw_media_effects.items():
+                if k not in VALID_MEDIA:
+                    continue
+                numeric = _to_float(v)
+                if numeric is not None:
+                    media_effects[k] = _clamp(numeric, -10.0, 10.0)
 
-        duration = max(1, min(3, int(raw.get("duration", 2))))
+        duration_value = _to_float(raw.get("duration"), 2.0) or 2.0
+        duration = max(1, min(3, int(duration_value)))
         severity = raw.get("severity", "moderate")
         if severity not in ("minor", "moderate", "major"):
             severity = "moderate"

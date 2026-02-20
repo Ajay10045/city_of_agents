@@ -79,6 +79,9 @@ class ElectionEngine:
             0.05,
             0.22,
         )
+        credibility_gap = (50.0 - game_state.credibility_score) / 100.0
+        undecided_bloc = _clamp(undecided_bloc + max(0.0, credibility_gap) * 0.08, 0.05, 0.30)
+
         swing_voters = _clamp(
             0.03
             + dissatisfaction_index * 0.08
@@ -97,6 +100,7 @@ class ElectionEngine:
             + (mayor_campaign / campaign_total) * 0.35
             + (mayor_media / media_total) * 0.2
         )
+        momentum_mayor += (game_state.credibility_score - 50.0) / 100.0 * 0.18
         momentum_mayor = _clamp(momentum_mayor, 0.3, 0.7)
         momentum_opposition = 1.0 - momentum_mayor
 

@@ -65,6 +65,11 @@ dmypy.json
 *.swo
 *~
 
+# Frontend dependencies/builds
+ui/node_modules/
+city_of_agents_ui/node_modules/
+city_of_agents_ui/dist/
+
 # macOS
 .DS_Store
 .AppleDouble
@@ -86,3 +91,10 @@ logs/
 *.pyc
 *.pyo
 .env
+
+# Node / frontend
+ui/node_modules/
+ui/dist/
+
+# Simulation output
+output.json

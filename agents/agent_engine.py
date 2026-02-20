@@ -9,6 +9,7 @@ from agents.relationship import Relationship
 
 if TYPE_CHECKING:
     import random
+    from core.game_state import GameState
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,100 @@ DEFAULT_ROLE_DISTRIBUTION: dict[str, float] = {
     "Politician": 0.08,
     "Journalist": 0.12,
     "Student": 0.31,
+}
+
+DEFAULT_ROLE_ISSUE_WEIGHTS: dict[str, float] = {
+    "economy": 1.0,
+    "employment": 1.0,
+    "law_and_order": 1.0,
+    "infrastructure": 0.9,
+    "environment": 0.7,
+    "corruption": 1.1,
+    "social_tension": 1.0,
+    "media_freedom": 0.6,
+    "public_trust": 1.0,
+}
+
+ROLE_ISSUE_WEIGHTS: dict[str, dict[str, float]] = {
+    "Worker": {
+        "economy": 1.2,
+        "employment": 1.35,
+        "law_and_order": 0.95,
+        "infrastructure": 0.95,
+        "environment": 0.7,
+        "corruption": 1.1,
+        "social_tension": 1.2,
+        "media_freedom": 0.55,
+        "public_trust": 1.15,
+    },
+    "BusinessOwner": {
+        "economy": 1.35,
+        "employment": 1.0,
+        "law_and_order": 1.1,
+        "infrastructure": 1.1,
+        "environment": 0.65,
+        "corruption": 1.0,
+        "social_tension": 0.8,
+        "media_freedom": 0.7,
+        "public_trust": 1.0,
+    },
+    "Politician": {
+        "economy": 1.0,
+        "employment": 0.9,
+        "law_and_order": 1.1,
+        "infrastructure": 0.9,
+        "environment": 0.55,
+        "corruption": 1.35,
+        "social_tension": 0.95,
+        "media_freedom": 0.9,
+        "public_trust": 1.35,
+    },
+    "Journalist": {
+        "economy": 0.8,
+        "employment": 0.8,
+        "law_and_order": 0.95,
+        "infrastructure": 0.75,
+        "environment": 0.85,
+        "corruption": 1.25,
+        "social_tension": 1.0,
+        "media_freedom": 1.4,
+        "public_trust": 1.1,
+    },
+    "Student": {
+        "economy": 0.9,
+        "employment": 0.8,
+        "law_and_order": 1.0,
+        "infrastructure": 1.0,
+        "environment": 1.05,
+        "corruption": 1.15,
+        "social_tension": 1.25,
+        "media_freedom": 1.0,
+        "public_trust": 1.05,
+    },
+}
+
+STAT_DIRECTION: dict[str, float] = {
+    "economy": 1.0,
+    "employment": 1.0,
+    "law_and_order": 1.0,
+    "infrastructure": 1.0,
+    "environment": 1.0,
+    "corruption": -1.0,
+    "social_tension": -1.0,
+    "media_freedom": 1.0,
+    "public_trust": 1.0,
+}
+
+FRONT_BY_STAT: dict[str, str] = {
+    "economy": "economy",
+    "employment": "economy",
+    "infrastructure": "economy",
+    "environment": "services",
+    "law_and_order": "safety",
+    "corruption": "corruption",
+    "social_tension": "social_cohesion",
+    "media_freedom": "public_trust",
+    "public_trust": "public_trust",
 }
 
 
@@ -58,18 +153,33 @@ class AgentEngine:
         rng: "random.Random",
         role_distribution: Mapping[str, float] | None = None,
         representatives_per_cell: int = 5,
+        target_agent_count: int | None = None,
     ) -> tuple[list[Agent], list[Relationship]]:
         roles = list(ROLE_PROFILES)
         role_dist = _normalize_distribution(role_distribution or DEFAULT_ROLE_DISTRIBUTION, roles)
 
         agents: list[Agent] = []
         next_id = 1
+        total_cells = len(identity_groups) * len(roles)
+        per_cell: list[int] = []
+        if target_agent_count is not None and target_agent_count > 0 and total_cells > 0:
+            base = target_agent_count // total_cells
+            remainder = target_agent_count % total_cells
+            for idx in range(total_cells):
+                per_cell.append(base + (1 if idx < remainder else 0))
+        else:
+            per_cell = [representatives_per_cell for _ in range(total_cells)]
 
+        cell_index = 0
         for group in identity_groups:
             for role in roles:
                 role_share = role_dist[role]
                 profile = ROLE_PROFILES[role]
-                for _ in range(representatives_per_cell):
+                reps = per_cell[cell_index]
+                cell_index += 1
+                if reps <= 0:
+                    continue
+                for _ in range(reps):
                     wealth = _clamp(
                         profile.base_wealth * group.economic_modifier + rng.uniform(-8.0, 8.0),
                         0.0,
@@ -103,7 +213,7 @@ class AgentEngine:
                         100.0,
                     )
                     alignment = _clamp((happiness - 50.0) * 1.1 + rng.uniform(-20.0, 20.0), -100.0, 100.0)
-                    population_weight = group.population_percent * role_share / representatives_per_cell
+                    population_weight = group.population_percent * role_share / reps
 
                     agents.append(
                         Agent(
@@ -146,13 +256,25 @@ class AgentEngine:
         for agent in agents:
             by_group.setdefault(agent.group_id, []).append(agent.id)
 
-        all_ids = [agent.id for agent in agents]
-        id_to_group = {agent.id: agent.group_id for agent in agents}
+        group_ids = list(by_group)
+        cross_group_lookup = {
+            gid: [other_gid for other_gid in group_ids if other_gid != gid] for gid in group_ids
+        }
 
         relationships: list[Relationship] = []
         for agent in agents:
-            same_group = [aid for aid in by_group[agent.group_id] if aid != agent.id]
-            for target_id in rng.sample(same_group, k=min(local_degree, len(same_group))):
+            same_group = by_group[agent.group_id]
+            local_targets: set[int] = set()
+            attempts = 0
+            max_attempts = max(4, local_degree * 4)
+            while len(local_targets) < local_degree and attempts < max_attempts and len(same_group) > 1:
+                attempts += 1
+                target_id = rng.choice(same_group)
+                if target_id == agent.id or target_id in local_targets:
+                    continue
+                local_targets.add(target_id)
+
+            for target_id in local_targets:
                 relationships.append(
                     Relationship(
                         agent_id=agent.id,
@@ -161,8 +283,22 @@ class AgentEngine:
                     )
                 )
 
-            cross_group = [aid for aid in all_ids if aid != agent.id and id_to_group[aid] != agent.group_id]
-            for target_id in rng.sample(cross_group, k=min(cross_degree, len(cross_group))):
+            cross_groups = cross_group_lookup.get(agent.group_id, [])
+            cross_targets: set[int] = set()
+            attempts = 0
+            max_attempts = max(4, cross_degree * 5)
+            while len(cross_targets) < cross_degree and attempts < max_attempts and cross_groups:
+                attempts += 1
+                target_group = rng.choice(cross_groups)
+                members = by_group.get(target_group, [])
+                if not members:
+                    continue
+                target_id = rng.choice(members)
+                if target_id in cross_targets:
+                    continue
+                cross_targets.add(target_id)
+
+            for target_id in cross_targets:
                 relationships.append(
                     Relationship(
                         agent_id=agent.id,
@@ -199,6 +335,245 @@ class AgentEngine:
                 agent.alignment += alignment_delta
                 agent.trust_in_government += trust_delta
                 agent.clamp_state()
+
+    @staticmethod
+    def _group_sensitivity(group: IdentityGroup, stat: str) -> float:
+        if stat in group.issue_sensitivity:
+            return group.issue_sensitivity[stat]
+        if stat in {"employment", "infrastructure"}:
+            return group.issue_sensitivity.get("economy", 1.0)
+        if stat == "environment":
+            return (
+                group.issue_sensitivity.get("social_tension", 1.0)
+                + group.issue_sensitivity.get("public_trust", 1.0)
+            ) / 2.0
+        if stat == "media_freedom":
+            return group.issue_sensitivity.get("public_trust", 1.0)
+        return 1.0
+
+    @staticmethod
+    def _identity_match_signal(agent: Agent, effects: list[dict[str, Any]]) -> float:
+        signal = 0.0
+        for effect in effects:
+            match = effect.get("match", {})
+            if match and not agent.identity.matches(match):
+                continue
+            signal += float(effect.get("happiness", 0.0)) * 0.7
+            signal += float(effect.get("trust_in_government", 0.0)) * 0.6
+            signal -= float(effect.get("radicalization", 0.0)) * 0.65
+            signal += float(effect.get("alignment", 0.0)) * 0.35
+        return signal
+
+    def apply_policy_impact_pass(
+        self,
+        game_state: "GameState",
+        mayor_effects: Mapping[str, float],
+        opposition_effects: Mapping[str, float],
+        mayor_group_effects: list[dict[str, Any]],
+        opposition_group_effects: list[dict[str, Any]],
+        rumor_pressure: float,
+    ) -> dict[str, Any]:
+        if not game_state.agents:
+            game_state.cohort_metrics = {}
+            game_state.last_agent_impact = {}
+            return {"agent_count_evaluated": 0, "llm_panel_count": 0, "dominant_fronts": []}
+
+        if not self._adjacency:
+            self._adjacency = self._build_adjacency(game_state.relationships)
+
+        profile = game_state.simulation_profile
+        randomness_scale = _clamp(float(profile.get("randomness_scale", 0.1)), 0.0, 1.0)
+        llm_panel_count = int(max(0, profile.get("llm_panel_size", 0)))
+
+        net_effects: dict[str, float] = {}
+        for stat in STAT_DIRECTION:
+            net_effects[stat] = float(mayor_effects.get(stat, 0.0)) + float(opposition_effects.get(stat, 0.0))
+
+        front_scores: dict[str, float] = {}
+        for stat, value in net_effects.items():
+            front = FRONT_BY_STAT.get(stat, stat)
+            front_scores[front] = front_scores.get(front, 0.0) + value * STAT_DIRECTION.get(stat, 1.0)
+        dominant_fronts = [
+            key for key, _ in sorted(front_scores.items(), key=lambda item: abs(item[1]), reverse=True)[:3]
+        ]
+
+        cohort_noise: dict[str, float] = {}
+        turn_shock = game_state.rng.uniform(-1.0, 1.0) * randomness_scale * 0.6
+        alignment_snapshot = {agent.id: agent.alignment for agent in game_state.agents}
+
+        total_happiness_delta = 0.0
+        total_radicalization_delta = 0.0
+        total_alignment_delta = 0.0
+        total_trust_delta = 0.0
+        total_weight = 0.0
+
+        cohort_rollup: dict[str, dict[str, float]] = {}
+        stats = game_state.city_stats
+        media = game_state.media_state
+
+        combined_group_effects = list(mayor_group_effects) + list(opposition_group_effects)
+
+        for agent in game_state.agents:
+            group = game_state.identity_groups[agent.group_id]
+            role_weights = ROLE_ISSUE_WEIGHTS.get(agent.role, DEFAULT_ROLE_ISSUE_WEIGHTS)
+
+            stat_signal = 0.0
+            relevance = 0.0
+            for stat, net in net_effects.items():
+                role_weight = role_weights.get(stat, DEFAULT_ROLE_ISSUE_WEIGHTS.get(stat, 1.0))
+                sensitivity = self._group_sensitivity(group, stat)
+                direction = STAT_DIRECTION.get(stat, 1.0)
+                stat_signal += net * direction * role_weight * sensitivity
+                relevance += abs(net) * role_weight
+
+            identity_signal = self._identity_match_signal(agent, combined_group_effects)
+            need_match = max(0.0, (55.0 - agent.happiness) / 100.0) + max(
+                0.0, (agent.radicalization - 45.0) / 100.0
+            ) * 0.65
+            local_context = (
+                ((stats.public_trust - stats.corruption) / 100.0) * 0.7
+                - group.grievance_score * 0.35
+                - max(0.0, (stats.social_tension - 50.0) / 100.0) * 0.4
+            )
+
+            media_signal = (
+                (media.bias / 50.0) * (0.45 + agent.influence / 220.0)
+                - (media.sensationalism / 100.0) * 0.3
+                + (media.trust / 100.0) * 0.2
+                - rumor_pressure * 0.55
+            )
+
+            neighbor_signal = 0.0
+            neighbors = self._adjacency.get(agent.id, [])
+            if neighbors:
+                total_strength = sum(strength for _, strength in neighbors)
+                if total_strength > 0:
+                    neighbor_alignment = sum(
+                        alignment_snapshot[target] * strength for target, strength in neighbors
+                    ) / total_strength
+                    neighbor_signal = ((neighbor_alignment - alignment_snapshot[agent.id]) / 100.0) * 0.55
+
+            cohort_key = f"{agent.group_id}:{agent.role}"
+            if cohort_key not in cohort_noise:
+                cohort_noise[cohort_key] = game_state.rng.uniform(-1.0, 1.0) * randomness_scale * 0.8
+            agent_noise = game_state.rng.uniform(-1.0, 1.0) * randomness_scale
+
+            relevance_scale = _clamp(0.55 + relevance * 0.12, 0.55, 1.45)
+            combined = (
+                stat_signal * 0.085
+                + identity_signal * 0.03
+                + need_match * 0.85
+                + local_context * 0.9
+                + media_signal * 0.7
+                + neighbor_signal
+                + cohort_noise[cohort_key]
+                + agent_noise
+                + turn_shock
+            ) * relevance_scale
+
+            happiness_delta = _clamp(combined * 1.8, -4.5, 4.5)
+            trust_delta = _clamp(
+                (stat_signal * 0.07 + identity_signal * 0.025 + local_context * 0.6 + media_signal * 0.35)
+                * relevance_scale,
+                -3.5,
+                3.5,
+            )
+            radicalization_delta = _clamp(
+                (-combined * 1.1 + max(0.0, rumor_pressure - 0.15) * 2.8 + (stats.social_tension - 50.0) / 80.0),
+                -3.8,
+                3.8,
+            )
+            alignment_delta = _clamp(
+                (
+                    combined * 2.35
+                    + (agent.trust_in_government - 50.0) / 95.0
+                    - (agent.radicalization - 50.0) / 90.0
+                ),
+                -5.0,
+                5.0,
+            )
+
+            agent.happiness += happiness_delta
+            agent.trust_in_government += trust_delta
+            agent.radicalization += radicalization_delta
+            agent.alignment += alignment_delta
+            agent.clamp_state()
+
+            weight = agent.population_weight
+            total_weight += weight
+            total_happiness_delta += happiness_delta * weight
+            total_radicalization_delta += radicalization_delta * weight
+            total_alignment_delta += alignment_delta * weight
+            total_trust_delta += trust_delta * weight
+
+            cohort_entry = cohort_rollup.setdefault(
+                cohort_key,
+                {
+                    "group_id": agent.group_id,
+                    "role": agent.role,
+                    "population": 0.0,
+                    "happiness_delta": 0.0,
+                    "radicalization_delta": 0.0,
+                    "alignment_delta": 0.0,
+                    "trust_delta": 0.0,
+                    "narrative_shift_delta": 0.0,
+                },
+            )
+            cohort_entry["population"] += weight
+            cohort_entry["happiness_delta"] += happiness_delta * weight
+            cohort_entry["radicalization_delta"] += radicalization_delta * weight
+            cohort_entry["alignment_delta"] += alignment_delta * weight
+            cohort_entry["trust_delta"] += trust_delta * weight
+            cohort_entry["narrative_shift_delta"] += (media_signal + identity_signal * 0.05) * weight
+
+        for cohort in cohort_rollup.values():
+            pop = cohort["population"]
+            if pop <= 0:
+                continue
+            cohort["happiness_delta"] /= pop
+            cohort["radicalization_delta"] /= pop
+            cohort["alignment_delta"] /= pop
+            cohort["trust_delta"] /= pop
+            cohort["narrative_shift_delta"] /= pop
+
+        game_state.cohort_metrics = {
+            key: {
+                "group_id": value["group_id"],
+                "role": value["role"],
+                "population": round(value["population"], 6),
+                "happiness_delta": round(value["happiness_delta"], 4),
+                "radicalization_delta": round(value["radicalization_delta"], 4),
+                "alignment_delta": round(value["alignment_delta"], 4),
+                "trust_delta": round(value["trust_delta"], 4),
+                "narrative_shift_delta": round(value["narrative_shift_delta"], 4),
+            }
+            for key, value in cohort_rollup.items()
+        }
+
+        top_cohorts = sorted(
+            game_state.cohort_metrics.items(),
+            key=lambda item: abs(item[1]["narrative_shift_delta"]),
+            reverse=True,
+        )[:5]
+
+        summary = {
+            "agent_count_evaluated": len(game_state.agents),
+            "llm_panel_count": min(len(game_state.agents), llm_panel_count),
+            "llm_panel_coverage_ratio": round(
+                min(len(game_state.agents), llm_panel_count) / max(1, len(game_state.agents)), 4
+            ),
+            "avg_happiness_delta": round(total_happiness_delta / max(total_weight, 1e-9), 4),
+            "avg_radicalization_delta": round(total_radicalization_delta / max(total_weight, 1e-9), 4),
+            "avg_alignment_delta": round(total_alignment_delta / max(total_weight, 1e-9), 4),
+            "avg_trust_delta": round(total_trust_delta / max(total_weight, 1e-9), 4),
+            "dominant_fronts": dominant_fronts,
+            "top_cohorts": [
+                {"cohort_id": key, **value}
+                for key, value in top_cohorts
+            ],
+        }
+        game_state.last_agent_impact = summary
+        return summary
 
     def update_happiness(
         self,

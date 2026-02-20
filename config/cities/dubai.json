@@ -1,0 +1,130 @@
+{
+  "meta": {
+    "city_id": "dubai",
+    "city_name": "Dubai",
+    "profile_version": "v2026.02.20",
+    "generated_at": "2026-02-20T00:00:00Z",
+    "generator_provider": "seeded_profile",
+    "generator_model": "city_of_agents_baseline_v2",
+    "evidence_sources": [
+      {
+        "title": "Dubai Statistics Center",
+        "url": "https://www.dsc.gov.ae/",
+        "snippet": "Population, labor and business activity indicators."
+      },
+      {
+        "title": "UAE Open Data",
+        "url": "https://bayanat.ae/",
+        "snippet": "Public service and macro indicators relevant to emirate planning."
+      }
+    ]
+  },
+  "identity_groups": [
+    {
+      "id": "expat_service_workers",
+      "name": "Expat Service Workers",
+      "religion": "Plural",
+      "caste": "Service Labor",
+      "language": "Hindi-Urdu-English",
+      "population_percent": 0.38,
+      "economic_modifier": 0.88,
+      "education_modifier": 0.82,
+      "grievance_score": 0.60,
+      "radicalization_base_rate": 0.09,
+      "issue_sensitivity": {
+        "employment": 1.34,
+        "services": 1.15,
+        "public_trust": 1.10,
+        "social_tension": 1.18,
+        "law_and_order": 0.98
+      }
+    },
+    {
+      "id": "emirati_civic_core",
+      "name": "Emirati Civic Core",
+      "religion": "Islamic",
+      "caste": "Citizen Households",
+      "language": "Arabic",
+      "population_percent": 0.17,
+      "economic_modifier": 1.20,
+      "education_modifier": 1.18,
+      "grievance_score": 0.28,
+      "radicalization_base_rate": 0.04,
+      "issue_sensitivity": {
+        "public_trust": 1.28,
+        "law_and_order": 1.12,
+        "services": 1.06,
+        "corruption": 0.96,
+        "social_tension": 0.90
+      }
+    },
+    {
+      "id": "global_business_hub",
+      "name": "Global Business Hub",
+      "religion": "Plural",
+      "caste": "Business Owners",
+      "language": "English-Arabic",
+      "population_percent": 0.25,
+      "economic_modifier": 1.22,
+      "education_modifier": 1.08,
+      "grievance_score": 0.33,
+      "radicalization_base_rate": 0.05,
+      "issue_sensitivity": {
+        "economy": 1.36,
+        "infrastructure": 1.16,
+        "public_trust": 0.98,
+        "corruption": 0.92,
+        "media_freedom": 0.72
+      }
+    },
+    {
+      "id": "young_professionals",
+      "name": "Young Professionals",
+      "religion": "Plural",
+      "caste": "Urban Professionals",
+      "language": "English-Mixed",
+      "population_percent": 0.20,
+      "economic_modifier": 1.04,
+      "education_modifier": 1.12,
+      "grievance_score": 0.37,
+      "radicalization_base_rate": 0.06,
+      "issue_sensitivity": {
+        "environment": 1.18,
+        "services": 1.12,
+        "public_trust": 1.08,
+        "social_tension": 1.02,
+        "employment": 1.00
+      }
+    }
+  ],
+  "role_distribution": {
+    "Worker": 0.37,
+    "BusinessOwner": 0.18,
+    "Politician": 0.07,
+    "Journalist": 0.08,
+    "Student": 0.30
+  },
+  "initial_city_stats": {
+    "economy": 72,
+    "employment": 64,
+    "law_and_order": 67,
+    "infrastructure": 74,
+    "environment": 52,
+    "corruption": 36,
+    "social_tension": 48,
+    "media_freedom": 46,
+    "public_trust": 58
+  },
+  "issue_front_baseline": {
+    "economy": 62,
+    "corruption": 39,
+    "safety": 47,
+    "services": 58,
+    "social_cohesion": 51
+  },
+  "starter_issues": [
+    "Labor welfare and housing standards for service workers are under scrutiny.",
+    "Growth ambitions are colliding with environmental resilience and heat adaptation.",
+    "City leadership is balancing global investor confidence with social cohesion pressures."
+  ]
+}
