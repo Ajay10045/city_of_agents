@@ -85,6 +85,56 @@ class TurnManager:
         # Cache of current turn's mayor options (id -> DynamicPolicy)
         self._cached_mayor_options: dict[str, DynamicPolicy] = {}
 
+    def _mayor_lost_election(self) -> bool:
+        if self.game_state.turn_number < self.game_state.election_turn:
+            return False
+        if not self.game_state.election_results:
+            return False
+        latest = self.game_state.election_results[-1]
+        try:
+            mayor_share = float(latest.get("mayor_vote_share", 50.0))
+            opposition_share = float(latest.get("opposition_vote_share", 50.0))
+        except (TypeError, ValueError, AttributeError):
+            return False
+        return mayor_share < opposition_share
+
+    def _is_game_over(self) -> bool:
+        return (
+            self.game_state.turn_number >= self.game_state.total_turns
+            or self._mayor_lost_election()
+        )
+
+    def _apply_public_trust_feedback(self, triggered_events_count: int) -> float:
+        stats = self.game_state.city_stats
+        service_signal = (
+            (stats.economy - 50.0)
+            + (stats.employment - 50.0)
+            + (stats.infrastructure - 50.0)
+        ) / 3.0
+        stability_signal = (
+            (stats.law_and_order - 50.0)
+            + (50.0 - stats.social_tension)
+        ) / 2.0
+        integrity_signal = 50.0 - stats.corruption
+
+        feedback = (
+            service_signal * 0.03
+            + stability_signal * 0.035
+            + integrity_signal * 0.04
+        )
+
+        feedback -= triggered_events_count * 0.35
+        feedback -= max(0.0, stats.social_tension - 70.0) * 0.03
+        feedback -= max(0.0, stats.corruption - 70.0) * 0.03
+
+        if triggered_events_count == 0 and stats.social_tension < 55.0:
+            feedback += 0.4
+
+        feedback = _clamp(feedback, -2.5, 2.5)
+        if abs(feedback) >= 0.05:
+            self.game_state.city_stats.apply_delta({"public_trust": feedback})
+        return feedback
+
     def _run_agent_impact_pass(
         self,
         mayor_action: Any,
@@ -274,6 +324,11 @@ class TurnManager:
 
     def step(self, mayor_policy_id: str, counter_frame_id: str | None = None) -> dict:
         """Run a single turn with the player-chosen mayor policy."""
+        if self._is_game_over():
+            if self._mayor_lost_election():
+                return {"error": "Game is already over: Mayor lost the election."}
+            return {"error": "Game is already over"}
+
         turn = self.game_state.turn_number + 1
         if turn > self.game_state.total_turns:
             return {"error": "Game is already over"}
@@ -371,6 +426,8 @@ class TurnManager:
                     agent.trust_in_government += dr.trust_delta
                     agent.clamp_state()
 
+        self._apply_public_trust_feedback(len(all_triggered))
+
         media_cards = self.media_engine.build_narrative_cards(
             mayor_action=mayor_policy,
             opposition_action=opp_policy,
@@ -436,7 +493,7 @@ class TurnManager:
             "media_cards": media_cards,
             "credibility": credibility_result,
             "election_result": election_result,
-            "game_over": turn >= self.game_state.total_turns,
+            "game_over": self._is_game_over(),
             "state": self._build_state_snapshot(group_metrics),
         }
 
@@ -499,6 +556,13 @@ class TurnManager:
 
     def stream_step(self, mayor_policy_id: str, counter_frame_id: str | None = None):
         """Generator: yields progress dicts after each LLM step for SSE streaming."""
+        if self._is_game_over():
+            if self._mayor_lost_election():
+                yield {"type": "error", "message": "Game is already over: Mayor lost the election."}
+            else:
+                yield {"type": "error", "message": "Game is already over"}
+            return
+
         mayor_policy = self._cached_mayor_options.get(mayor_policy_id)
         if mayor_policy is None:
             yield {"type": "error", "message": f"Unknown policy id: {mayor_policy_id!r}"}
@@ -658,6 +722,8 @@ class TurnManager:
             chatter_lines.append(f"{dr.group_name}: {dr.debate_summary}")
             yield {"type": "debate", "debate": dr.to_dict()}
 
+        self._apply_public_trust_feedback(len(all_triggered))
+
         # ── Duel step 5: Street chatter synthesized ─────────────────────────
         yield {
             "type": "street_chatter_synthesized",
@@ -759,7 +825,7 @@ class TurnManager:
             "state": self._build_state_snapshot(group_metrics),
             "media_cards": media_cards,
             "election_result": election_result,
-            "game_over": turn >= self.game_state.total_turns,
+            "game_over": self._is_game_over(),
         }
         yield turn_closed_payload
 
@@ -778,7 +844,7 @@ class TurnManager:
             "media_cards": media_cards,
             "credibility": credibility_result,
             "election_result": election_result,
-            "game_over": turn >= self.game_state.total_turns,
+            "game_over": self._is_game_over(),
             "state": self._build_state_snapshot(group_metrics),
         }
 
@@ -861,6 +927,9 @@ class TurnManager:
 
             if turn == self.game_state.election_turn:
                 self._run_election(media_modifiers)
+                if self._mayor_lost_election():
+                    print("  Election defeated the Mayor. Ending simulation early.")
+                    break
 
         self._log_final_summary()
         return self.game_state

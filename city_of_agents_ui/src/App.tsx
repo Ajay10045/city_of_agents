@@ -54,6 +54,20 @@ function buildInitialSetup(options: SetupOptions): GameSetupConfig {
   }
 }
 
+function hasMayorLostElection(snapshot: StateSnapshot | null): boolean {
+  if (!snapshot || snapshot.election_results.length === 0) return false
+  const latest = snapshot.election_results[snapshot.election_results.length - 1] as Record<string, unknown>
+  const mayorRaw = latest['mayor_vote_share']
+  const oppositionRaw = latest['opposition_vote_share']
+  const mayor =
+    typeof mayorRaw === 'number' ? mayorRaw : Number(typeof mayorRaw === 'string' ? mayorRaw : NaN)
+  const opposition =
+    typeof oppositionRaw === 'number'
+      ? oppositionRaw
+      : Number(typeof oppositionRaw === 'string' ? oppositionRaw : NaN)
+  return Number.isFinite(mayor) && Number.isFinite(opposition) && mayor < opposition
+}
+
 export default function App() {
   const [gameId, setGameId] = useState<string | null>(null)
   const [lastEventId, setLastEventId] = useState(0)
@@ -424,7 +438,7 @@ export default function App() {
             ])
             setElectionResult(msg.election_result)
             setGameOverVisible(Boolean(msg.game_over && !msg.election_result))
-            if (!msg.game_over || msg.election_result) {
+            if (!msg.game_over) {
               loadPolicies(gameId).catch(() => undefined)
               loadMedia(gameId).catch(() => undefined)
             } else {
@@ -466,7 +480,7 @@ export default function App() {
   }
 
   const onPolicySelect = async (policyId: string) => {
-    if (busy || !state || state.turn_number >= state.total_turns) return
+    if (busy || !state || state.turn_number >= state.total_turns || hasMayorLostElection(state)) return
     if (!gameId) return
     setSelectedPolicyId(policyId)
     setSelectedCounterFrameId(null)
@@ -481,6 +495,10 @@ export default function App() {
   }
 
   const onPlaySelectedPolicy = async () => {
+    if (state && hasMayorLostElection(state)) {
+      setError('Simulation is over because the Mayor lost the election.')
+      return
+    }
     if (!selectedPolicyId) {
       setError('Select a policy first, then click "Play Selected Policy".')
       return
@@ -509,8 +527,11 @@ export default function App() {
   }
 
   const onContinueAfterElection = () => {
+    const mayorLostElection =
+      electionResult != null &&
+      electionResult.mayor_vote_share < electionResult.opposition_vote_share
     setElectionResult(null)
-    if (state && state.turn_number >= state.total_turns) {
+    if (state && (state.turn_number >= state.total_turns || mayorLostElection)) {
       setGameOverVisible(true)
     }
   }
@@ -543,12 +564,15 @@ export default function App() {
   }
 
   const gameReady = Boolean(state)
+  const gameCompleted = Boolean(
+    state && (state.turn_number >= state.total_turns || hasMayorLostElection(state)),
+  )
 
   const nextTurn = state ? state.turn_number + 1 : 1
   const policyPrompt =
     !state
       ? 'Start a simulation from game setup.'
-      : state.turn_number >= state.total_turns
+      : gameCompleted
       ? 'The simulation has ended.'
       : busy
         ? 'Simulating turn — watch agents respond in real time…'
@@ -592,7 +616,7 @@ export default function App() {
             <SidebarPanels state={state} panels={['popularity', 'campaign']} horizontal className="top-metrics" />
             <PoliciesPanel
               policies={policies}
-              busy={busy || state.turn_number >= state.total_turns}
+              busy={busy || gameCompleted}
               loading={policiesLoading}
               selectedPolicyId={selectedPolicyId}
               selectedCounterFrameId={selectedCounterFrameId}
@@ -625,7 +649,7 @@ export default function App() {
               advisorSessionId={advisorSessionId}
               turnNumber={state.turn_number}
               policies={policies}
-              disabled={busy || state.turn_number >= state.total_turns}
+              disabled={busy || gameCompleted}
               focusOptionId={advisorFocusOptionId}
               onPoliciesUpdate={(nextPolicies) => {
                 setPolicies(nextPolicies)
