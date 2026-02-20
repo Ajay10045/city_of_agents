@@ -22,6 +22,7 @@ Current pain points:
 - Logs are hard to inspect deeply (no per-turn expansion flow).
 - Media narrative is underrepresented in UI and gameplay loop.
 - City setup is too generic and does not reflect city-specific demographics/issues.
+- Policy regeneration can desync selected option IDs from active turn cache, causing `Unknown policy id` failures.
 
 ---
 
@@ -165,6 +166,7 @@ Product quality:
 - 100% of turns are drill-down inspectable in expanded logs.
 - 100% of mayor options contain advisor rationale fields.
 - Media board updates every turn with at least one narrative card.
+- Regenerated/stale advisor sessions are conflict-safe (clear 409 + recoverable refresh path, no opaque unknown-policy errors).
 
 Performance:
 

@@ -87,6 +87,7 @@ class CachedActionResult:
 class ActionSubmission:
     actor: str
     policy_id: str
+    advisor_session_id: str | None = None
     participant_id: str | None = None
     expected_turn: int | None = None
     action_id: str | None = None
@@ -483,6 +484,10 @@ def _sync_mayor_option_cache(session: GameSession, options: list[Any]) -> None:
     session.turn_manager._cached_mayor_options = {str(option.id): option for option in options}
 
 
+def _active_advisor_session_unlocked(session: GameSession) -> AdvisorSession:
+    return _ensure_advisor_session_unlocked(session, force_refresh=False)
+
+
 def _ensure_advisor_session_unlocked(
     session: GameSession,
     force_refresh: bool = False,
@@ -550,6 +555,13 @@ def _parse_action_submission(
     if not policy_id:
         return None, (400, "policy_id is required")
 
+    advisor_session_id_raw = body.get("advisor_session_id")
+    advisor_session_id = (
+        str(advisor_session_id_raw).strip()
+        if advisor_session_id_raw is not None and str(advisor_session_id_raw).strip()
+        else None
+    )
+
     participant_id_raw = body.get("participant_id")
     participant_id = (
         str(participant_id_raw).strip()
@@ -578,6 +590,7 @@ def _parse_action_submission(
         ActionSubmission(
             actor=actor,
             policy_id=policy_id,
+            advisor_session_id=advisor_session_id,
             participant_id=participant_id,
             expected_turn=expected_turn,
             action_id=action_id,
@@ -1442,6 +1455,22 @@ class GameHandler(BaseHTTPRequestHandler):
                     )
                     return
 
+                active_advisor_session = _active_advisor_session_unlocked(session)
+                if advisor_session.advisor_session_id != active_advisor_session.advisor_session_id:
+                    _json_response(
+                        self,
+                        {
+                            "api_version": "v1",
+                            "game_id": game_id,
+                            "error": "advisor session is stale for the current turn",
+                            "provided_advisor_session_id": advisor_session.advisor_session_id,
+                            "active_advisor_session_id": active_advisor_session.advisor_session_id,
+                            "active_turn_number": active_advisor_session.turn_number,
+                        },
+                        409,
+                    )
+                    return
+
                 if thread_scope == "option" and option_id not in {o.id for o in advisor_session.options}:
                     _json_response(
                         self,
@@ -1566,6 +1595,22 @@ class GameHandler(BaseHTTPRequestHandler):
                             "error": f"Unknown advisor_session_id: {advisor_session_id}",
                         },
                         404,
+                    )
+                    return
+
+                active_advisor_session = _active_advisor_session_unlocked(session)
+                if advisor_session.advisor_session_id != active_advisor_session.advisor_session_id:
+                    _json_response(
+                        self,
+                        {
+                            "api_version": "v1",
+                            "game_id": game_id,
+                            "error": "advisor session is stale for the current turn",
+                            "provided_advisor_session_id": advisor_session.advisor_session_id,
+                            "active_advisor_session_id": active_advisor_session.advisor_session_id,
+                            "active_turn_number": active_advisor_session.turn_number,
+                        },
+                        409,
                     )
                     return
 
@@ -1739,6 +1784,45 @@ class GameHandler(BaseHTTPRequestHandler):
                     _json_response(self, conflict, 409)
                     return
 
+                active_advisor_session = _active_advisor_session_unlocked(session)
+                active_session_id = active_advisor_session.advisor_session_id
+                if (
+                    submission.advisor_session_id is not None
+                    and submission.advisor_session_id != active_session_id
+                ):
+                    conflict = {
+                        "api_version": "v1",
+                        "game_id": game_id,
+                        "error": "advisor session mismatch; refresh policies before playing this turn",
+                        "provided_advisor_session_id": submission.advisor_session_id,
+                        "active_advisor_session_id": active_session_id,
+                        "expected_turn": active_advisor_session.turn_number,
+                    }
+                    if submission.action_id:
+                        _cache_action_result(session, submission.action_id, 409, conflict)
+                    _json_response(self, conflict, 409)
+                    return
+
+                active_option_ids = {option.id for option in active_advisor_session.options}
+                if submission.policy_id not in active_option_ids:
+                    conflict = {
+                        "api_version": "v1",
+                        "game_id": game_id,
+                        "error": "policy_id is not in the current option set; refresh policies and reselect",
+                        "policy_id": submission.policy_id,
+                        "active_advisor_session_id": active_session_id,
+                        "expected_turn": active_advisor_session.turn_number,
+                        "active_options": [
+                            {"id": option.id, "name": option.name}
+                            for option in active_advisor_session.options
+                        ],
+                    }
+                    if submission.action_id:
+                        _cache_action_result(session, submission.action_id, 409, conflict)
+                    _json_response(self, conflict, 409)
+                    return
+
+                _sync_mayor_option_cache(session, active_advisor_session.options)
                 events = _run_turn_and_capture_events_unlocked(
                     session, game_id, submission.policy_id
                 )

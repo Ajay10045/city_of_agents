@@ -32,6 +32,12 @@ type PoliciesResponse = {
   policies: DynamicPolicy[]
 }
 
+export type PoliciesFetchResult = {
+  policies: DynamicPolicy[]
+  advisorSessionId: string | null
+  turnNumber: number | null
+}
+
 type TurnsResponse = {
   api_version: 'v1'
   game_id: string
@@ -77,6 +83,7 @@ type ActionSubmitOptions = {
   expectedTurn?: number
   participantId?: string
   actionId?: string
+  advisorSessionId?: string
 }
 
 type AdvisorSessionEnvelope = {
@@ -146,11 +153,15 @@ export async function fetchState(gameId: string): Promise<StateSnapshot> {
   return data.state
 }
 
-export async function fetchPolicies(gameId: string): Promise<DynamicPolicy[]> {
+export async function fetchPolicies(gameId: string): Promise<PoliciesFetchResult> {
   const res = await fetch(`/v1/games/${encodeURIComponent(gameId)}/policies`)
   if (!res.ok) throw new Error(`Policy error: ${res.status}`)
   const data = (await res.json()) as PoliciesResponse
-  return data.policies ?? []
+  return {
+    policies: data.policies ?? [],
+    advisorSessionId: data.advisor_session_id ?? null,
+    turnNumber: typeof data.turn_number === 'number' ? data.turn_number : null,
+  }
 }
 
 export async function createAdvisorSession(
@@ -274,6 +285,7 @@ export async function streamTurn(
     body: JSON.stringify({
       actor: 'mayor',
       policy_id: policyId,
+      advisor_session_id: options?.advisorSessionId,
       expected_turn: options?.expectedTurn,
       participant_id: options?.participantId,
       action_id: actionId,

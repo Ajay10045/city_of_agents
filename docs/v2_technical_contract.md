@@ -204,6 +204,23 @@ Returns full turn ledger:
 
 Returns media cards across turns.
 
+### 5.5 Action Submission Consistency
+
+`POST /v1/games/{game_id}/actions`
+
+Request supports:
+
+- `policy_id` (required)
+- `expected_turn` (recommended)
+- `advisor_session_id` (optional but recommended)
+
+Server rules:
+
+- Actions are validated against the active advisor session for the planned turn.
+- If `advisor_session_id` is stale, return `409` with active session metadata.
+- If `policy_id` is not in the active option set, return `409` with recoverable refresh guidance.
+- Do not emit opaque unknown-policy failures for stale/regenerated policy sets.
+
 ---
 
 ## 6) Agent Impact Framework (Hybrid)

@@ -56,6 +56,7 @@ export default function App() {
   const [lastEventId, setLastEventId] = useState(0)
   const [state, setState] = useState<StateSnapshot | null>(null)
   const [policies, setPolicies] = useState<DynamicPolicy[]>([])
+  const [advisorSessionId, setAdvisorSessionId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [policiesLoading, setPoliciesLoading] = useState(true)
   const [stream, setStream] = useState<StreamCardItem[]>([])
@@ -83,8 +84,9 @@ export default function App() {
   const loadPolicies = async (gid: string) => {
     setPoliciesLoading(true)
     try {
-      const p = await fetchPolicies(gid)
-      setPolicies(p)
+      const result = await fetchPolicies(gid)
+      setPolicies(result.policies)
+      setAdvisorSessionId(result.advisorSessionId)
     } finally {
       setPoliciesLoading(false)
     }
@@ -154,14 +156,14 @@ export default function App() {
       setLastEventId(0)
       setState(snapshot)
       setSetupConfig(config)
+      setAdvisorSessionId(null)
       resetTurnPanels()
       setMediaTimeline([])
       setElectionResult(null)
       setGameOverVisible(false)
       setSetupVisible(false)
       setAdvisorFocusOptionId(null)
-      await loadPolicies(gid)
-      await loadMedia(gid)
+      await Promise.all([loadPolicies(gid), loadMedia(gid)])
     } catch (e) {
       setSetupError(e instanceof Error ? e.message : 'Failed to start simulation')
     } finally {
@@ -174,7 +176,7 @@ export default function App() {
     bootstrapSetup()
   }, [])
 
-  const onPolicy = async (policyId: string) => {
+  const runTurnForPolicy = async (policyId: string) => {
     if (busy || !gameId || !state) return
     setBusy(true)
     setError(null)
@@ -404,7 +406,7 @@ export default function App() {
             setState(msg.state)
           }
         },
-        { expectedTurn: state.turn_number + 1 },
+        { expectedTurn: state.turn_number + 1, advisorSessionId: advisorSessionId ?? undefined },
       )
       setLastEventId((prev) => Math.max(prev, nextEventId))
     } catch (e) {
@@ -413,6 +415,26 @@ export default function App() {
       setBusy(false)
       setSelectedPolicyId(null)
     }
+  }
+
+  const onPolicySelect = (policyId: string) => {
+    if (busy || !state || state.turn_number >= state.total_turns) return
+    setSelectedPolicyId(policyId)
+    setAdvisorFocusOptionId(policyId)
+    setError(null)
+  }
+
+  const onPlaySelectedPolicy = async () => {
+    if (!selectedPolicyId) {
+      setError('Select a policy first, then click "Play Selected Policy".')
+      return
+    }
+    if (!policies.some((policy) => policy.id === selectedPolicyId)) {
+      setSelectedPolicyId(null)
+      setError('Selected policy is no longer current. Refresh options and reselect.')
+      return
+    }
+    await runTurnForPolicy(selectedPolicyId)
   }
 
   const onNewGame = async () => {
@@ -427,6 +449,13 @@ export default function App() {
       setGameOverVisible(true)
     }
   }
+
+  useEffect(() => {
+    if (!selectedPolicyId) return
+    if (!policies.some((policy) => policy.id === selectedPolicyId)) {
+      setSelectedPolicyId(null)
+    }
+  }, [policies, selectedPolicyId])
 
   if (loading) return <div className="page">Loading setup…</div>
 
@@ -449,7 +478,7 @@ export default function App() {
       ? 'The simulation has ended.'
       : busy
         ? 'Simulating turn — watch agents respond in real time…'
-        : `Turn ${nextTurn} — Choose your action as Mayor:`
+        : `Turn ${nextTurn} — Select an option, deliberate with advisors, then play it.`
 
   return (
     <div id="app">
@@ -494,7 +523,8 @@ export default function App() {
               loading={policiesLoading}
               selectedPolicyId={selectedPolicyId}
               prompt={policyPrompt}
-              onSelect={onPolicy}
+              onSelect={onPolicySelect}
+              onPlaySelected={onPlaySelectedPolicy}
               onAskAdvisor={(optionId) => {
                 setAdvisorFocusOptionId(optionId)
                 const target = document.getElementById('advisor-console')
@@ -512,6 +542,7 @@ export default function App() {
             />
             <AdvisorConsole
               gameId={gameId}
+              advisorSessionId={advisorSessionId}
               turnNumber={state.turn_number}
               policies={policies}
               disabled={busy || state.turn_number >= state.total_turns}
@@ -521,6 +552,9 @@ export default function App() {
                 if (advisorFocusOptionId && !nextPolicies.some((policy) => policy.id === advisorFocusOptionId)) {
                   setAdvisorFocusOptionId(null)
                 }
+              }}
+              onSessionUpdate={(nextSessionId) => {
+                setAdvisorSessionId(nextSessionId)
               }}
               onError={(message) => setError(message)}
             />

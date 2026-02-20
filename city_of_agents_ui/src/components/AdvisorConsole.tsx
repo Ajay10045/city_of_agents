@@ -8,11 +8,13 @@ import type { AdvisorMessage, AdvisorSession, DynamicPolicy } from '../types'
 
 type Props = {
   gameId: string | null
+  advisorSessionId: string | null
   turnNumber: number
   policies: DynamicPolicy[]
   disabled: boolean
   focusOptionId?: string | null
   onPoliciesUpdate: (policies: DynamicPolicy[]) => void
+  onSessionUpdate: (sessionId: string) => void
   onError: (message: string | null) => void
 }
 
@@ -23,11 +25,13 @@ function formatTime(ts: number): string {
 
 export default function AdvisorConsole({
   gameId,
+  advisorSessionId,
   turnNumber,
   policies,
   disabled,
   focusOptionId,
   onPoliciesUpdate,
+  onSessionUpdate,
   onError,
 }: Props) {
   const [session, setSession] = useState<AdvisorSession | null>(null)
@@ -42,18 +46,55 @@ export default function AdvisorConsole({
       return
     }
 
+    if (advisorSessionId && policies.length > 0) {
+      setBusy(false)
+      setSession((current) => {
+        const isSameSession = current?.advisor_session_id === advisorSessionId
+        const isSameTurn = current?.turn_number === turnNumber + 1
+        const optionThreads: Record<string, AdvisorMessage[]> = {}
+        for (const option of policies) {
+          optionThreads[option.id] = current?.option_threads?.[option.id] ?? []
+        }
+        if (isSameSession && isSameTurn && current) {
+          return {
+            ...current,
+            options: policies,
+            option_threads: optionThreads,
+            updated_at: current.updated_at,
+          }
+        }
+        return {
+          advisor_session_id: advisorSessionId,
+          turn_number: turnNumber + 1,
+          options: policies,
+          global_thread: [],
+          option_threads: optionThreads,
+          created_at: Date.now() / 1000,
+          updated_at: Date.now() / 1000,
+        }
+      })
+      setActiveTab('global')
+      return
+    }
+
+    if (policies.length === 0) {
+      setBusy(false)
+      return
+    }
+
     setBusy(true)
     createAdvisorSession(gameId)
       .then((result) => {
         setSession(result)
         onPoliciesUpdate(result.options)
+        onSessionUpdate(result.advisor_session_id)
         setActiveTab('global')
       })
       .catch((err) => {
         onError(err instanceof Error ? err.message : 'Advisor unavailable')
       })
       .finally(() => setBusy(false))
-  }, [gameId, turnNumber, onPoliciesUpdate, onError])
+  }, [gameId, advisorSessionId, turnNumber, policies, onPoliciesUpdate, onSessionUpdate, onError])
 
   useEffect(() => {
     if (!focusOptionId || !session) return
@@ -86,6 +127,7 @@ export default function AdvisorConsole({
       })
       setSession(payload.session)
       onPoliciesUpdate(payload.session.options)
+      onSessionUpdate(payload.session.advisor_session_id)
       setQuestion('')
     } catch (err) {
       onError(err instanceof Error ? err.message : 'Advisor question failed')
@@ -111,6 +153,7 @@ export default function AdvisorConsole({
       })
       setSession(result.session)
       onPoliciesUpdate(result.options)
+      onSessionUpdate(result.session.advisor_session_id)
       if (mode === 'full') {
         setActiveTab('global')
       }
