@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   createGame,
+  fetchCounterFrames,
   fetchMediaTimeline,
   fetchPolicies,
   fetchSetupOptions,
@@ -8,6 +9,7 @@ import {
   streamTurn,
 } from './api'
 import type {
+  CounterFrameOption,
   DebateResult,
   DynamicPolicy,
   ElectionResult,
@@ -33,6 +35,7 @@ import GameOverOverlay from './components/GameOverOverlay'
 import GameSetupOverlay from './components/GameSetupOverlay'
 import MediaNarrativePanel from './components/MediaNarrativePanel'
 import AdvisorConsole from './components/AdvisorConsole'
+import PolicyImpactModal from './components/PolicyImpactModal'
 
 const DEFAULT_TOTAL_TURNS = 50
 
@@ -65,6 +68,9 @@ export default function App() {
   const [statChanges, setStatChanges] = useState<Record<string, number>>({})
   const [eventChances, setEventChances] = useState<Record<string, number>>({})
   const [selectedPolicyId, setSelectedPolicyId] = useState<string | null>(null)
+  const [selectedCounterFrameId, setSelectedCounterFrameId] = useState<string | null>(null)
+  const [counterFrames, setCounterFrames] = useState<CounterFrameOption[]>([])
+  const [counterFramesLoading, setCounterFramesLoading] = useState(false)
   const [turnResultVisible, setTurnResultVisible] = useState(false)
   const [turnMayorAction, setTurnMayorAction] = useState<DynamicPolicy | null>(null)
   const [turnOppAction, setTurnOppAction] = useState<DynamicPolicy | null>(null)
@@ -80,6 +86,7 @@ export default function App() {
   const [setupError, setSetupError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [advisorFocusOptionId, setAdvisorFocusOptionId] = useState<string | null>(null)
+  const [impactPolicy, setImpactPolicy] = useState<DynamicPolicy | null>(null)
 
   const loadPolicies = async (gid: string) => {
     setPoliciesLoading(true)
@@ -97,6 +104,16 @@ export default function App() {
     setMediaTimeline(cards)
   }
 
+  const loadCounterFrames = async (gid: string, policyId: string) => {
+    setCounterFramesLoading(true)
+    try {
+      const frames = await fetchCounterFrames(gid, policyId)
+      setCounterFrames(frames)
+    } finally {
+      setCounterFramesLoading(false)
+    }
+  }
+
   const resetTurnPanels = () => {
     setDebates([])
     setStream([])
@@ -107,6 +124,9 @@ export default function App() {
     setTurnOppAction(null)
     setTurnTriggeredEvents([])
     setAdvisorFocusOptionId(null)
+    setSelectedCounterFrameId(null)
+    setCounterFrames([])
+    setImpactPolicy(null)
   }
 
   const bootstrapSetup = async () => {
@@ -163,6 +183,8 @@ export default function App() {
       setGameOverVisible(false)
       setSetupVisible(false)
       setAdvisorFocusOptionId(null)
+      setSelectedCounterFrameId(null)
+      setCounterFrames([])
       await Promise.all([loadPolicies(gid), loadMedia(gid)])
     } catch (e) {
       setSetupError(e instanceof Error ? e.message : 'Failed to start simulation')
@@ -176,11 +198,12 @@ export default function App() {
     bootstrapSetup()
   }, [])
 
-  const runTurnForPolicy = async (policyId: string) => {
+  const runTurnForPolicy = async (policyId: string, counterFrameId: string) => {
     if (busy || !gameId || !state) return
     setBusy(true)
     setError(null)
     setSelectedPolicyId(policyId)
+    setSelectedCounterFrameId(counterFrameId)
     resetTurnPanels()
 
     let mayorAction: DynamicPolicy | null = null
@@ -239,6 +262,19 @@ export default function App() {
                 name: 'Narrative Counter',
                 description: msg.message,
                 meta: `Targets: ${(msg.target_groups ?? []).join(', ') || 'broad coalition'}`,
+              },
+            ])
+          }
+
+          if (msg.type === 'counter_frame_selected') {
+            setStream((s) => [
+              ...s,
+              {
+                kind: 'mayor',
+                label: '🎯 Counter-Frame Selected',
+                name: msg.counter_frame.label,
+                description: msg.counter_frame.message,
+                meta: `Campaign +${(msg.counter_frame.campaign_boost ?? 0).toFixed(2)}`,
               },
             ])
           }
@@ -406,7 +442,11 @@ export default function App() {
             setState(msg.state)
           }
         },
-        { expectedTurn: state.turn_number + 1, advisorSessionId: advisorSessionId ?? undefined },
+        {
+          expectedTurn: state.turn_number + 1,
+          advisorSessionId: advisorSessionId ?? undefined,
+          counterFrameId,
+        },
       )
       setLastEventId((prev) => Math.max(prev, nextEventId))
     } catch (e) {
@@ -414,14 +454,24 @@ export default function App() {
     } finally {
       setBusy(false)
       setSelectedPolicyId(null)
+      setSelectedCounterFrameId(null)
+      setCounterFrames([])
     }
   }
 
-  const onPolicySelect = (policyId: string) => {
+  const onPolicySelect = async (policyId: string) => {
     if (busy || !state || state.turn_number >= state.total_turns) return
+    if (!gameId) return
     setSelectedPolicyId(policyId)
+    setSelectedCounterFrameId(null)
+    setCounterFrames([])
     setAdvisorFocusOptionId(policyId)
     setError(null)
+    try {
+      await loadCounterFrames(gameId, policyId)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load counter-frame options')
+    }
   }
 
   const onPlaySelectedPolicy = async () => {
@@ -429,12 +479,21 @@ export default function App() {
       setError('Select a policy first, then click "Play Selected Policy".')
       return
     }
+    if (!selectedCounterFrameId) {
+      setError('Select a counter-frame before playing the turn.')
+      return
+    }
     if (!policies.some((policy) => policy.id === selectedPolicyId)) {
       setSelectedPolicyId(null)
       setError('Selected policy is no longer current. Refresh options and reselect.')
       return
     }
-    await runTurnForPolicy(selectedPolicyId)
+    if (!counterFrames.some((frame) => frame.id === selectedCounterFrameId)) {
+      setSelectedCounterFrameId(null)
+      setError('Selected counter-frame is no longer current. Re-select counter-frame.')
+      return
+    }
+    await runTurnForPolicy(selectedPolicyId, selectedCounterFrameId)
   }
 
   const onNewGame = async () => {
@@ -454,8 +513,17 @@ export default function App() {
     if (!selectedPolicyId) return
     if (!policies.some((policy) => policy.id === selectedPolicyId)) {
       setSelectedPolicyId(null)
+      setSelectedCounterFrameId(null)
+      setCounterFrames([])
     }
   }, [policies, selectedPolicyId])
+
+  useEffect(() => {
+    if (!selectedCounterFrameId) return
+    if (!counterFrames.some((frame) => frame.id === selectedCounterFrameId)) {
+      setSelectedCounterFrameId(null)
+    }
+  }, [counterFrames, selectedCounterFrameId])
 
   if (loading) return <div className="page">Loading setup…</div>
 
@@ -522,8 +590,15 @@ export default function App() {
               busy={busy || state.turn_number >= state.total_turns}
               loading={policiesLoading}
               selectedPolicyId={selectedPolicyId}
+              selectedCounterFrameId={selectedCounterFrameId}
+              counterFrames={counterFrames}
+              counterFramesLoading={counterFramesLoading}
               prompt={policyPrompt}
               onSelect={onPolicySelect}
+              onSelectCounterFrame={(counterFrameId) => {
+                setSelectedCounterFrameId(counterFrameId)
+                setError(null)
+              }}
               onPlaySelected={onPlaySelectedPolicy}
               onAskAdvisor={(optionId) => {
                 setAdvisorFocusOptionId(optionId)
@@ -538,6 +613,10 @@ export default function App() {
                 if (target) {
                   target.scrollIntoView({ behavior: 'smooth', block: 'center' })
                 }
+              }}
+              onImpactAssessment={(optionId) => {
+                const selected = policies.find((policy) => policy.id === optionId) ?? null
+                setImpactPolicy(selected)
               }}
             />
             <AdvisorConsole
@@ -571,6 +650,11 @@ export default function App() {
 
       {state && <ElectionOverlay result={electionResult} onContinue={onContinueAfterElection} />}
       {state && <GameOverOverlay state={state} visible={gameOverVisible} onPlayAgain={onNewGame} />}
+      <PolicyImpactModal
+        visible={Boolean(impactPolicy)}
+        policy={impactPolicy}
+        onClose={() => setImpactPolicy(null)}
+      />
       <GameSetupOverlay
         visible={setupVisible}
         options={setupOptions}

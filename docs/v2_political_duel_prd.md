@@ -50,6 +50,7 @@ Before turn 1, player configures:
 Each turn includes:
 
 1. Mayor policy declaration
+2. Mayor counter-frame selection (explicit second click)
 2. Opposition framing attack
 3. Mayor rebuttal/counter-frame
 4. Opposition follow-up
@@ -75,6 +76,11 @@ Right-side panel displays social/media feed cards:
 - Trust impact
 
 Visual direction should feel like a live timeline feed (Twitter-style structure, not text dump).
+
+### 4.5 Advisor Console + Impact Assessment
+
+- One unified advisor composer handles both follow-up questions and option regeneration constraints.
+- Each policy card includes an Impact Assessment deep-dive panel for socio-economic and narrative risk visibility.
 
 ---
 

@@ -221,6 +221,23 @@ Server rules:
 - If `policy_id` is not in the active option set, return `409` with recoverable refresh guidance.
 - Do not emit opaque unknown-policy failures for stale/regenerated policy sets.
 
+### 5.6 Counter-Frame Selection (Two-Click Turn)
+
+`GET /v1/games/{game_id}/counter-frames?policy_id={id}`
+
+Returns:
+
+- `counter_frames`: list of structured mayor counter-frame options for that selected policy.
+
+`POST /v1/games/{game_id}/actions` supports:
+
+- `counter_frame_id` (optional for backward compatibility; required by v2 UI flow)
+
+Server behavior:
+
+- If provided `counter_frame_id` is invalid for selected policy, return `409` with available options.
+- Stream emits `counter_frame_selected` before `mayor_counter_frame`.
+
 ---
 
 ## 6) Agent Impact Framework (Hybrid)
