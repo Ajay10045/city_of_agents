@@ -7,6 +7,7 @@ type Props = {
   selectedPolicyId?: string | null
   prompt: string
   onSelect: (id: string) => void
+  onPlaySelected: () => void
   onAskAdvisor?: (id: string) => void
   onReviseOption?: (id: string) => void
 }
@@ -22,13 +23,28 @@ export default function PoliciesPanel({
   selectedPolicyId,
   prompt,
   onSelect,
+  onPlaySelected,
   onAskAdvisor,
   onReviseOption,
 }: Props) {
+  const selectedPolicy = policies.find((p) => p.id === selectedPolicyId) ?? null
+
   return (
     <section className="panel" id="policy-section">
       <div className="panel-title">Your Move — Mayor</div>
       <p className="policy-prompt">{prompt}</p>
+      <div className="policy-selection-bar">
+        <div className="policy-selection-label">
+          {selectedPolicy ? `Selected: ${selectedPolicy.name}` : 'Select an option to discuss or play'}
+        </div>
+        <button
+          className="btn-continue policy-play-btn"
+          onClick={onPlaySelected}
+          disabled={busy || !selectedPolicy}
+        >
+          {busy ? 'Simulating…' : 'Play Selected Policy'}
+        </button>
+      </div>
       <div className="policy-grid">
         {loading && <div className="loading-msg">⏳ Consulting advisors…</div>}
         {policies.map((p) => (
