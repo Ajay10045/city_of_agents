@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 import os
 from typing import TYPE_CHECKING
 
@@ -46,6 +47,17 @@ class MayorAdvisor:
             self._client = None
         key = os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY") or ""
         self._disable_live = key.startswith("test-")
+        self._timeout_seconds = max(1.0, float(os.environ.get("MAYOR_ADVISOR_TIMEOUT_SECONDS", "6.0")))
+
+    def _generate_live_options(self, user: str) -> list[DynamicPolicy]:
+        if self._client is None or self._disable_live:
+            return []
+        data = self._client.chat(_SYSTEM, user)
+        raw_policies = data.get("policies", [])
+        parsed = [DynamicPolicy.from_llm(p, actor="mayor") for p in raw_policies[:5]]
+        if len(parsed) >= 5:
+            return parsed[:5]
+        return []
 
     def generate_options(self, game_state: "GameState", guidance: str | None = None) -> list[DynamicPolicy]:
         context = build_city_context(game_state)
@@ -58,11 +70,13 @@ class MayorAdvisor:
             )
         if self._client is not None and not self._disable_live:
             try:
-                data = self._client.chat(_SYSTEM, user)
-                raw_policies = data.get("policies", [])
-                parsed = [DynamicPolicy.from_llm(p, actor="mayor") for p in raw_policies[:5]]
-                if len(parsed) >= 5:
-                    return parsed[:5]
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(self._generate_live_options, user)
+                    generated = future.result(timeout=self._timeout_seconds)
+                if generated:
+                    return generated
+            except FutureTimeoutError:
+                pass
             except Exception:
                 pass
 

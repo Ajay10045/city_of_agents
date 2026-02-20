@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -8,6 +9,7 @@ from llm.llm_client import LLMClient
 from llm.dynamic_policy import DynamicPolicy, _clamp, _to_float
 
 if TYPE_CHECKING:
+    from agents.agent import Agent
     from core.game_state import GameState
 
 _SYSTEM = """You are simulating a street-level conversation among citizens of a specific identity group in a city political simulation.
@@ -23,6 +25,46 @@ Return a JSON object with:
 - "trust_delta": float -5 to +5 (trust in government)
 
 Base the deltas on: how much the mayor's action helped/hurt this group, whether the opposition's move resonated, any active crises affecting them, and their current radicalization level."""
+
+_STREET_SYSTEM = """You are generating realistic local street chatter for a city political simulation.
+
+Return ONLY valid JSON with this shape:
+{
+  "chatter": [
+    {
+      "speaker": "short person name",
+      "role": "city role",
+      "group_name": "identity group name",
+      "line": "one vivid sentence of what this person says in public",
+      "sentiment": "supportive|skeptical|angry|hopeful|mixed",
+      "heat": 0.0 to 1.0,
+      "tags": ["jobs", "corruption"]
+    }
+  ]
+}
+
+Rules:
+- Use local flavor and colloquial expressions suitable to the city.
+- Keep each line <= 24 words.
+- No slurs, hate speech, or explicit violence.
+- Keep chatter grounded in this turn's policies/events.
+- Prefer concrete daily concerns (rent, commute, safety, bills, jobs, air, services)."""
+
+_FIRST_NAMES = [
+    "Aarav",
+    "Sara",
+    "Rohan",
+    "Mina",
+    "Kabir",
+    "Aisha",
+    "Leo",
+    "Maya",
+    "Kenji",
+    "Rina",
+    "Omar",
+    "Nadia",
+]
+_LAST_INITIALS = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
 
 @dataclass
@@ -49,6 +91,28 @@ class DebateResult:
         }
 
 
+@dataclass
+class StreetChatterItem:
+    speaker: str
+    role: str
+    group_name: str
+    line: str
+    sentiment: str
+    heat: float
+    tags: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "speaker": self.speaker,
+            "role": self.role,
+            "group_name": self.group_name,
+            "line": self.line,
+            "sentiment": self.sentiment,
+            "heat": self.heat,
+            "tags": list(self.tags),
+        }
+
+
 class CitizenDebates:
     def __init__(self) -> None:
         model = os.environ.get("LLM_DEBATE_MODEL", "gpt-4o-mini")
@@ -64,6 +128,269 @@ class CitizenDebates:
             self._client = LLMClient(model=model)
         except Exception:
             self._client = None
+
+    @staticmethod
+    def _normalize_sentiment(value: Any) -> str:
+        raw = str(value or "").strip().lower()
+        if raw in {"supportive", "pro-mayor", "positive"}:
+            return "supportive"
+        if raw in {"skeptical", "cautious", "uncertain"}:
+            return "skeptical"
+        if raw in {"angry", "hostile", "furious"}:
+            return "angry"
+        if raw in {"hopeful", "optimistic"}:
+            return "hopeful"
+        if raw in {"mixed", "split", "divided"}:
+            return "mixed"
+        return "mixed"
+
+    @staticmethod
+    def _city_flavor(city_id: str) -> str:
+        flavors = {
+            "new_delhi": "Use Delhi street rhythm with mild Hindi-English code-switching (for example yaar, bhai, didi, mohalla) where natural.",
+            "new_york": "Use New York street cadence (for example block, subway, borough, rent) without caricature.",
+            "london": "Use London civic street tone (for example high street, council, tube, mates) without caricature.",
+            "tokyo": "Use Tokyo urban practical tone (for example ward office, station crowding, utility bills) with light Japanese references where natural.",
+            "dubai": "Use Dubai urban mix tone (for example district, commute corridor, service fee, expat-local mix) with light Arabic colloquial hints where natural.",
+        }
+        return flavors.get(city_id, "Use local, grounded city colloquial tone.")
+
+    def _sample_panel_agents(self, game_state: "GameState", panel_size: int) -> list["Agent"]:
+        if not game_state.agents:
+            return []
+        rng = game_state.rng
+        panel_size = max(1, min(panel_size, len(game_state.agents)))
+        strategy = str(game_state.simulation_profile.get("llm_sampling_strategy", "stratified")).lower()
+
+        if strategy in {"none", "uniform"}:
+            return rng.sample(game_state.agents, panel_size)
+
+        by_group: dict[str, list["Agent"]] = defaultdict(list)
+        for agent in game_state.agents:
+            by_group[agent.group_id].append(agent)
+
+        sampled: list["Agent"] = []
+        group_keys = list(by_group.keys())
+        remaining = panel_size
+        for idx, group_id in enumerate(group_keys):
+            bucket = by_group[group_id]
+            if not bucket:
+                continue
+            slots_left = len(group_keys) - idx
+            quota = max(1, int(round(panel_size * (len(bucket) / len(game_state.agents)))))
+            quota = min(quota, len(bucket), remaining - max(0, slots_left - 1))
+            if quota <= 0:
+                continue
+            sampled.extend(rng.sample(bucket, quota))
+            remaining -= quota
+            if remaining <= 0:
+                break
+
+        if remaining > 0:
+            used_ids = {agent.id for agent in sampled}
+            leftovers = [agent for agent in game_state.agents if agent.id not in used_ids]
+            if leftovers:
+                sampled.extend(rng.sample(leftovers, min(remaining, len(leftovers))))
+
+        if len(sampled) < panel_size:
+            used_ids = {agent.id for agent in sampled}
+            leftovers = [agent for agent in game_state.agents if agent.id not in used_ids]
+            if leftovers:
+                sampled.extend(rng.sample(leftovers, min(panel_size - len(sampled), len(leftovers))))
+        return sampled[:panel_size]
+
+    def _pick_speakers(
+        self, panel_agents: list["Agent"], game_state: "GameState", limit: int
+    ) -> list["Agent"]:
+        if not panel_agents:
+            return []
+        rng = game_state.rng
+        scored = sorted(
+            panel_agents,
+            key=lambda agent: (
+                agent.influence * 0.35
+                + abs(agent.alignment) * 0.18
+                + agent.radicalization * 0.2
+                + agent.happiness * 0.08
+                + rng.uniform(-8.0, 8.0)
+            ),
+            reverse=True,
+        )
+
+        selected: list["Agent"] = []
+        seen_pairs: set[tuple[str, str]] = set()
+        for agent in scored:
+            key = (agent.group_id, agent.role)
+            if key in seen_pairs and len(selected) < max(2, limit // 2):
+                continue
+            selected.append(agent)
+            seen_pairs.add(key)
+            if len(selected) >= limit:
+                break
+
+        if len(selected) < limit:
+            used = {agent.id for agent in selected}
+            tail = [agent for agent in scored if agent.id not in used]
+            selected.extend(tail[: max(0, limit - len(selected))])
+        return selected[:limit]
+
+    def _speaker_name(self, agent: "Agent", game_state: "GameState") -> str:
+        rng = game_state.rng
+        base = _FIRST_NAMES[agent.id % len(_FIRST_NAMES)]
+        if rng.random() < 0.42:
+            base = rng.choice(_FIRST_NAMES)
+        suffix = _LAST_INITIALS[(agent.id + game_state.turn_number) % len(_LAST_INITIALS)]
+        return f"{base} {suffix}."
+
+    def _fallback_street_chatter(
+        self,
+        game_state: "GameState",
+        speakers: list["Agent"],
+        mayor_action: DynamicPolicy,
+        opp_action: DynamicPolicy,
+        triggered_events: list[str],
+    ) -> list[StreetChatterItem]:
+        city_id = str(game_state.simulation_profile.get("city_id", "")).lower()
+        token_by_city = {
+            "new_delhi": "yaar",
+            "new_york": "man",
+            "london": "mate",
+            "tokyo": "honestly",
+            "dubai": "habibi",
+        }
+        local_token = token_by_city.get(city_id, "honestly")
+        stats = game_state.city_stats
+        pressure = "costs" if stats.economy < 45 else "jobs" if stats.employment < 45 else "services"
+        event_focus = triggered_events[0] if triggered_events else "no new crisis"
+
+        chatter: list[StreetChatterItem] = []
+        for idx, agent in enumerate(speakers):
+            group = game_state.identity_groups.get(agent.group_id)
+            group_name = group.name if group else agent.group_id
+            speaker = self._speaker_name(agent, game_state)
+            if idx % 2 == 0:
+                line = (
+                    f"{local_token}, {mayor_action.name} sounds promising, but on my lane we still feel {pressure} pain and {event_focus} is what everyone is discussing."
+                )
+                sentiment = "skeptical"
+            else:
+                line = (
+                    f"{local_token}, {opp_action.name} is trending in tea stalls, but people in my block want proof, not slogans, before switching sides."
+                )
+                sentiment = "mixed"
+            heat = _clamp(0.45 + abs(agent.alignment) / 240.0 + agent.radicalization / 300.0, 0.15, 1.0)
+            chatter.append(
+                StreetChatterItem(
+                    speaker=speaker,
+                    role=agent.role,
+                    group_name=group_name,
+                    line=line[:220],
+                    sentiment=sentiment,
+                    heat=round(heat, 3),
+                    tags=["street", pressure, "trust", "narrative"],
+                )
+            )
+        return chatter
+
+    def generate_street_chatter(
+        self,
+        game_state: "GameState",
+        mayor_action: DynamicPolicy,
+        opp_action: DynamicPolicy,
+        triggered_events: list[str],
+        limit: int = 8,
+    ) -> list[StreetChatterItem]:
+        if not game_state.agents:
+            return []
+
+        limit = max(3, min(14, int(limit)))
+        configured_panel_size = int(max(0, game_state.simulation_profile.get("llm_panel_size", 0)))
+        panel_size = configured_panel_size or min(120, len(game_state.agents))
+        panel_agents = self._sample_panel_agents(game_state, panel_size)
+        speakers = self._pick_speakers(panel_agents, game_state, limit)
+        if not speakers:
+            return []
+
+        city_name = str(game_state.simulation_profile.get("city_name", "the city"))
+        city_id = str(game_state.simulation_profile.get("city_id", "")).lower()
+        event_str = ", ".join(triggered_events[:3]) if triggered_events else "none"
+        stats = game_state.city_stats
+
+        speaker_lines = []
+        for index, agent in enumerate(speakers, start=1):
+            group = game_state.identity_groups.get(agent.group_id)
+            group_name = group.name if group else agent.group_id
+            speaker_name = self._speaker_name(agent, game_state)
+            speaker_lines.append(
+                (
+                    f"{index}. speaker={speaker_name}; role={agent.role}; group={group_name}; "
+                    f"identity={agent.identity.caste}/{agent.identity.religion}/{agent.identity.language}; "
+                    f"happiness={agent.happiness:.0f}; radicalization={agent.radicalization:.0f}; "
+                    f"alignment={agent.alignment:+.0f}; trust={agent.trust_in_government:.0f}"
+                )
+            )
+
+        user = (
+            f"City: {city_name}\n"
+            f"{self._city_flavor(city_id)}\n"
+            f"Turn: {game_state.turn_number}\n"
+            f"Mayor action: {mayor_action.name} — {mayor_action.description}\n"
+            f"Opposition action: {opp_action.name} — {opp_action.description}\n"
+            f"Triggered events: {event_str}\n"
+            f"City stats snapshot: economy={stats.economy:.0f}, employment={stats.employment:.0f}, "
+            f"law_and_order={stats.law_and_order:.0f}, corruption={stats.corruption:.0f}, "
+            f"social_tension={stats.social_tension:.0f}, public_trust={stats.public_trust:.0f}\n"
+            f"Generate exactly {len(speakers)} chatter lines for these sampled panel citizens:\n"
+            + "\n".join(speaker_lines)
+        )
+
+        if self._client is not None and not self._disable_live:
+            try:
+                data = self._client.chat(_STREET_SYSTEM, user)
+                rows = data.get("chatter", []) if isinstance(data, dict) else []
+                if isinstance(rows, list):
+                    normalized: list[StreetChatterItem] = []
+                    for row in rows[: len(speakers)]:
+                        if not isinstance(row, dict):
+                            continue
+                        line = str(row.get("line", "")).strip().replace("\n", " ")
+                        if not line:
+                            continue
+                        raw_tags = row.get("tags", [])
+                        tags: list[str]
+                        if isinstance(raw_tags, list):
+                            tags = [
+                                str(tag).strip().lower().replace("#", "")
+                                for tag in raw_tags
+                                if str(tag).strip()
+                            ][:5]
+                        else:
+                            tags = []
+                        if not tags:
+                            tags = ["street", "sentiment"]
+                        normalized.append(
+                            StreetChatterItem(
+                                speaker=str(row.get("speaker", "Citizen"))[:64],
+                                role=str(row.get("role", "Resident"))[:32],
+                                group_name=str(row.get("group_name", "Citywide"))[:64],
+                                line=line[:220],
+                                sentiment=self._normalize_sentiment(row.get("sentiment")),
+                                heat=round(_clamp(_to_float(row.get("heat"), 0.5) or 0.5, 0.0, 1.0), 3),
+                                tags=tags,
+                            )
+                        )
+                    if normalized:
+                        return normalized
+            except Exception:
+                pass
+
+        return self._fallback_street_chatter(
+            game_state=game_state,
+            speakers=speakers,
+            mayor_action=mayor_action,
+            opp_action=opp_action,
+            triggered_events=triggered_events,
+        )
 
     def run_debates(
         self,

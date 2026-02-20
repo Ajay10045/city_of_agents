@@ -1,19 +1,14 @@
-import type { CounterFrameOption, DynamicPolicy } from '../types'
+import type { DynamicPolicy } from '../types'
 
 type Props = {
   policies: DynamicPolicy[]
-  counterFrames: CounterFrameOption[]
-  counterFramesLoading: boolean
   busy: boolean
   loading: boolean
   selectedPolicyId?: string | null
-  selectedCounterFrameId?: string | null
   prompt: string
   onSelect: (id: string) => void
-  onSelectCounterFrame: (id: string) => void
   onPlaySelected: () => void
   onAskAdvisor?: (id: string) => void
-  onReviseOption?: (id: string) => void
   onImpactAssessment?: (id: string) => void
 }
 
@@ -23,22 +18,17 @@ function formatStat(key: string) {
 
 export default function PoliciesPanel({
   policies,
-  counterFrames,
-  counterFramesLoading,
   busy,
   loading,
   selectedPolicyId,
-  selectedCounterFrameId,
   prompt,
   onSelect,
-  onSelectCounterFrame,
   onPlaySelected,
   onAskAdvisor,
-  onReviseOption,
   onImpactAssessment,
 }: Props) {
   const selectedPolicy = policies.find((policy) => policy.id === selectedPolicyId) ?? null
-  const playDisabled = busy || !selectedPolicy || !selectedCounterFrameId
+  const playDisabled = busy || !selectedPolicy
 
   return (
     <section className="panel" id="policy-section">
@@ -47,42 +37,12 @@ export default function PoliciesPanel({
 
       <div className="policy-selection-bar">
         <div className="policy-selection-label">
-          {selectedPolicy ? `Policy: ${selectedPolicy.name}` : 'Step 1: Select a policy option'}
-          {' · '}
-          {selectedCounterFrameId ? 'Counter-frame selected' : 'Step 2: Choose a counter-frame'}
+          {selectedPolicy ? `Selected: ${selectedPolicy.name}` : 'Select one policy to play this turn'}
         </div>
         <button className="btn-continue policy-play-btn" onClick={onPlaySelected} disabled={playDisabled}>
-          {busy ? 'Simulating…' : 'Play Turn'}
+          {busy ? 'Simulating…' : 'Play Policy'}
         </button>
       </div>
-
-      {selectedPolicy && (
-        <div className="counter-frames-panel">
-          <div className="counter-frames-title">Counter-Frame (Required)</div>
-          {counterFramesLoading ? (
-            <div className="muted">Loading counter-frame options…</div>
-          ) : (
-            <div className="counter-frames-grid">
-              {counterFrames.map((frame) => (
-                <button
-                  key={frame.id}
-                  className={`counter-frame-card ${selectedCounterFrameId === frame.id ? 'selected' : ''}`}
-                  onClick={() => onSelectCounterFrame(frame.id)}
-                  disabled={busy}
-                  title={frame.risk ?? ''}
-                >
-                  <div className="counter-frame-name">{frame.label}</div>
-                  <div className="counter-frame-message">{frame.message}</div>
-                  {frame.risk && <div className="counter-frame-risk">Risk: {frame.risk}</div>}
-                </button>
-              ))}
-              {!counterFramesLoading && counterFrames.length === 0 && (
-                <div className="muted">No counter-frame options available for this policy.</div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
 
       <div className="policy-grid">
         {loading && <div className="loading-msg">⏳ Consulting advisors…</div>}
@@ -151,17 +111,7 @@ export default function PoliciesPanel({
                 }}
                 disabled={busy}
               >
-                Ask Advisor
-              </button>
-              <button
-                className="btn-ghost"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onReviseOption?.(p.id)
-                }}
-                disabled={busy}
-              >
-                Revise This Option
+                Discuss in Council
               </button>
               <button
                 className="btn-ghost"
