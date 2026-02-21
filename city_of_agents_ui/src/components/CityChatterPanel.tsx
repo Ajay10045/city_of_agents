@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import type { StreetChatterItem } from '../types'
 
 type Props = {
@@ -5,13 +6,41 @@ type Props = {
 }
 
 export default function CityChatterPanel({ items }: Props) {
+  const chatterListRef = useRef<HTMLDivElement | null>(null)
+  const pauseChatterScrollRef = useRef(false)
+
+  useEffect(() => {
+    const node = chatterListRef.current
+    if (!node || items.length < 2) return
+
+    const intervalId = window.setInterval(() => {
+      if (!chatterListRef.current) return
+      if (pauseChatterScrollRef.current) return
+      const list = chatterListRef.current
+      if (list.scrollHeight <= list.clientHeight + 1) return
+      const reachedEnd = list.scrollTop + list.clientHeight >= list.scrollHeight - 2
+      list.scrollTop = reachedEnd ? 0 : list.scrollTop + 1
+    }, 80)
+
+    return () => window.clearInterval(intervalId)
+  }, [items.length])
+
   return (
     <section className="panel" id="city-chatter-panel">
       <div className="panel-title">City Chatter</div>
       {items.length === 0 ? (
         <div className="muted">No city chatter yet. It will appear after turn resolution.</div>
       ) : (
-        <div className="street-chatter-list">
+        <div
+          className="street-chatter-list"
+          ref={chatterListRef}
+          onMouseEnter={() => {
+            pauseChatterScrollRef.current = true
+          }}
+          onMouseLeave={() => {
+            pauseChatterScrollRef.current = false
+          }}
+        >
           {items.map((item, idx) => (
             <article className="street-chatter-card fade-in" key={`${item.speaker}-${idx}-${item.turn ?? 0}`}>
               <div className="street-chatter-head">

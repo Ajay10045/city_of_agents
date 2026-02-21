@@ -21,7 +21,7 @@ import type {
 import HeaderBar from './components/HeaderBar'
 import ErrorBanner from './components/ErrorBanner'
 import CityStatsPanel from './components/CityStatsPanel'
-import IdentityGroupsPanel, { type GroupHappening } from './components/IdentityGroupsPanel'
+import IdentityGroupsPanel from './components/IdentityGroupsPanel'
 import CrisesPanel from './components/CrisesPanel'
 import StreamFeedPanel, { type StreamCardItem } from './components/StreamFeedPanel'
 import TurnResultBanner from './components/TurnResultBanner'
@@ -78,6 +78,7 @@ export default function App() {
   const [electionResult, setElectionResult] = useState<ElectionResult | null>(null)
   const [gameOverVisible, setGameOverVisible] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [implementingPolicyId, setImplementingPolicyId] = useState<string | null>(null)
   const [councilBusy, setCouncilBusy] = useState(false)
   const [setupBusy, setSetupBusy] = useState(false)
   const [profileRefreshCityId, setProfileRefreshCityId] = useState<string | null>(null)
@@ -192,6 +193,7 @@ export default function App() {
   const runTurnForPolicy = async (policyId: string) => {
     if (busy || !gameId || !state) return
     setBusy(true)
+    setImplementingPolicyId(policyId)
     setError(null)
     let activePolicyId = policyId
     let activeAdvisorSessionId = advisorSessionId
@@ -300,9 +302,23 @@ export default function App() {
                 turn: messageTurn,
                 label: '📉 Simulation Stats Applied',
                 name: topDeltas || `${Object.keys(msg.stat_deltas ?? {}).length} major stat deltas`,
+                statDeltas: msg.stat_deltas ?? {},
                 meta:
                   `Events: ${(msg.triggered_events ?? []).join(', ') || 'none'}` +
                   ` · Escalations: ${(msg.escalated_events ?? []).join(', ') || 'none'}`,
+              },
+            ])
+          }
+
+          if (msg.type === 'cohort_shift_aggregated') {
+            setStream((s) => [
+              ...s,
+              {
+                kind: 'impact',
+                turn: messageTurn,
+                label: '👥 Cohort Shifts Aggregated',
+                name: `${msg.cohorts.length} cohort impact rows`,
+                cohortShifts: msg.cohorts,
               },
             ])
           }
@@ -315,6 +331,10 @@ export default function App() {
                 turn: messageTurn,
                 label: '📊 Popularity Recalculated',
                 name: `Mayor ${msg.mayor_popularity.toFixed(1)}% · Opp ${msg.opposition_popularity.toFixed(1)}%`,
+                popularity: {
+                  mayor: msg.mayor_popularity,
+                  opposition: msg.opposition_popularity,
+                },
                 meta: `In Power: ${msg.governing_party}`,
               },
             ])
@@ -368,6 +388,13 @@ export default function App() {
                 turn: messageTurn,
                 label: '🏁 Turn Closed',
                 name: `Mayor: ${msg.turn_summary.mayor_action} · Opp: ${msg.turn_summary.opposition_action}`,
+                statDeltas: msg.stat_deltas ?? {},
+                turnSummary: {
+                  mayorAction: msg.turn_summary.mayor_action,
+                  oppositionAction: msg.turn_summary.opposition_action,
+                  dominantFronts: msg.turn_summary.dominant_fronts ?? [],
+                  keyEvents: msg.key_events ?? [],
+                },
                 description:
                   `Fronts: ${(msg.turn_summary.dominant_fronts ?? []).join(', ') || 'none'}` +
                   ` · Events: ${(msg.key_events ?? []).join(', ') || 'none'}`,
@@ -451,6 +478,7 @@ export default function App() {
       setError(e instanceof Error ? e.message : 'Stream connection error')
     } finally {
       setBusy(false)
+      setImplementingPolicyId(null)
     }
   }
 
@@ -469,50 +497,6 @@ export default function App() {
       setGameOverVisible(true)
     }
   }
-
-  const groupHappeningsByGroup = useMemo<Record<string, GroupHappening[]>>(() => {
-    if (!state) return {}
-    const groupNameToId = new Map<string, string>(
-      Object.entries(state.identity_groups).map(([groupId, group]) => [group.name, groupId]),
-    )
-    const rows: Record<string, GroupHappening[]> = {}
-    for (const groupId of Object.keys(state.identity_groups)) {
-      rows[groupId] = []
-    }
-
-    for (const debate of debates) {
-      const groupId = groupNameToId.get(debate.group_name)
-      if (!groupId) continue
-      const turn = typeof debate.turn === 'number' ? debate.turn : state.turn_number
-      rows[groupId].push({
-        id: `pulse-${groupId}-${turn}-${rows[groupId].length}`,
-        kind: 'pulse',
-        turn,
-        text: debate.debate_summary,
-        meta:
-          `Align ${debate.alignment_delta >= 0 ? '+' : ''}${debate.alignment_delta.toFixed(1)} · ` +
-          `Trust ${debate.trust_delta >= 0 ? '+' : ''}${debate.trust_delta.toFixed(1)}`,
-      })
-    }
-
-    for (const chatter of streetChatter) {
-      const groupId = groupNameToId.get(chatter.group_name)
-      if (!groupId) continue
-      const turn = typeof chatter.turn === 'number' ? chatter.turn : state.turn_number
-      rows[groupId].push({
-        id: `chat-${groupId}-${turn}-${rows[groupId].length}`,
-        kind: 'chatter',
-        turn,
-        text: `${chatter.speaker}: "${chatter.line}"`,
-        meta: `${chatter.sentiment} · Heat ${(chatter.heat * 100).toFixed(0)}%`,
-      })
-    }
-
-    for (const groupId of Object.keys(rows)) {
-      rows[groupId].sort((a, b) => b.turn - a.turn)
-    }
-    return rows
-  }, [state, debates, streetChatter])
 
   if (loading) return <div className="page">Loading setup…</div>
 
@@ -560,10 +544,9 @@ export default function App() {
       {gameReady && state ? (
         <div className="layout layout-v2">
           <aside className="layout-left">
-            <IdentityGroupsPanel state={state} compact happeningsByGroup={groupHappeningsByGroup} />
+            <IdentityGroupsPanel state={state} debates={debates} compact />
             <UnifiedMediaPanel state={state} cards={mediaTimeline} />
             <CityChatterPanel items={streetChatter} />
-            <CrisesPanel state={state} eventChances={eventChances} />
           </aside>
 
           <main className="layout-center">
@@ -572,6 +555,7 @@ export default function App() {
             <GeneratedPoliciesPanel
               policies={policies}
               disabled={busy || gameCompleted}
+              implementingPolicyId={implementingPolicyId}
               onImplementPolicy={(policyId) => {
                 if (state && hasMayorLostElection(state)) {
                   setError('Simulation is over because the Mayor lost the election.')
@@ -584,7 +568,11 @@ export default function App() {
                 void runTurnForPolicy(policyId)
               }}
             />
-            <StreamFeedPanel items={stream} visible={busy || stream.length > 0} />
+            <StreamFeedPanel
+              items={stream}
+              visible={busy || stream.length > 0}
+              identityGroups={state.identity_groups}
+            />
           </main>
           <aside className="layout-right">
             <AdvisoryChamberPanel
@@ -599,6 +587,7 @@ export default function App() {
               onSessionUpdate={(nextSessionId) => setAdvisorSessionId(nextSessionId)}
               onError={(message) => setError(message)}
             />
+            <CrisesPanel state={state} eventChances={eventChances} />
           </aside>
         </div>
       ) : (
