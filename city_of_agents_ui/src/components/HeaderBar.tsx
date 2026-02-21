@@ -30,7 +30,9 @@ export default function HeaderBar({ state, onNewGame, busy }: Props) {
       <h1>City of Agents</h1>
       <div className="header-meta">
         <span>
-          Turn <strong>{state.turn_number}</strong> / <strong>{state.total_turns}</strong>
+          Turn <strong>{state.turn_number}</strong> · Election T
+          <strong>{state.election_turn}</strong> · Horizon T
+          <strong>{state.total_turns}</strong>
         </span>
         <span>{turnsLeft > 0 ? `Election in ${turnsLeft} turns` : 'Election passed'}</span>
         <span>

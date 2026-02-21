@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Rajdhani:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -28,7 +28,7 @@ html, body {
 		radial-gradient(circle at 88% 22%, rgba(240, 184, 77, 0.12), transparent 35%),
 		linear-gradient(180deg, #02060d 0%, #03070f 48%, #02050b 100%);
 	color: var(--text);
-	font-family: 'Rajdhani', 'Segoe UI', system-ui, sans-serif;
+	font-family: 'Sora', 'Segoe UI', system-ui, sans-serif;
 	font-size: 14px;
 	line-height: 1.5;
 	min-height: 100vh;
@@ -48,9 +48,9 @@ html, body {
 .header h1 {
 	font-size: 18px;
 	font-weight: 700;
-	letter-spacing: 0.06em;
+	letter-spacing: 0.08em;
 	color: var(--gold);
-	font-family: 'Orbitron', 'Rajdhani', sans-serif;
+	font-family: 'Space Grotesk', 'Sora', sans-serif;
 	text-transform: uppercase;
 }
 .header-meta { display: flex; gap: 20px; align-items: center; }
@@ -187,7 +187,7 @@ html, body {
 	font-size: 11px;
 	font-weight: 600;
 	letter-spacing: 0.1em;
-	font-family: 'Orbitron', 'Rajdhani', sans-serif;
+	font-family: 'Space Grotesk', 'Sora', sans-serif;
 	text-transform: uppercase;
 	color: var(--gold);
 	margin-bottom: 10px;
@@ -396,7 +396,7 @@ html, body {
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
-	max-height: 48vh;
+	max-height: 60vh;
 	overflow: auto;
 	padding-right: 4px;
 }

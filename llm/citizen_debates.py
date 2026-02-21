@@ -48,7 +48,8 @@ Rules:
 - Keep each line <= 24 words.
 - No slurs, hate speech, or explicit violence.
 - Keep chatter grounded in this turn's policies/events.
-- Prefer concrete daily concerns (rent, commute, safety, bills, jobs, air, services)."""
+- Prefer concrete daily concerns (rent, commute, safety, bills, jobs, air, services).
+- Most speakers should be everyday residents (workers, students, commuters, shopkeepers); include at most one politician voice unless explicitly asked."""
 
 _FIRST_NAMES = [
     "Aarav",
@@ -216,22 +217,68 @@ class CitizenDebates:
             ),
             reverse=True,
         )
+        by_role: dict[str, list["Agent"]] = defaultdict(list)
+        for agent in scored:
+            by_role[agent.role].append(agent)
+
+        political_roles = {"politician", "party_worker", "councilor", "minister"}
+        non_political_roles = [
+            role
+            for role in by_role
+            if role.strip().replace(" ", "_").lower() not in political_roles
+        ]
 
         selected: list["Agent"] = []
-        seen_pairs: set[tuple[str, str]] = set()
-        for agent in scored:
-            key = (agent.group_id, agent.role)
-            if key in seen_pairs and len(selected) < max(2, limit // 2):
-                continue
-            selected.append(agent)
-            seen_pairs.add(key)
+        selected_ids: set[int] = set()
+        max_political = max(1, limit // 5)
+        political_count = 0
+
+        # First pass: cover as many non-political roles as possible.
+        for role in sorted(non_political_roles, key=lambda r: len(by_role[r]), reverse=True):
+            for candidate in by_role[role]:
+                if candidate.id in selected_ids:
+                    continue
+                selected.append(candidate)
+                selected_ids.add(candidate.id)
+                break
+            if len(selected) >= limit:
+                return selected[:limit]
+
+        # Second pass: fill from high-signal non-political speakers.
+        for candidate in scored:
             if len(selected) >= limit:
                 break
+            role_key = candidate.role.strip().replace(" ", "_").lower()
+            if role_key in political_roles:
+                continue
+            if candidate.id in selected_ids:
+                continue
+            selected.append(candidate)
+            selected_ids.add(candidate.id)
 
+        # Third pass: add limited political voices for realism.
+        for candidate in scored:
+            if len(selected) >= limit:
+                break
+            role_key = candidate.role.strip().replace(" ", "_").lower()
+            if role_key not in political_roles:
+                continue
+            if candidate.id in selected_ids or political_count >= max_political:
+                continue
+            selected.append(candidate)
+            selected_ids.add(candidate.id)
+            political_count += 1
+
+        # Final fill if still short.
         if len(selected) < limit:
-            used = {agent.id for agent in selected}
-            tail = [agent for agent in scored if agent.id not in used]
-            selected.extend(tail[: max(0, limit - len(selected))])
+            for candidate in scored:
+                if len(selected) >= limit:
+                    break
+                if candidate.id in selected_ids:
+                    continue
+                selected.append(candidate)
+                selected_ids.add(candidate.id)
+
         return selected[:limit]
 
     def _speaker_name(self, agent: "Agent", game_state: "GameState") -> str:

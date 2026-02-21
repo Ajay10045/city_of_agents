@@ -45,7 +45,7 @@ export default function PoliciesPanel({
       </div>
 
       <div className="policy-grid">
-        {loading && <div className="loading-msg">⏳ Consulting advisors…</div>}
+        {loading && <div className="loading-msg">Analyzing existing issues...</div>}
         {policies.map((p) => (
           <div
             key={p.id}

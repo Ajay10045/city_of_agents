@@ -16,6 +16,7 @@ type Props = {
   onPoliciesUpdate: (policies: DynamicPolicy[]) => void
   onSessionUpdate: (sessionId: string) => void
   onError: (message: string | null) => void
+  onCouncilBusyChange?: (busy: boolean) => void
 }
 
 type ComposerIntent =
@@ -87,11 +88,22 @@ export default function AdvisorConsole({
   onPoliciesUpdate,
   onSessionUpdate,
   onError,
+  onCouncilBusyChange,
 }: Props) {
   const [session, setSession] = useState<AdvisorSession | null>(null)
   const [activeTab, setActiveTab] = useState<'global' | string>('global')
   const [composer, setComposer] = useState('')
   const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    onCouncilBusyChange?.(busy)
+  }, [busy, onCouncilBusyChange])
+
+  useEffect(() => {
+    return () => {
+      onCouncilBusyChange?.(false)
+    }
+  }, [onCouncilBusyChange])
 
   useEffect(() => {
     if (!gameId) {

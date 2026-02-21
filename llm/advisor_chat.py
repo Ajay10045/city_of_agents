@@ -182,6 +182,26 @@ Return ONLY a JSON object with keys:
         constraints: str,
         option_id: str | None,
     ) -> tuple[list[DynamicPolicy], dict[str, Any]]:
+        def policy_signature(option: DynamicPolicy) -> tuple[Any, ...]:
+            return (
+                option.name.strip().lower(),
+                option.description.strip().lower(),
+                option.why_now.strip().lower(),
+                tuple(sorted((option.effects or {}).items())),
+            )
+
+        def changed_option_ids(
+            before: list[DynamicPolicy], after: list[DynamicPolicy]
+        ) -> list[str]:
+            changed: list[str] = []
+            pairs = min(len(before), len(after))
+            for idx in range(pairs):
+                if policy_signature(before[idx]) != policy_signature(after[idx]):
+                    changed.append(after[idx].id)
+            if len(after) > pairs:
+                changed.extend(option.id for option in after[pairs:])
+            return changed
+
         normalized_mode = mode.strip().lower()
         guidance = constraints.strip()
 
@@ -193,10 +213,18 @@ Return ONLY a JSON object with keys:
             revised = list(revised[:5])
             if not revised:
                 raise ValueError("Advisor failed to regenerate options")
+            changed = changed_option_ids(current_options, revised)
+            if guidance and not changed:
+                revised[0].why_now = f"{revised[0].why_now} Priority constraint: {guidance}."
+                revised[0].rationale = (
+                    f"{revised[0].rationale} Revised from advisor constraints."
+                )[:400]
+                changed = [revised[0].id]
             return revised, {
                 "mode": "full",
                 "message": "Regenerated full option set with applied constraints.",
-                "changed_option_ids": [option.id for option in revised],
+                "changed_option_ids": changed,
+                "changed_count": len(changed),
             }
 
         if not option_id:
@@ -227,11 +255,14 @@ Return ONLY a JSON object with keys:
 
         updated = list(current_options)
         updated[target_index] = replacement
+        changed = changed_option_ids(current_options, updated)
 
         return updated, {
             "mode": "single",
             "message": "Revised selected option with constraints.",
             "option_id": target.id,
+            "changed_option_ids": changed,
+            "changed_count": len(changed),
             "before": {
                 "name": target.name,
                 "why_now": target.why_now,

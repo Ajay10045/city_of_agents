@@ -1704,7 +1704,11 @@ class GameHandler(BaseHTTPRequestHandler):
                 diff_message = str(diff.get("message", "Options revised")).strip() or "Options revised."
                 mode_label = "single-option revision" if mode == "single" else "full regeneration"
                 constraint_label = constraints if constraints else "no explicit constraints provided"
-                summary = f"{diff_message} ({mode_label}; constraints: {constraint_label})."
+                changed_count = int(diff.get("changed_count", 0))
+                summary = (
+                    f"{diff_message} ({mode_label}; changed {changed_count} option(s); "
+                    f"constraints: {constraint_label})."
+                )
                 thread_scope = "option" if mode == "single" and option_id else "global"
                 thread_option_id = option_id if thread_scope == "option" else None
                 advisor_session.append_message(
