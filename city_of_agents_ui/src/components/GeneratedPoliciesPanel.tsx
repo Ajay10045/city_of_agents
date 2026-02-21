@@ -40,7 +40,7 @@ export default function GeneratedPoliciesPanel({
                     )}
                     {(policy.deliberation_trace.advisor_inputs_used ?? []).slice(0, 2).map((input, idx) => (
                       <div className="generated-policy-trace-line" key={`${policy.id}-trace-${idx}`}>
-                        {input.advisor_id} ({input.portfolio}): {input.point}
+                        {input.advisor_name || input.advisor_id} ({input.portfolio}): {input.point}
                       </div>
                     ))}
                   </div>

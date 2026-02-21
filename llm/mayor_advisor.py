@@ -48,6 +48,15 @@ class MayorAdvisor:
         "revised guidance:",
         "policy generation brief",
     ]
+    _PLACEHOLDER_POLICY_NAMES = {
+        "unknown policy",
+        "policy option",
+        "n/a",
+        "na",
+        "tbd",
+        "placeholder policy",
+        "unnamed policy",
+    }
 
     def __init__(self) -> None:
         model = os.environ.get("LLM_MODEL", "gpt-4o")
@@ -352,7 +361,14 @@ class MayorAdvisor:
         return result
 
     @classmethod
-    def _sanitize_text(cls, value: str | None, *, fallback: str, max_len: int) -> str:
+    def _sanitize_text(
+        cls,
+        value: str | None,
+        *,
+        fallback: str,
+        max_len: int,
+        guard_placeholders: bool = False,
+    ) -> str:
         text = str(value or "").strip()
         lower = text.lower()
         for marker in cls._BLOCKED_PROMPT_MARKERS:
@@ -361,6 +377,8 @@ class MayorAdvisor:
                 text = text[:idx].strip(" .:-")
                 lower = text.lower()
         text = " ".join(text.split()).strip()
+        if guard_placeholders and text.lower() in cls._PLACEHOLDER_POLICY_NAMES:
+            text = ""
         if not text:
             text = fallback
         return text[:max_len]
@@ -368,7 +386,12 @@ class MayorAdvisor:
     @classmethod
     def _sanitize_options(cls, options: list[DynamicPolicy]) -> list[DynamicPolicy]:
         for option in options:
-            option.name = cls._sanitize_text(option.name, fallback="Strategic Action Plan", max_len=120)
+            option.name = cls._sanitize_text(
+                option.name,
+                fallback="Strategic Action Plan",
+                max_len=120,
+                guard_placeholders=True,
+            )
             option.description = cls._sanitize_text(
                 option.description,
                 fallback="Targeted intervention to stabilize key city pressures this turn.",
