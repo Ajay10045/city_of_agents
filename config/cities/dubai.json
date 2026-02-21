@@ -17,6 +17,32 @@
         "url": "https://bayanat.ae/",
         "snippet": "Public service and macro indicators relevant to emirate planning."
       }
+    ],
+    "media_outlets": [
+      {
+        "id": "emirate_brief",
+        "name": "Emirate Brief",
+        "lean": "mayor",
+        "bias": 5.8,
+        "sensationalism": 43.0,
+        "trust": 60.0
+      },
+      {
+        "id": "district_watch",
+        "name": "District Watch",
+        "lean": "opposition",
+        "bias": -6.2,
+        "sensationalism": 57.0,
+        "trust": 47.0
+      },
+      {
+        "id": "gulf_street_report",
+        "name": "Gulf Street Report",
+        "lean": "neutral",
+        "bias": 0.0,
+        "sensationalism": 50.0,
+        "trust": 54.0
+      }
     ]
   },
   "identity_groups": [

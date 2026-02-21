@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import random
 import time
 import uuid
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from threading import Lock
+from threading import Lock, Thread
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -24,6 +25,11 @@ from core.game_state import GameState
 from core.turn_manager import TurnManager
 from events.event_engine import EventEngine
 from llm.advisor_chat import AdvisorChat
+from llm.advisory_chamber import (
+    AdvisoryChamber,
+    ChamberPolicyUnavailableError,
+    ChamberReplyError,
+)
 from llm.llm_client import _load_env
 from media.media_engine import MediaEngine, MediaState
 from politics.election_engine import ElectionEngine
@@ -39,8 +45,8 @@ UI_DIST_DIR = ROOT / "city_of_agents_ui" / "dist"
 DEFAULT_GAME_ID = "default"
 MAX_BUFFERED_EVENTS = 3000
 MAX_BUFFERED_ACTION_RESULTS = 1000
+ADVISOR_OPTIONS_CACHE_TTL_SECONDS = 90.0
 ALLOWED_PARTICIPANT_ROLES = {"mayor", "opposition", "spectator"}
-ALLOWED_LLM_SAMPLING_STRATEGIES = {"stratified", "uniform", "none"}
 
 CITY_OPTIONS = [
     {"id": "new_delhi", "name": "New Delhi"},
@@ -51,29 +57,47 @@ CITY_OPTIONS = [
 ]
 CITY_NAMES_BY_ID = {item["id"]: item["name"] for item in CITY_OPTIONS}
 
+DEFAULT_MEDIA_OUTLETS_BY_CITY: dict[str, list[dict[str, Any]]] = {
+    "new_delhi": [
+        {"id": "delhi_civic_wire", "name": "Delhi Civic Wire", "lean": "mayor", "bias": 6.0, "sensationalism": 44.0, "trust": 58.0},
+        {"id": "bazaar_pulse", "name": "Bazaar Pulse", "lean": "opposition", "bias": -7.0, "sensationalism": 63.0, "trust": 45.0},
+        {"id": "metro_bulletin", "name": "Metro Bulletin", "lean": "neutral", "bias": -1.0, "sensationalism": 52.0, "trust": 51.0},
+    ],
+    "new_york": [
+        {"id": "city_hall_brief", "name": "City Hall Brief", "lean": "mayor", "bias": 5.0, "sensationalism": 47.0, "trust": 57.0},
+        {"id": "borough_watch", "name": "Borough Watch", "lean": "opposition", "bias": -6.5, "sensationalism": 61.0, "trust": 46.0},
+        {"id": "subway_live", "name": "Subway Live", "lean": "neutral", "bias": -0.5, "sensationalism": 54.0, "trust": 52.0},
+    ],
+    "london": [
+        {"id": "westminster_wire", "name": "Westminster Wire", "lean": "mayor", "bias": 4.5, "sensationalism": 45.0, "trust": 59.0},
+        {"id": "high_street_ledger", "name": "High Street Ledger", "lean": "opposition", "bias": -5.5, "sensationalism": 58.0, "trust": 47.0},
+        {"id": "thames_report", "name": "Thames Report", "lean": "neutral", "bias": 0.2, "sensationalism": 51.0, "trust": 54.0},
+    ],
+    "tokyo": [
+        {"id": "ward_policy_desk", "name": "Ward Policy Desk", "lean": "mayor", "bias": 4.0, "sensationalism": 41.0, "trust": 61.0},
+        {"id": "commuter_mirror", "name": "Commuter Mirror", "lean": "opposition", "bias": -5.2, "sensationalism": 56.0, "trust": 48.0},
+        {"id": "tokyo_city_line", "name": "Tokyo City Line", "lean": "neutral", "bias": -0.3, "sensationalism": 49.0, "trust": 56.0},
+    ],
+    "dubai": [
+        {"id": "emirate_brief", "name": "Emirate Brief", "lean": "mayor", "bias": 5.8, "sensationalism": 43.0, "trust": 60.0},
+        {"id": "district_watch", "name": "District Watch", "lean": "opposition", "bias": -6.2, "sensationalism": 57.0, "trust": 47.0},
+        {"id": "gulf_street_report", "name": "Gulf Street Report", "lean": "neutral", "bias": 0.0, "sensationalism": 50.0, "trust": 54.0},
+    ],
+}
+
 _profile_generator = CityProfileGenerator()
 _advisor_chat = AdvisorChat()
+_advisory_chamber = AdvisoryChamber()
 
 SETUP_DEFAULTS: dict[str, Any] = {
-    "turns_to_election": 10,
+    "turns": 10,
     "city_id": "new_delhi",
-    "population_scale": 50_000,
-    "agent_count": 5_000,
-    "llm_panel_size": 500,
-    "llm_sampling_strategy": "stratified",
-    "llm_micro_batch_size": 20,
-    "max_parallel_llm_requests": 8,
-    "randomness_scale": 0.10,
+    "agent_count": 12,
 }
 
 SETUP_LIMITS: dict[str, dict[str, Any]] = {
-    "turns_to_election": {"min": 3, "max": 100},
-    "population_scale": {"min": 10_000, "max": 200_000},
-    "agent_count": {"min": 1_000, "max": 50_000},
-    "llm_panel_size": {"min": 0, "max": 5_000},
-    "llm_micro_batch_size": {"min": 1, "max": 100},
-    "max_parallel_llm_requests": {"min": 1, "max": 32},
-    "randomness_scale": {"min": 0.0, "max": 1.0},
+    "turns": {"min": 3, "max": 100},
+    "agent_count": {"min": 10, "max": 15},
 }
 
 
@@ -81,6 +105,13 @@ SETUP_LIMITS: dict[str, dict[str, Any]] = {
 class CachedActionResult:
     status: int
     body: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class CachedAdvisorOptions:
+    options: list[Any]
+    source: str
+    cached_at: float
 
 
 @dataclass(frozen=True)
@@ -107,6 +138,8 @@ class GameSession:
     action_order: list[str] = field(default_factory=list)
     advisor_sessions: dict[str, AdvisorSession] = field(default_factory=dict)
     advisor_session_by_turn: dict[int, str] = field(default_factory=dict)
+    advisor_options_cache: dict[str, CachedAdvisorOptions] = field(default_factory=dict)
+    advisor_refresh_inflight: set[str] = field(default_factory=set)
     action_lock: object = field(default_factory=Lock, repr=False)
 
 
@@ -158,6 +191,10 @@ def _build_game(
         target_agent_count=target_agent_count,
     )
     meta = profile_payload.get("meta", {})
+    raw_media_outlets = meta.get("media_outlets")
+    if not isinstance(raw_media_outlets, list) or not raw_media_outlets:
+        raw_media_outlets = DEFAULT_MEDIA_OUTLETS_BY_CITY.get(city_id, [])
+    media_outlets = MediaEngine.outlets_from_config(raw_media_outlets)
     profile["city_id"] = city_id
     profile["city_name"] = str(meta.get("city_name", CITY_NAMES_BY_ID.get(city_id, city_id)))
     profile["profile_version"] = str(meta.get("profile_version", "unknown"))
@@ -166,6 +203,7 @@ def _build_game(
     profile["issue_front_baseline"] = dict(profile_payload.get("issue_front_baseline", {}))
     profile["starter_issues"] = list(profile_payload.get("starter_issues", []))
     profile["evidence_sources"] = list(meta.get("evidence_sources", []))
+    profile["media_outlets"] = [item.name for item in media_outlets]
     profile["actual_agent_count"] = len(agents)
 
     game_state = GameState(
@@ -179,7 +217,7 @@ def _build_game(
         agents=agents,
         relationships=relationships,
         active_events=[],
-        media_state=MediaState(),
+        media_state=MediaState(outlets=media_outlets),
         rng=rng,
         rng_seed=seed,
         simulation_profile=profile,
@@ -485,6 +523,104 @@ def _sync_mayor_option_cache(session: GameSession, options: list[Any]) -> None:
     session.turn_manager._cached_mayor_options = {str(option.id): option for option in options}
 
 
+def _parse_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
+
+
+def _advisor_options_cache_key(turn_number: int, guidance: str | None) -> str:
+    marker = str(guidance or "").strip()
+    guidance_hash = hashlib.sha1(marker.encode("utf-8")).hexdigest()[:16] if marker else "none"
+    return f"{turn_number}:{guidance_hash}"
+
+
+def _cache_advisor_options(
+    session: GameSession,
+    cache_key: str,
+    options: list[Any],
+    source: str,
+) -> None:
+    session.advisor_options_cache[cache_key] = CachedAdvisorOptions(
+        options=list(options),
+        source=source,
+        cached_at=time.time(),
+    )
+
+
+def _get_cached_advisor_options(session: GameSession, cache_key: str) -> CachedAdvisorOptions | None:
+    cached = session.advisor_options_cache.get(cache_key)
+    if cached is None:
+        return None
+    if (time.time() - cached.cached_at) > ADVISOR_OPTIONS_CACHE_TTL_SECONDS:
+        session.advisor_options_cache.pop(cache_key, None)
+        return None
+    return cached
+
+
+def _generate_advisor_options(
+    session: GameSession,
+    guidance: str | None = None,
+) -> tuple[list[Any], str]:
+    return session.turn_manager.mayor_advisor.generate_options_with_source(
+        session.turn_manager.game_state,
+        guidance=guidance,
+    )
+
+
+def _schedule_advisor_session_live_refresh(
+    session: GameSession,
+    turn_number: int,
+    guidance: str | None,
+) -> None:
+    cache_key = _advisor_options_cache_key(turn_number, guidance)
+    if cache_key in session.advisor_refresh_inflight:
+        return
+    session.advisor_refresh_inflight.add(cache_key)
+
+    def _refresh_worker() -> None:
+        try:
+            options, source = _generate_advisor_options(session, guidance=guidance)
+            with session.action_lock:
+                _cache_advisor_options(session, cache_key, options, source)
+                active_id = session.advisor_session_by_turn.get(turn_number)
+                if not active_id:
+                    return
+                active = session.advisor_sessions.get(active_id)
+                if active is None:
+                    return
+                if active.option_source != "fallback":
+                    return
+                active.options = list(options[:5])
+                active.option_source = source
+                active.session_status = "ready" if source == "live" else "error"
+                active.ensure_option_threads()
+                active.updated_at = time.time()
+                _sync_mayor_option_cache(session, active.options)
+        except Exception:
+            with session.action_lock:
+                active_id = session.advisor_session_by_turn.get(turn_number)
+                if active_id:
+                    active = session.advisor_sessions.get(active_id)
+                    if active and active.option_source == "fallback":
+                        active.session_status = "error"
+                        active.updated_at = time.time()
+        finally:
+            with session.action_lock:
+                session.advisor_refresh_inflight.discard(cache_key)
+
+    Thread(target=_refresh_worker, daemon=True).start()
+
+
 def _active_advisor_session_unlocked(session: GameSession) -> AdvisorSession:
     return _ensure_advisor_session_unlocked(session, force_refresh=False)
 
@@ -493,6 +629,8 @@ def _ensure_advisor_session_unlocked(
     session: GameSession,
     force_refresh: bool = False,
     guidance: str | None = None,
+    prefer_fallback: bool = False,
+    schedule_live_refresh: bool = False,
 ) -> AdvisorSession:
     turn_number = _planned_turn_number(session)
     existing_id = session.advisor_session_by_turn.get(turn_number)
@@ -502,16 +640,29 @@ def _ensure_advisor_session_unlocked(
             _sync_mayor_option_cache(session, existing.options)
             return existing
 
-    if guidance:
-        options = session.turn_manager.mayor_advisor.generate_options(
-            session.turn_manager.game_state,
-            guidance=guidance,
-        )
+    cache_key = _advisor_options_cache_key(turn_number, guidance)
+    cached = None if force_refresh else _get_cached_advisor_options(session, cache_key)
+    if cached is not None:
+        options = list(cached.options[:5])
+        source = cached.source
+    elif prefer_fallback:
+        options = session.turn_manager.mayor_advisor.generate_fallback_options(guidance=guidance)[:5]
+        source = "fallback"
+        _cache_advisor_options(session, cache_key, options, source)
+        if schedule_live_refresh:
+            _schedule_advisor_session_live_refresh(session, turn_number, guidance)
     else:
-        options = session.turn_manager.get_mayor_options()
+        if guidance:
+            options, source = _generate_advisor_options(session, guidance=guidance)
+            options = list(options[:5])
+        else:
+            options = list(session.turn_manager.get_mayor_options()[:5])
+            source = "live"
+        _cache_advisor_options(session, cache_key, options, source)
 
-    options = list(options[:5])
     advisor_session = new_advisor_session(turn_number=turn_number, options=options)
+    advisor_session.option_source = source
+    advisor_session.session_status = "refining" if source == "fallback" else "ready"
     session.advisor_sessions[advisor_session.advisor_session_id] = advisor_session
     session.advisor_session_by_turn[turn_number] = advisor_session.advisor_session_id
     _sync_mayor_option_cache(session, advisor_session.options)
@@ -667,50 +818,41 @@ def _normalize_city_id(value: Any) -> str:
 
 
 def _parse_v1_create_game_request(body: dict) -> tuple[dict[str, Any] | None, tuple[int, str] | None]:
+    deprecated_fields = (
+        "turns_to_election",
+        "election_turn",
+        "population_scale",
+        "llm_panel_size",
+        "llm_sampling_strategy",
+        "llm_micro_batch_size",
+        "max_parallel_llm_requests",
+        "randomness_scale",
+    )
+    for field_name in deprecated_fields:
+        if field_name in body:
+            return None, (
+                400,
+                f"{field_name} is no longer supported in /v1/games. Use only: seed, turns, city_id, agent_count.",
+            )
+
     seed = body.get("seed")
 
-    turns, turns_err = _parse_bounded_int(body.get("turns", 50), "turns", 1, 300)
+    turns, turns_err = _parse_bounded_int(
+        body.get("turns", SETUP_DEFAULTS["turns"]),
+        "turns",
+        int(SETUP_LIMITS["turns"]["min"]),
+        int(SETUP_LIMITS["turns"]["max"]),
+    )
     if turns_err is not None:
         return None, (400, turns_err)
     assert turns is not None
 
-    if "turns_to_election" in body:
-        turns_to_election, election_err = _parse_bounded_int(
-            body.get("turns_to_election"),
-            "turns_to_election",
-            int(SETUP_LIMITS["turns_to_election"]["min"]),
-            int(SETUP_LIMITS["turns_to_election"]["max"]),
-        )
-        if election_err is not None:
-            return None, (400, election_err)
-        assert turns_to_election is not None
-        election_turn = min(turns_to_election, turns)
-    elif "election_turn" in body:
-        election_turn, election_err = _parse_bounded_int(
-            body.get("election_turn"), "election_turn", 1, turns
-        )
-        if election_err is not None:
-            return None, (400, election_err)
-        assert election_turn is not None
-        turns_to_election = election_turn
-    else:
-        turns_to_election = int(SETUP_DEFAULTS["turns_to_election"])
-        election_turn = min(turns_to_election, turns)
+    election_turn = turns
 
     city_id = _normalize_city_id(body.get("city_id", SETUP_DEFAULTS["city_id"]))
     if city_id not in CITY_NAMES_BY_ID:
         allowed = ", ".join(sorted(CITY_NAMES_BY_ID))
         return None, (400, f"city_id must be one of: {allowed}")
-
-    population_scale, population_err = _parse_bounded_int(
-        body.get("population_scale", SETUP_DEFAULTS["population_scale"]),
-        "population_scale",
-        int(SETUP_LIMITS["population_scale"]["min"]),
-        int(SETUP_LIMITS["population_scale"]["max"]),
-    )
-    if population_err is not None:
-        return None, (400, population_err)
-    assert population_scale is not None
 
     agent_count, agent_count_err = _parse_bounded_int(
         body.get("agent_count", SETUP_DEFAULTS["agent_count"]),
@@ -722,73 +864,13 @@ def _parse_v1_create_game_request(body: dict) -> tuple[dict[str, Any] | None, tu
         return None, (400, agent_count_err)
     assert agent_count is not None
 
-    sampling_strategy = str(
-        body.get("llm_sampling_strategy", SETUP_DEFAULTS["llm_sampling_strategy"])
-    ).strip().lower()
-    if sampling_strategy not in ALLOWED_LLM_SAMPLING_STRATEGIES:
-        allowed = ", ".join(sorted(ALLOWED_LLM_SAMPLING_STRATEGIES))
-        return None, (400, f"llm_sampling_strategy must be one of: {allowed}")
-
-    llm_panel_size, llm_panel_err = _parse_bounded_int(
-        body.get("llm_panel_size", SETUP_DEFAULTS["llm_panel_size"]),
-        "llm_panel_size",
-        int(SETUP_LIMITS["llm_panel_size"]["min"]),
-        int(SETUP_LIMITS["llm_panel_size"]["max"]),
-    )
-    if llm_panel_err is not None:
-        return None, (400, llm_panel_err)
-    assert llm_panel_size is not None
-
-    if sampling_strategy == "none":
-        llm_panel_size = 0
-    elif llm_panel_size < 50:
-        return None, (400, "llm_panel_size must be >= 50 unless llm_sampling_strategy is 'none'")
-
-    if llm_panel_size > agent_count:
-        return None, (400, "llm_panel_size must be <= agent_count")
-
-    llm_micro_batch_size, batch_err = _parse_bounded_int(
-        body.get("llm_micro_batch_size", SETUP_DEFAULTS["llm_micro_batch_size"]),
-        "llm_micro_batch_size",
-        int(SETUP_LIMITS["llm_micro_batch_size"]["min"]),
-        int(SETUP_LIMITS["llm_micro_batch_size"]["max"]),
-    )
-    if batch_err is not None:
-        return None, (400, batch_err)
-    assert llm_micro_batch_size is not None
-
-    max_parallel_llm_requests, parallel_err = _parse_bounded_int(
-        body.get("max_parallel_llm_requests", SETUP_DEFAULTS["max_parallel_llm_requests"]),
-        "max_parallel_llm_requests",
-        int(SETUP_LIMITS["max_parallel_llm_requests"]["min"]),
-        int(SETUP_LIMITS["max_parallel_llm_requests"]["max"]),
-    )
-    if parallel_err is not None:
-        return None, (400, parallel_err)
-    assert max_parallel_llm_requests is not None
-
-    randomness_scale, randomness_err = _parse_bounded_float(
-        body.get("randomness_scale", SETUP_DEFAULTS["randomness_scale"]),
-        "randomness_scale",
-        float(SETUP_LIMITS["randomness_scale"]["min"]),
-        float(SETUP_LIMITS["randomness_scale"]["max"]),
-    )
-    if randomness_err is not None:
-        return None, (400, randomness_err)
-    assert randomness_scale is not None
-
     profile = city_profile_status(city_id)
     setup = {
-        "turns_to_election": election_turn,
+        "api_version": "v1",
+        "turns": turns,
         "city_id": city_id,
         "city_name": CITY_NAMES_BY_ID[city_id],
-        "population_scale": population_scale,
         "agent_count": agent_count,
-        "llm_panel_size": llm_panel_size,
-        "llm_sampling_strategy": sampling_strategy,
-        "llm_micro_batch_size": llm_micro_batch_size,
-        "max_parallel_llm_requests": max_parallel_llm_requests,
-        "randomness_scale": round(randomness_scale, 4),
         "profile_version": profile.get("profile_version"),
         "profile_ready": bool(profile.get("profile_ready")),
         "profile_last_generated_at": profile.get("last_generated_at"),
@@ -821,20 +903,11 @@ def _setup_options_payload() -> dict[str, Any]:
         "api_version": "v1",
         "cities": cities_with_status,
         "defaults": {
-            "turns_to_election": SETUP_DEFAULTS["turns_to_election"],
+            "turns": SETUP_DEFAULTS["turns"],
             "city_id": SETUP_DEFAULTS["city_id"],
-            "population_scale": SETUP_DEFAULTS["population_scale"],
             "agent_count": SETUP_DEFAULTS["agent_count"],
-            "llm_panel_size": SETUP_DEFAULTS["llm_panel_size"],
-            "llm_sampling_strategy": SETUP_DEFAULTS["llm_sampling_strategy"],
-            "llm_micro_batch_size": SETUP_DEFAULTS["llm_micro_batch_size"],
-            "max_parallel_llm_requests": SETUP_DEFAULTS["max_parallel_llm_requests"],
-            "randomness_scale": SETUP_DEFAULTS["randomness_scale"],
         },
-        "limits": {
-            **SETUP_LIMITS,
-            "llm_sampling_strategy": sorted(ALLOWED_LLM_SAMPLING_STRATEGIES),
-        },
+        "limits": dict(SETUP_LIMITS),
     }
 
 
@@ -846,6 +919,15 @@ def _json_response(handler: BaseHTTPRequestHandler, data: dict, status: int = 20
     handler.send_header("Access-Control-Allow-Origin", "*")
     handler.end_headers()
     handler.wfile.write(body)
+
+
+def _advisor_debug_log(endpoint: str, game_id: str, latency_ms: float, **fields: Any) -> None:
+    suffix = " ".join(f"{key}={value}" for key, value in fields.items())
+    line = (
+        f"[advisor-debug] endpoint={endpoint} game_id={game_id} latency_ms={latency_ms:.2f}"
+        + (f" {suffix}" if suffix else "")
+    )
+    print(line, flush=True)
 
 
 def _serve_file(handler: BaseHTTPRequestHandler, path: Path) -> None:
@@ -1138,12 +1220,31 @@ class GameHandler(BaseHTTPRequestHandler):
             return True
 
         if (
+            len(parts) == 8
+            and parts[3] == "advisor"
+            and parts[4] == "sessions"
+            and parts[6] == "messages"
+            and parts[7] == "stream"
+        ):
+            self._handle_v1_advisor_session_message_stream(parts[2], parts[5], body)
+            return True
+
+        if (
             len(parts) == 7
             and parts[3] == "advisor"
             and parts[4] == "sessions"
             and parts[6] == "revise"
         ):
             self._handle_v1_advisor_session_revise(parts[2], parts[5], body)
+            return True
+
+        if (
+            len(parts) == 7
+            and parts[3] == "advisor"
+            and parts[4] == "sessions"
+            and parts[6] == "generate-policies"
+        ):
+            self._handle_v1_advisor_session_generate_policies(parts[2], parts[5], body)
             return True
 
         return False
@@ -1192,6 +1293,13 @@ class GameHandler(BaseHTTPRequestHandler):
             return
         with _sessions_lock:
             _sessions[session.game_id] = session
+        with session.action_lock:
+            _ensure_advisor_session_unlocked(
+                session,
+                force_refresh=False,
+                prefer_fallback=True,
+                schedule_live_refresh=True,
+            )
 
         _json_response(
             self,
@@ -1253,6 +1361,14 @@ class GameHandler(BaseHTTPRequestHandler):
                 404,
             )
             return
+
+        meta = profile.get("meta", {}) if isinstance(profile, dict) else {}
+        if isinstance(meta, dict):
+            raw_outlets = meta.get("media_outlets")
+            if not isinstance(raw_outlets, list) or not raw_outlets:
+                meta["media_outlets"] = list(DEFAULT_MEDIA_OUTLETS_BY_CITY.get(normalized, []))
+                profile["meta"] = meta
+
         _json_response(
             self,
             {
@@ -1275,7 +1391,7 @@ class GameHandler(BaseHTTPRequestHandler):
             )
             return
 
-        force_refresh = bool(body.get("force_refresh", False))
+        force_refresh = _parse_bool(body.get("force_refresh", False), default=False)
         provider = body.get("provider")
         model = body.get("model")
         research_mode = body.get("research_mode")
@@ -1402,7 +1518,8 @@ class GameHandler(BaseHTTPRequestHandler):
             _json_response(self, {"error": f"Unknown game_id: {game_id}"}, 404)
             return
 
-        force_refresh = bool(body.get("force_refresh", False))
+        started = time.time()
+        force_refresh = _parse_bool(body.get("force_refresh", False), default=False)
         guidance = str(body.get("constraints", "")).strip() or None
 
         try:
@@ -1411,6 +1528,8 @@ class GameHandler(BaseHTTPRequestHandler):
                     session,
                     force_refresh=force_refresh,
                     guidance=guidance,
+                    prefer_fallback=True,
+                    schedule_live_refresh=True,
                 )
                 payload = advisor_session.to_dict()
         except Exception as exc:
@@ -1432,11 +1551,21 @@ class GameHandler(BaseHTTPRequestHandler):
                 "api_version": "v1",
                 "game_id": game_id,
                 "session": payload,
+                "latency_ms": round((time.time() - started) * 1000, 2),
             },
             201 if force_refresh else 200,
         )
+        _advisor_debug_log(
+            "session_create",
+            game_id,
+            (time.time() - started) * 1000,
+            status="ok",
+            source=payload.get("option_source", "unknown"),
+            session_status=payload.get("session_status", "unknown"),
+        )
 
     def _handle_v1_advisor_session_get(self, game_id: str, advisor_session_id: str) -> None:
+        started = time.time()
         session = _get_session(game_id)
         if session is None:
             _json_response(self, {"error": f"Unknown game_id: {game_id}"}, 404)
@@ -1464,6 +1593,14 @@ class GameHandler(BaseHTTPRequestHandler):
                 "game_id": game_id,
                 "session": payload,
             },
+        )
+        _advisor_debug_log(
+            "session_get",
+            game_id,
+            (time.time() - started) * 1000,
+            status="ok",
+            source=payload.get("option_source", "unknown"),
+            session_status=payload.get("session_status", "unknown"),
         )
 
     def _handle_v1_advisor_session_message(
@@ -1517,6 +1654,7 @@ class GameHandler(BaseHTTPRequestHandler):
             )
             return
 
+        started = time.time()
         try:
             with session.action_lock:
                 advisor_session = _get_advisor_session_unlocked(session, advisor_session_id)
@@ -1567,37 +1705,118 @@ class GameHandler(BaseHTTPRequestHandler):
                     ]
                 else:
                     history = [message.to_dict() for message in advisor_session.global_thread]
-
+                options = list(advisor_session.options)
+                advisor_roster = list(advisor_session.advisors[:3])
                 advisor_session.append_message(
                     role="user",
                     content=question,
                     thread_scope=thread_scope,
                     option_id=option_id,
                 )
+                payload = advisor_session.to_dict()
+            prior_advisor_messages = [
+                {
+                    "id": str(message.get("id", "")),
+                    "content": str(message.get("content", "")),
+                    "speaker_advisor_id": str(message.get("speaker_advisor_id", "")),
+                    "advisor_name": next(
+                        (
+                            advisor.name
+                            for advisor in advisor_roster
+                            if advisor.advisor_id == str(message.get("speaker_advisor_id", ""))
+                        ),
+                        "Advisor",
+                    ),
+                }
+                for message in history
+                if str(message.get("role", "")).strip() == "advisor"
+            ]
 
-                answer = _advisor_chat.answer_question(
-                    game_state=session.turn_manager.game_state,
-                    options=advisor_session.options,
+            generated_summaries: list[str] = []
+            structured_rows: list[dict[str, Any]] = []
+            for advisor in advisor_roster:
+                reply, similarity, attempts = self._build_advisor_stream_reply(
+                    session=session,
+                    advisor=advisor,
                     thread_scope=thread_scope,
                     option_id=option_id,
                     question=question,
                     history=history,
+                    options=options,
+                    prior_advisor_messages=prior_advisor_messages,
+                )
+                summary = str(reply["summary"]).strip()
+                structured = reply["structured"] if isinstance(reply["structured"], dict) else {}
+
+                with session.action_lock:
+                    active_advisor_session = _active_advisor_session_unlocked(session)
+                    if advisor_session_id != active_advisor_session.advisor_session_id:
+                        _json_response(
+                            self,
+                            {
+                                "api_version": "v1",
+                                "game_id": game_id,
+                                "error": "advisor session is stale for the current turn",
+                                "provided_advisor_session_id": advisor_session_id,
+                                "active_advisor_session_id": active_advisor_session.advisor_session_id,
+                                "active_turn_number": active_advisor_session.turn_number,
+                            },
+                            409,
+                        )
+                        return
+                    persisted = active_advisor_session.append_message(
+                        role="advisor",
+                        content=summary,
+                        thread_scope=thread_scope,
+                        option_id=option_id,
+                        structured=structured,
+                        speaker_advisor_id=advisor.advisor_id,
+                    )
+                    payload = active_advisor_session.to_dict()
+                    history.append(persisted.to_dict())
+                prior_advisor_messages.append(
+                    {
+                        "id": persisted.id,
+                        "content": persisted.content,
+                        "speaker_advisor_id": advisor.advisor_id,
+                        "advisor_name": advisor.name,
+                    }
+                )
+                generated_summaries.append(summary)
+                structured_rows.append(structured)
+                _advisor_debug_log(
+                    "message_reply",
+                    game_id,
+                    (time.time() - started) * 1000,
+                    advisor_id=advisor.advisor_id,
+                    stance=structured.get("stance", "unknown"),
+                    similarity=f"{similarity:.3f}",
+                    retries=max(0, attempts - 1),
                 )
 
-                structured = answer.answer if isinstance(answer.answer, dict) else {}
-                summary = str(structured.get("summary", "")).strip()
-                if not summary:
-                    summary = "Advisor response generated."
-
-                advisor_session.append_message(
-                    role="advisor",
-                    content=summary,
-                    thread_scope=thread_scope,
-                    option_id=option_id,
-                    structured=structured,
-                )
-                payload = advisor_session.to_dict()
+            lead_structured = structured_rows[0] if structured_rows else {}
+            answer = {
+                "answer": {
+                    "summary": " | ".join(generated_summaries)[:360],
+                    "drivers": lead_structured.get("drivers", []),
+                    "assumptions": lead_structured.get("assumptions", []),
+                    "tradeoffs": lead_structured.get("tradeoffs", []),
+                    "risk": str(lead_structured.get("risk", "Chamber synthesis risk depends on execution discipline.")),
+                    "confidence": float(lead_structured.get("confidence", 0.62)),
+                },
+                "cited_option_ids": [],
+                "suggested_actions": [
+                    "Generate policies to convert chamber deliberation into implementable options.",
+                ],
+            }
         except Exception as exc:
+            _advisor_debug_log(
+                "message",
+                game_id,
+                (time.time() - started) * 1000,
+                status="error",
+                detail=str(exc)[:120],
+            )
             _json_response(
                 self,
                 {
@@ -1616,9 +1835,355 @@ class GameHandler(BaseHTTPRequestHandler):
                 "api_version": "v1",
                 "game_id": game_id,
                 "session": payload,
-                **answer.to_dict(),
+                "latency_ms": round((time.time() - started) * 1000, 2),
+                **answer,
             },
         )
+        _advisor_debug_log(
+            "message",
+            game_id,
+            (time.time() - started) * 1000,
+            status="ok",
+            source=payload.get("option_source", "unknown"),
+            session_status=payload.get("session_status", "unknown"),
+        )
+
+    @staticmethod
+    def _emit_sse(handler: BaseHTTPRequestHandler, payload: dict[str, Any]) -> None:
+        msg = f"data: {json.dumps(payload)}\n\n"
+        handler.wfile.write(msg.encode("utf-8"))
+        handler.wfile.flush()
+
+    @staticmethod
+    def _iter_word_chunks(text: str, words_per_chunk: int = 2) -> list[str]:
+        words = [w for w in str(text).strip().split() if w]
+        if not words:
+            return []
+        chunks: list[str] = []
+        for idx in range(0, len(words), max(1, words_per_chunk)):
+            chunks.append(" ".join(words[idx : idx + max(1, words_per_chunk)]))
+        return chunks
+
+    def _build_advisor_stream_reply(
+        self,
+        *,
+        session: GameSession,
+        advisor: Any,
+        thread_scope: str,
+        option_id: str | None,
+        question: str,
+        history: list[dict[str, Any]],
+        options: list[Any],
+        prior_advisor_messages: list[dict[str, Any]],
+    ) -> tuple[dict[str, Any], float, int]:
+        reply, similarity, attempts = _advisory_chamber.build_reply_with_retry(
+            game_state=session.turn_manager.game_state,
+            advisor=advisor,
+            question=question,
+            history=history,
+            options=options,
+            prior_advisor_messages=prior_advisor_messages,
+        )
+        structured = reply.structured if isinstance(reply.structured, dict) else {}
+        summary = str(reply.summary or "").strip()
+        if not summary:
+            raise ChamberReplyError("advisor reply summary was empty")
+        return {"summary": summary, "structured": structured}, similarity, attempts
+
+    def _handle_v1_advisor_session_message_stream(
+        self,
+        game_id: str,
+        advisor_session_id: str,
+        body: dict,
+    ) -> None:
+        started = time.time()
+        session = _get_session(game_id)
+        if session is None:
+            _json_response(self, {"error": f"Unknown game_id: {game_id}"}, 404)
+            return
+
+        thread_scope = str(body.get("thread_scope", "global")).strip().lower()
+        if thread_scope not in {"global", "option"}:
+            _json_response(
+                self,
+                {
+                    "api_version": "v1",
+                    "game_id": game_id,
+                    "error": "thread_scope must be 'global' or 'option'",
+                },
+                400,
+            )
+            return
+
+        option_id = body.get("option_id")
+        option_id = str(option_id).strip() if option_id is not None else None
+        if thread_scope == "option" and not option_id:
+            _json_response(
+                self,
+                {
+                    "api_version": "v1",
+                    "game_id": game_id,
+                    "error": "option_id is required when thread_scope='option'",
+                },
+                400,
+            )
+            return
+
+        question = str(body.get("question", "")).strip()
+        if not question:
+            _json_response(
+                self,
+                {
+                    "api_version": "v1",
+                    "game_id": game_id,
+                    "error": "question is required",
+                },
+                400,
+            )
+            return
+
+        with session.action_lock:
+            advisor_session = _get_advisor_session_unlocked(session, advisor_session_id)
+            if advisor_session is None:
+                _json_response(
+                    self,
+                    {
+                        "api_version": "v1",
+                        "game_id": game_id,
+                        "error": f"Unknown advisor_session_id: {advisor_session_id}",
+                    },
+                    404,
+                )
+                return
+            active_advisor_session = _active_advisor_session_unlocked(session)
+            if advisor_session.advisor_session_id != active_advisor_session.advisor_session_id:
+                _json_response(
+                    self,
+                    {
+                        "api_version": "v1",
+                        "game_id": game_id,
+                        "error": "advisor session is stale for the current turn",
+                        "provided_advisor_session_id": advisor_session.advisor_session_id,
+                        "active_advisor_session_id": active_advisor_session.advisor_session_id,
+                        "active_turn_number": active_advisor_session.turn_number,
+                    },
+                    409,
+                )
+                return
+            if thread_scope == "option" and option_id not in {o.id for o in advisor_session.options}:
+                _json_response(
+                    self,
+                    {
+                        "api_version": "v1",
+                        "game_id": game_id,
+                        "error": f"option_id not found in session: {option_id}",
+                    },
+                    400,
+                )
+                return
+            history = (
+                [message.to_dict() for message in advisor_session.option_threads.get(option_id or "", [])]
+                if thread_scope == "option"
+                else [message.to_dict() for message in advisor_session.global_thread]
+            )
+            options = list(advisor_session.options)
+            advisors = list(advisor_session.advisors[:3])
+            mayor_msg = advisor_session.append_message(
+                role="user",
+                content=question,
+                thread_scope=thread_scope,
+                option_id=option_id,
+            )
+            snapshot = advisor_session.to_dict()
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+
+        try:
+            self._emit_sse(
+                self,
+                {
+                    "event_type": "session_snapshot",
+                    "game_id": game_id,
+                    "advisor_session_id": advisor_session_id,
+                    "session": snapshot,
+                    "timestamp": time.time(),
+                },
+            )
+            self._emit_sse(
+                self,
+                {
+                    "event_type": "mayor_message_accepted",
+                    "game_id": game_id,
+                    "advisor_session_id": advisor_session_id,
+                    "message": mayor_msg.to_dict(),
+                    "timestamp": time.time(),
+                },
+            )
+
+            prior_advisor_messages = [
+                {
+                    "id": str(message.get("id", "")),
+                    "content": str(message.get("content", "")),
+                    "speaker_advisor_id": str(message.get("speaker_advisor_id", "")),
+                    "advisor_name": next(
+                        (
+                            advisor.name
+                            for advisor in advisors
+                            if advisor.advisor_id == str(message.get("speaker_advisor_id", ""))
+                        ),
+                        "Advisor",
+                    ),
+                }
+                for message in history
+                if str(message.get("role", "")).strip() == "advisor"
+            ]
+            for advisor in advisors:
+                provisional_id = str(uuid.uuid4())
+                self._emit_sse(
+                    self,
+                    {
+                        "event_type": "advisor_message_start",
+                        "game_id": game_id,
+                        "advisor_session_id": advisor_session_id,
+                        "message_id": provisional_id,
+                        "speaker_advisor_id": advisor.advisor_id,
+                        "done": False,
+                        "timestamp": time.time(),
+                    },
+                )
+                reply, similarity, attempts = self._build_advisor_stream_reply(
+                    session=session,
+                    advisor=advisor,
+                    thread_scope=thread_scope,
+                    option_id=option_id,
+                    question=question,
+                    history=history,
+                    options=options,
+                    prior_advisor_messages=prior_advisor_messages,
+                )
+                summary = str(reply["summary"])
+                structured = reply["structured"] if isinstance(reply["structured"], dict) else {}
+                for chunk in self._iter_word_chunks(summary, words_per_chunk=2):
+                    self._emit_sse(
+                        self,
+                        {
+                            "event_type": "advisor_message_delta",
+                            "game_id": game_id,
+                            "advisor_session_id": advisor_session_id,
+                            "message_id": provisional_id,
+                            "speaker_advisor_id": advisor.advisor_id,
+                            "delta": f"{chunk} ",
+                            "done": False,
+                            "timestamp": time.time(),
+                        },
+                    )
+                    time.sleep(0.04)
+
+                with session.action_lock:
+                    active_advisor_session = _active_advisor_session_unlocked(session)
+                    if active_advisor_session.advisor_session_id != advisor_session_id:
+                        self._emit_sse(
+                            self,
+                            {
+                                "event_type": "error",
+                                "game_id": game_id,
+                                "advisor_session_id": advisor_session_id,
+                                "message": "advisor session became stale during streaming",
+                                "timestamp": time.time(),
+                            },
+                        )
+                        return
+                    persisted = active_advisor_session.append_message(
+                        role="advisor",
+                        content=summary,
+                        thread_scope=thread_scope,
+                        option_id=option_id,
+                        structured=structured,
+                        speaker_advisor_id=advisor.advisor_id,
+                    )
+                    snapshot = active_advisor_session.to_dict()
+                    history.append(persisted.to_dict())
+                    prior_advisor_messages.append(
+                        {
+                            "id": persisted.id,
+                            "content": persisted.content,
+                            "speaker_advisor_id": advisor.advisor_id,
+                            "advisor_name": advisor.name,
+                        }
+                    )
+                self._emit_sse(
+                    self,
+                    {
+                        "event_type": "advisor_message_done",
+                        "game_id": game_id,
+                        "advisor_session_id": advisor_session_id,
+                        "message_id": persisted.id,
+                        "speaker_advisor_id": advisor.advisor_id,
+                        "content": persisted.content,
+                        "structured": persisted.structured,
+                        "done": True,
+                        "timestamp": time.time(),
+                    },
+                )
+                self._emit_sse(
+                    self,
+                    {
+                        "event_type": "session_snapshot",
+                        "game_id": game_id,
+                        "advisor_session_id": advisor_session_id,
+                        "session": snapshot,
+                        "timestamp": time.time(),
+                    },
+                )
+                _advisor_debug_log(
+                    "message_stream_reply",
+                    game_id,
+                    (time.time() - started) * 1000,
+                    advisor_id=advisor.advisor_id,
+                    stance=structured.get("stance", "unknown"),
+                    similarity=f"{similarity:.3f}",
+                    retries=max(0, attempts - 1),
+                )
+
+            self._emit_sse(
+                self,
+                {
+                    "event_type": "done",
+                    "game_id": game_id,
+                    "advisor_session_id": advisor_session_id,
+                    "done": True,
+                    "timestamp": time.time(),
+                },
+            )
+            _advisor_debug_log(
+                "message_stream",
+                game_id,
+                (time.time() - started) * 1000,
+                status="ok",
+                advisors=3,
+            )
+        except Exception as exc:
+            self._emit_sse(
+                self,
+                {
+                    "event_type": "error",
+                    "game_id": game_id,
+                    "advisor_session_id": advisor_session_id,
+                    "message": str(exc),
+                    "timestamp": time.time(),
+                },
+            )
+            _advisor_debug_log(
+                "message_stream",
+                game_id,
+                (time.time() - started) * 1000,
+                status="error",
+                detail=str(exc)[:120],
+            )
 
     def _handle_v1_advisor_session_revise(
         self,
@@ -1626,6 +2191,7 @@ class GameHandler(BaseHTTPRequestHandler):
         advisor_session_id: str,
         body: dict,
     ) -> None:
+        started = time.time()
         session = _get_session(game_id)
         if session is None:
             _json_response(self, {"error": f"Unknown game_id: {game_id}"}, 404)
@@ -1726,11 +2292,21 @@ class GameHandler(BaseHTTPRequestHandler):
                         "risk": "Over-constrained revisions can reduce option diversity.",
                         "confidence": 0.62,
                     },
+                    speaker_advisor_id=(
+                        advisor_session.advisors[0].advisor_id if advisor_session.advisors else None
+                    ),
                 )
                 advisor_session.updated_at = time.time()
                 _sync_mayor_option_cache(session, advisor_session.options)
                 payload = advisor_session.to_dict()
         except Exception as exc:
+            _advisor_debug_log(
+                "revise",
+                game_id,
+                (time.time() - started) * 1000,
+                status="error",
+                detail=str(exc)[:120],
+            )
             _json_response(
                 self,
                 {
@@ -1752,6 +2328,208 @@ class GameHandler(BaseHTTPRequestHandler):
                 "options": [option.to_dict() for option in advisor_session.options],
                 "diff_summary": diff,
             },
+        )
+        _advisor_debug_log(
+            "revise",
+            game_id,
+            (time.time() - started) * 1000,
+            status="ok",
+            source=payload.get("option_source", "unknown"),
+            session_status=payload.get("session_status", "unknown"),
+            mode=mode,
+        )
+
+    def _handle_v1_advisor_session_generate_policies(
+        self,
+        game_id: str,
+        advisor_session_id: str,
+        body: dict,
+    ) -> None:
+        session = _get_session(game_id)
+        if session is None:
+            _json_response(self, {"error": f"Unknown game_id: {game_id}"}, 404)
+            return
+
+        raw_count = body.get("count", 3)
+        try:
+            requested_count = int(raw_count)
+        except (TypeError, ValueError):
+            _json_response(
+                self,
+                {
+                    "api_version": "v1",
+                    "game_id": game_id,
+                    "error": "count must be an integer",
+                },
+                400,
+            )
+            return
+
+        count = max(1, min(3, requested_count))
+        constraints = str(body.get("constraints", "")).strip()
+
+        started = time.time()
+        try:
+            with session.action_lock:
+                advisor_session = _get_advisor_session_unlocked(session, advisor_session_id)
+                if advisor_session is None:
+                    _json_response(
+                        self,
+                        {
+                            "api_version": "v1",
+                            "game_id": game_id,
+                            "error": f"Unknown advisor_session_id: {advisor_session_id}",
+                        },
+                        404,
+                    )
+                    return
+
+                active_advisor_session = _active_advisor_session_unlocked(session)
+                if advisor_session.advisor_session_id != active_advisor_session.advisor_session_id:
+                    _json_response(
+                        self,
+                        {
+                            "api_version": "v1",
+                            "game_id": game_id,
+                            "error": "advisor session is stale for the current turn",
+                            "provided_advisor_session_id": advisor_session.advisor_session_id,
+                            "active_advisor_session_id": active_advisor_session.advisor_session_id,
+                            "active_turn_number": active_advisor_session.turn_number,
+                        },
+                        409,
+                    )
+                    return
+
+                transcript_messages = [
+                    message
+                    for message in advisor_session.global_thread[-16:]
+                    if message.role in {"user", "advisor"} and message.content.strip()
+                ]
+                advisors = list(advisor_session.advisors[:3])
+                transcript = [message.to_dict() for message in transcript_messages]
+                generated_from_message_ids = [message.id for message in transcript_messages]
+
+            generated, summary = _advisory_chamber.generate_policies_from_deliberation(
+                game_state=session.turn_manager.game_state,
+                advisors=advisors,
+                transcript=transcript,
+                constraints=constraints,
+                count=count,
+            )
+            generated = list(generated[:count])
+            if len(generated) < count:
+                raise ValueError("Advisor policy generation returned insufficient options")
+
+            with session.action_lock:
+                active_advisor_session = _active_advisor_session_unlocked(session)
+                if active_advisor_session.advisor_session_id != advisor_session_id:
+                    _json_response(
+                        self,
+                        {
+                            "api_version": "v1",
+                            "game_id": game_id,
+                            "error": "advisor session is stale for the current turn",
+                            "provided_advisor_session_id": advisor_session_id,
+                            "active_advisor_session_id": active_advisor_session.advisor_session_id,
+                            "active_turn_number": active_advisor_session.turn_number,
+                        },
+                        409,
+                    )
+                    return
+                active_advisor_session.options = generated
+                active_advisor_session.option_source = "live"
+                active_advisor_session.session_status = "ready"
+                active_advisor_session.ensure_option_threads()
+                spokesperson = (
+                    active_advisor_session.advisors[0].advisor_id if active_advisor_session.advisors else None
+                )
+                active_advisor_session.append_message(
+                    role="advisor",
+                    content=summary,
+                    thread_scope="global",
+                    option_id=None,
+                    structured={
+                        "summary": summary,
+                        "drivers": [constraints] if constraints else ["Portfolio deliberation synthesis"],
+                        "assumptions": ["Options remain executable within current city capacity."],
+                        "tradeoffs": ["Explicit deliberation grounding can narrow variety but improve implementation fit."],
+                        "risk": "Options may underperform if transcript assumptions are outdated by fast-moving crises.",
+                        "confidence": 0.69,
+                        "stance": "extend",
+                        "portfolio_focus": "cross-portfolio synthesis",
+                        "responds_to_message_ids": generated_from_message_ids[-3:],
+                        "distinctive_risk": "Cross-portfolio execution coordination can fail without weekly checkpointing.",
+                    },
+                    speaker_advisor_id=spokesperson,
+                )
+                active_advisor_session.updated_at = time.time()
+                _sync_mayor_option_cache(session, active_advisor_session.options)
+                payload = active_advisor_session.to_dict()
+
+        except ChamberPolicyUnavailableError as exc:
+            _advisor_debug_log(
+                "generate_policies",
+                game_id,
+                (time.time() - started) * 1000,
+                status="unavailable",
+                reason=str(exc)[:120],
+                constraints=bool(constraints),
+                transcript_messages=len(generated_from_message_ids) if "generated_from_message_ids" in locals() else 0,
+            )
+            _json_response(
+                self,
+                {
+                    "api_version": "v1",
+                    "game_id": game_id,
+                    "error": str(exc),
+                },
+                503,
+            )
+            return
+        except Exception as exc:
+            _advisor_debug_log(
+                "generate_policies",
+                game_id,
+                (time.time() - started) * 1000,
+                status="error",
+                detail=str(exc)[:120],
+                constraints=bool(constraints),
+                transcript_messages=len(generated_from_message_ids) if "generated_from_message_ids" in locals() else 0,
+            )
+            _json_response(
+                self,
+                {
+                    "api_version": "v1",
+                    "game_id": game_id,
+                    "error": "Advisor policy generation failed",
+                    "detail": str(exc),
+                },
+                500,
+            )
+            return
+
+        _json_response(
+            self,
+            {
+                "api_version": "v1",
+                "game_id": game_id,
+                "session": payload,
+                "policies": [option.to_dict() for option in generated],
+                "conclusion_summary": summary,
+                "generated_from_message_ids": generated_from_message_ids,
+                "latency_ms": round((time.time() - started) * 1000, 2),
+            },
+        )
+        _advisor_debug_log(
+            "generate_policies",
+            game_id,
+            (time.time() - started) * 1000,
+            status="ok",
+            source=payload.get("option_source", "unknown"),
+            session_status=payload.get("session_status", "unknown"),
+            policies=len(generated),
+            constraints=bool(constraints),
+            transcript_messages=len(generated_from_message_ids),
         )
 
     def _handle_v1_join(self, game_id: str, body: dict) -> None:
@@ -2122,7 +2900,7 @@ class GameHandler(BaseHTTPRequestHandler):
 def main() -> None:
     _set_default_session()
     port = 8000
-    server = ThreadingHTTPServer(("localhost", port), GameHandler)
+    server = ThreadingHTTPServer(("0.0.0.0", port), GameHandler)
     print(f"City of Agents server running at http://localhost:{port}")
     print("Press Ctrl+C to stop.\n")
     try:

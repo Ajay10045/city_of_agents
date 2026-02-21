@@ -1,5 +1,6 @@
 import type {
   AdvisorAnswerPayload,
+  AdvisorStreamEvent,
   AdvisorSession,
   CounterFrameOption,
   CityProfileGenerateResult,
@@ -14,9 +15,7 @@ import type {
   TurnSummary,
 } from './types'
 
-type GameConfig = Partial<GameSetupConfig> & {
-  election_turn?: number
-}
+type GameConfig = Partial<GameSetupConfig>
 
 type CreateGameResponse = {
   api_version: 'v1'
@@ -97,6 +96,12 @@ type AdvisorSessionEnvelope = {
 type AdvisorReviseEnvelope = AdvisorSessionEnvelope & {
   options: DynamicPolicy[]
   diff_summary: Record<string, unknown>
+}
+
+type AdvisorGeneratePoliciesEnvelope = AdvisorSessionEnvelope & {
+  policies: DynamicPolicy[]
+  conclusion_summary: string
+  generated_from_message_ids: string[]
 }
 
 type CounterFramesResponse = {
@@ -244,6 +249,56 @@ export async function sendAdvisorMessage(
   return (await res.json()) as AdvisorAnswerPayload
 }
 
+export async function streamAdvisorMessage(
+  gameId: string,
+  sessionId: string,
+  payload: {
+    thread_scope: 'global' | 'option'
+    question: string
+    option_id?: string | null
+  },
+  onEvent: (event: AdvisorStreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(
+    `/v1/games/${encodeURIComponent(gameId)}/advisor/sessions/${encodeURIComponent(sessionId)}/messages/stream`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal,
+    },
+  )
+  if (!res.ok || !res.body) {
+    const errBody = await res.json().catch(() => ({}))
+    throw new Error(String(errBody.error ?? `Advisor stream error: ${res.status}`))
+  }
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const chunks = buffer.split('\n\n')
+    buffer = chunks.pop() ?? ''
+    for (const rawChunk of chunks) {
+      const line = rawChunk
+        .split('\n')
+        .find((item) => item.startsWith('data: '))
+      if (!line) continue
+      const jsonPayload = line.slice(6).trim()
+      if (!jsonPayload) continue
+      try {
+        onEvent(JSON.parse(jsonPayload) as AdvisorStreamEvent)
+      } catch {
+        // Ignore malformed SSE payload chunk.
+      }
+    }
+  }
+}
+
 export async function reviseAdvisorOptions(
   gameId: string,
   sessionId: string,
@@ -266,6 +321,29 @@ export async function reviseAdvisorOptions(
     throw new Error(String(errBody.error ?? `Advisor revise error: ${res.status}`))
   }
   return (await res.json()) as AdvisorReviseEnvelope
+}
+
+export async function generateAdvisorPolicies(
+  gameId: string,
+  sessionId: string,
+  payload?: {
+    count?: number
+    constraints?: string
+  },
+): Promise<AdvisorGeneratePoliciesEnvelope> {
+  const res = await fetch(
+    `/v1/games/${encodeURIComponent(gameId)}/advisor/sessions/${encodeURIComponent(sessionId)}/generate-policies`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload ?? {}),
+    },
+  )
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}))
+    throw new Error(String(errBody.error ?? `Advisor generate policies error: ${res.status}`))
+  }
+  return (await res.json()) as AdvisorGeneratePoliciesEnvelope
 }
 
 export async function fetchTurns(gameId: string): Promise<TurnSummary[]> {

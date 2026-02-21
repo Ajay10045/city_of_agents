@@ -132,6 +132,7 @@ export default function AdvisorConsole({
           advisor_session_id: advisorSessionId,
           turn_number: turnNumber + 1,
           options: policies,
+          advisors: current?.advisors ?? [],
           global_thread: [],
           option_threads: optionThreads,
           created_at: Date.now() / 1000,

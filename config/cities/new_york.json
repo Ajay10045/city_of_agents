@@ -17,6 +17,32 @@
         "url": "https://www.nyc.gov/site/operations/performance/mmr.page",
         "snippet": "Service delivery and public trust indicators."
       }
+    ],
+    "media_outlets": [
+      {
+        "id": "city_hall_brief",
+        "name": "City Hall Brief",
+        "lean": "mayor",
+        "bias": 5.0,
+        "sensationalism": 47.0,
+        "trust": 57.0
+      },
+      {
+        "id": "borough_watch",
+        "name": "Borough Watch",
+        "lean": "opposition",
+        "bias": -6.5,
+        "sensationalism": 61.0,
+        "trust": 46.0
+      },
+      {
+        "id": "subway_live",
+        "name": "Subway Live",
+        "lean": "neutral",
+        "bias": -0.5,
+        "sensationalism": 54.0,
+        "trust": 52.0
+      }
     ]
   },
   "identity_groups": [

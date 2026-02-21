@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 import os
+from queue import Empty, Queue
+from threading import Thread
 from typing import TYPE_CHECKING, Any
 
 from llm.context_builder import build_city_context
@@ -38,6 +39,16 @@ Make the 5 policies meaningfully different — cover different domains (economic
 
 
 class MayorAdvisor:
+    _BLOCKED_PROMPT_MARKERS = [
+        "generate exactly",
+        "advisor council roster",
+        "recent chamber discussion",
+        "explicit mayor constraints",
+        "priority constraint:",
+        "revised guidance:",
+        "policy generation brief",
+    ]
+
     def __init__(self) -> None:
         model = os.environ.get("LLM_MODEL", "gpt-4o")
         self._client: LLMClient | None
@@ -87,13 +98,13 @@ class MayorAdvisor:
         out[stat] = round(float(out.get(stat, 0.0)) + delta, 2)
         return out
 
-    def _focus_option_payload(self, focus: str, guidance: str) -> dict[str, Any]:
+    def _focus_option_payload(self, focus: str) -> dict[str, Any]:
         if focus == "fuel":
             return {
                 "name": "Fuel Supply Stabilization Mission",
                 "description": "Create emergency fuel depots, monitored ration windows, and guaranteed transit fuel reserves on critical routes.",
                 "rationale": "Fuel continuity lowers panic pricing and commuter anger while showing executive control over a visible crisis.",
-                "why_now": f"Fuel shortage pressure is dominating daily life and this set must prioritize: {guidance}.",
+                "why_now": "Fuel shortage pressure is dominating daily life and commuters need immediate reliability.",
                 "effects": {
                     "economy": 2.3,
                     "infrastructure": 1.7,
@@ -122,7 +133,7 @@ class MayorAdvisor:
                 "name": "Rapid Jobs Recovery Grid",
                 "description": "Launch a 90-day ward jobs accelerator tied to local maintenance, logistics, and service-delivery contracts.",
                 "rationale": "Visible wage support calms anti-incumbent pressure faster than abstract macro messaging.",
-                "why_now": f"Employment anxiety is central and this option set must prioritize: {guidance}.",
+                "why_now": "Employment anxiety is central and immediate wage visibility can reset momentum.",
                 "effects": {"employment": 3.4, "economy": 1.6, "social_tension": -1.8, "public_trust": 1.1},
                 "campaign_strength": 1.1,
                 "target_groups": ["Workers", "Youth", "Peri-Urban Households"],
@@ -139,7 +150,7 @@ class MayorAdvisor:
                 "name": "Integrity Strike Unit",
                 "description": "Open fast-track anti-corruption investigations with public milestone tracking for top-risk departments.",
                 "rationale": "Narrative control returns when enforcement is visible and time-bound.",
-                "why_now": f"Corruption framing is overpowering governance credibility and the requested focus is: {guidance}.",
+                "why_now": "Corruption framing is overpowering governance credibility, and visible enforcement can reset trust.",
                 "effects": {"corruption": -4.1, "public_trust": 1.8, "law_and_order": 0.9},
                 "campaign_strength": 1.09,
                 "target_groups": ["Middle Class", "Civic Networks", "Small Traders"],
@@ -156,7 +167,7 @@ class MayorAdvisor:
                 "name": "Public Trust Rebuild Compact",
                 "description": "Publish weekly delivery scorecards, grievance closure SLAs, and third-party verification.",
                 "rationale": "Trust rebounds when promises become measurable and public.",
-                "why_now": f"Confidence in governance is the explicit priority: {guidance}.",
+                "why_now": "Confidence in governance is fragile and measurable accountability can rebuild trust quickly.",
                 "effects": {"public_trust": 2.8, "social_tension": -1.2, "media_freedom": 0.6, "corruption": -1.0},
                 "campaign_strength": 1.07,
                 "target_groups": ["Undecided Voters", "Civic Groups", "Students"],
@@ -173,7 +184,7 @@ class MayorAdvisor:
                 "name": "Civic Safety Surge",
                 "description": "Deploy hotspot patrols with community safety councils and rapid-response evidence triage teams.",
                 "rationale": "Visible safety gains can reset fear-driven narrative collapse.",
-                "why_now": f"Public insecurity is the primary concern in this request: {guidance}.",
+                "why_now": "Public insecurity is the top concern and visible safety delivery is needed this turn.",
                 "effects": {"law_and_order": 3.1, "social_tension": -1.5, "public_trust": 0.9},
                 "campaign_strength": 1.08,
                 "target_groups": ["Women Commuters", "Peri-Urban Residents"],
@@ -189,7 +200,7 @@ class MayorAdvisor:
             "name": "Targeted Stabilization Package",
             "description": "Prioritize a focused recovery bundle tied to the city’s most urgent pressure fronts.",
             "rationale": "Narrowing policy bandwidth improves execution under high narrative pressure.",
-            "why_now": f"Option set was intentionally reweighted to your instruction: {guidance}.",
+            "why_now": "Urgent pressure fronts are converging, so a focused stabilization bundle is timely now.",
             "effects": {"economy": 1.5, "public_trust": 1.1, "social_tension": -1.2},
             "campaign_strength": 1.05,
             "target_groups": ["Undecided Voters", "Working Households"],
@@ -291,13 +302,9 @@ class MayorAdvisor:
         if not instruction:
             return fallback
 
-        fallback[0] = self._focus_option_payload(focus, instruction)
+        fallback[0] = self._focus_option_payload(focus)
         for index in range(1, len(fallback)):
             item = fallback[index]
-            item["why_now"] = f"{item.get('why_now', '')} Revised guidance: {instruction}."
-            item["rationale"] = (
-                f"{item.get('rationale', '')} This option was tuned to support the requested focus."
-            )
             if focus == "fuel":
                 item["effects"] = self._shift_effect(item.get("effects", {}), "infrastructure", 0.6)
                 item["effects"] = self._shift_effect(item.get("effects", {}), "social_tension", -0.5)
@@ -325,25 +332,74 @@ class MayorAdvisor:
             return parsed[:5]
         return []
 
+    def _generate_live_options_with_timeout(self, user: str) -> list[DynamicPolicy]:
+        result_q: Queue[list[DynamicPolicy] | Exception] = Queue(maxsize=1)
+
+        def _runner() -> None:
+            try:
+                result_q.put(self._generate_live_options(user))
+            except Exception as exc:
+                result_q.put(exc)
+
+        worker = Thread(target=_runner, daemon=True)
+        worker.start()
+        try:
+            result = result_q.get(timeout=self._timeout_seconds)
+        except Empty:
+            return []
+        if isinstance(result, Exception):
+            return []
+        return result
+
+    @classmethod
+    def _sanitize_text(cls, value: str | None, *, fallback: str, max_len: int) -> str:
+        text = str(value or "").strip()
+        lower = text.lower()
+        for marker in cls._BLOCKED_PROMPT_MARKERS:
+            idx = lower.find(marker)
+            if idx >= 0:
+                text = text[:idx].strip(" .:-")
+                lower = text.lower()
+        text = " ".join(text.split()).strip()
+        if not text:
+            text = fallback
+        return text[:max_len]
+
+    @classmethod
+    def _sanitize_options(cls, options: list[DynamicPolicy]) -> list[DynamicPolicy]:
+        for option in options:
+            option.name = cls._sanitize_text(option.name, fallback="Strategic Action Plan", max_len=120)
+            option.description = cls._sanitize_text(
+                option.description,
+                fallback="Targeted intervention to stabilize key city pressures this turn.",
+                max_len=220,
+            )
+            option.rationale = cls._sanitize_text(
+                option.rationale,
+                fallback="Chosen for near-term impact under current city pressures.",
+                max_len=400,
+            )
+            option.why_now = cls._sanitize_text(
+                option.why_now,
+                fallback=option.rationale,
+                max_len=400,
+            )
+        return options
+
     def _enforce_guidance_marker(
         self, options: list[DynamicPolicy], guidance: str | None
     ) -> list[DynamicPolicy]:
-        marker = str(guidance or "").strip()
-        if not marker or not options:
-            return options
-        lower_marker = marker.lower()
-        if any(
-            lower_marker in f"{option.name} {option.description} {option.why_now} {option.rationale}".lower()
-            for option in options
-        ):
-            return options
-        options[0].why_now = f"{options[0].why_now} Priority constraint: {marker}."
-        options[0].rationale = (
-            f"{options[0].rationale} This recommendation explicitly targets the requested constraint."
-        )[:400]
+        # Keep constraints in generation prompt only; never append prompt text into output fields.
         return options
 
-    def generate_options(self, game_state: "GameState", guidance: str | None = None) -> list[DynamicPolicy]:
+    def generate_fallback_options(self, guidance: str | None = None) -> list[DynamicPolicy]:
+        fallback = self._build_fallback_payload(guidance)
+        options = [DynamicPolicy.from_llm(item, actor="mayor") for item in fallback]
+        return self._sanitize_options(options)
+
+    def generate_options_with_source(
+        self, game_state: "GameState", guidance: str | None = None
+    ) -> tuple[list[DynamicPolicy], str]:
         context = build_city_context(game_state)
         user = f"City state:\n{context}\n\nGenerate 5 mayor policy options for this turn."
         if guidance:
@@ -354,16 +410,13 @@ class MayorAdvisor:
                 "Mandatory: at least 3 of 5 options must explicitly reflect these constraints in why_now."
             )
         if self._client is not None and not self._disable_live:
-            try:
-                with ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(self._generate_live_options, user)
-                    generated = future.result(timeout=self._timeout_seconds)
-                if generated:
-                    return self._enforce_guidance_marker(generated, guidance)
-            except FutureTimeoutError:
-                pass
-            except Exception:
-                pass
+            generated = self._generate_live_options_with_timeout(user)
+            if generated:
+                clean = self._enforce_guidance_marker(generated, guidance)
+                return self._sanitize_options(clean), "live"
 
-        fallback = self._build_fallback_payload(guidance)
-        return [DynamicPolicy.from_llm(item, actor="mayor") for item in fallback]
+        return self.generate_fallback_options(guidance), "fallback"
+
+    def generate_options(self, game_state: "GameState", guidance: str | None = None) -> list[DynamicPolicy]:
+        options, _ = self.generate_options_with_source(game_state, guidance=guidance)
+        return options
