@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from llm.llm_client import LLMClient
 from llm.context_builder import build_city_context
 from llm.dynamic_policy import DynamicPolicy
+from llm.llm_client import LLMClient
 
 if TYPE_CHECKING:
     from core.game_state import GameState
@@ -45,41 +45,166 @@ class MayorAdvisor:
             self._client = LLMClient(model=model)
         except Exception:
             self._client = None
-        key = os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY") or ""
+        key = (
+            os.environ.get("LLM_API_KEY")
+            or os.environ.get("OPENAI_API_KEY")
+            or os.environ.get("ANTHROPIC_API_KEY")
+            or ""
+        )
         self._disable_live = key.startswith("test-")
-        self._timeout_seconds = max(1.0, float(os.environ.get("MAYOR_ADVISOR_TIMEOUT_SECONDS", "6.0")))
+        self._timeout_seconds = max(
+            1.0,
+            float(os.environ.get("MAYOR_ADVISOR_TIMEOUT_SECONDS", "6.0")),
+        )
 
-    def _generate_live_options(self, user: str) -> list[DynamicPolicy]:
-        if self._client is None or self._disable_live:
-            return []
-        data = self._client.chat(_SYSTEM, user)
-        raw_policies = data.get("policies", [])
-        parsed = [DynamicPolicy.from_llm(p, actor="mayor") for p in raw_policies[:5]]
-        if len(parsed) >= 5:
-            return parsed[:5]
-        return []
+    @staticmethod
+    def _normalize_text(value: str | None) -> str:
+        return str(value or "").strip().lower()
 
-    def generate_options(self, game_state: "GameState", guidance: str | None = None) -> list[DynamicPolicy]:
-        context = build_city_context(game_state)
-        user = f"City state:\n{context}\n\nGenerate 5 mayor policy options for this turn."
-        if guidance:
-            user += (
-                "\n\nAdditional user constraints for this option set:\n"
-                f"{guidance}\n"
-                "Respect these constraints while still returning a balanced strategic set."
-            )
-        if self._client is not None and not self._disable_live:
-            try:
-                with ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(self._generate_live_options, user)
-                    generated = future.result(timeout=self._timeout_seconds)
-                if generated:
-                    return generated
-            except FutureTimeoutError:
-                pass
-            except Exception:
-                pass
+    @classmethod
+    def _detect_focus(cls, guidance: str | None) -> str:
+        text = cls._normalize_text(guidance)
+        if not text:
+            return "general"
+        if any(
+            token in text
+            for token in ("fuel", "petrol", "diesel", "energy shortage", "power cut", "blackout")
+        ):
+            return "fuel"
+        if any(token in text for token in ("job", "employment", "unemployment", "layoff", "wages")):
+            return "jobs"
+        if any(token in text for token in ("corruption", "bribe", "kickback", "audit", "scam", "procurement")):
+            return "corruption"
+        if any(token in text for token in ("trust", "credibility", "confidence", "legitimacy")):
+            return "trust"
+        if any(token in text for token in ("safety", "crime", "security", "law and order", "violence")):
+            return "safety"
+        return "general"
 
+    @staticmethod
+    def _shift_effect(base: dict[str, float], stat: str, delta: float) -> dict[str, float]:
+        out = dict(base)
+        out[stat] = round(float(out.get(stat, 0.0)) + delta, 2)
+        return out
+
+    def _focus_option_payload(self, focus: str, guidance: str) -> dict[str, Any]:
+        if focus == "fuel":
+            return {
+                "name": "Fuel Supply Stabilization Mission",
+                "description": "Create emergency fuel depots, monitored ration windows, and guaranteed transit fuel reserves on critical routes.",
+                "rationale": "Fuel continuity lowers panic pricing and commuter anger while showing executive control over a visible crisis.",
+                "why_now": f"Fuel shortage pressure is dominating daily life and this set must prioritize: {guidance}.",
+                "effects": {
+                    "economy": 2.3,
+                    "infrastructure": 1.7,
+                    "social_tension": -2.6,
+                    "public_trust": 1.4,
+                    "environment": -0.6,
+                },
+                "campaign_strength": 1.11,
+                "target_groups": ["Commuters", "Informal Workers", "Small Businesses"],
+                "expected_stat_delta": {"economy": 2.0, "social_tension": -2.4, "public_trust": 1.2},
+                "opposition_counter_risk": 0.56,
+                "narrative_fronts_impacted": {"services": 3.2, "economy": 2.4, "public_trust": 1.5},
+                "confidence": 0.66,
+                "assumptions": [
+                    "Fuel procurement contracts can be executed quickly",
+                    "Distribution points are monitored for leakage",
+                ],
+                "tradeoffs": [
+                    "Requires fiscal buffer and anti-hoarding enforcement",
+                    "Environmental gains can slow if diesel dependence rises",
+                ],
+                "counter_narrative_risk": "Opposition may call this ration optics if black-market prices remain high.",
+            }
+        if focus == "jobs":
+            return {
+                "name": "Rapid Jobs Recovery Grid",
+                "description": "Launch a 90-day ward jobs accelerator tied to local maintenance, logistics, and service-delivery contracts.",
+                "rationale": "Visible wage support calms anti-incumbent pressure faster than abstract macro messaging.",
+                "why_now": f"Employment anxiety is central and this option set must prioritize: {guidance}.",
+                "effects": {"employment": 3.4, "economy": 1.6, "social_tension": -1.8, "public_trust": 1.1},
+                "campaign_strength": 1.1,
+                "target_groups": ["Workers", "Youth", "Peri-Urban Households"],
+                "expected_stat_delta": {"employment": 3.0, "social_tension": -1.7},
+                "opposition_counter_risk": 0.58,
+                "narrative_fronts_impacted": {"economy": 3.1, "social_cohesion": 1.6},
+                "confidence": 0.64,
+                "assumptions": ["Contracting pipeline can absorb temporary labor quickly"],
+                "tradeoffs": ["Budget strain if revenue recovery lags"],
+                "counter_narrative_risk": "Opposition may frame this as pre-election hiring theatre.",
+            }
+        if focus == "corruption":
+            return {
+                "name": "Integrity Strike Unit",
+                "description": "Open fast-track anti-corruption investigations with public milestone tracking for top-risk departments.",
+                "rationale": "Narrative control returns when enforcement is visible and time-bound.",
+                "why_now": f"Corruption framing is overpowering governance credibility and the requested focus is: {guidance}.",
+                "effects": {"corruption": -4.1, "public_trust": 1.8, "law_and_order": 0.9},
+                "campaign_strength": 1.09,
+                "target_groups": ["Middle Class", "Civic Networks", "Small Traders"],
+                "expected_stat_delta": {"corruption": -3.8, "public_trust": 1.6},
+                "opposition_counter_risk": 0.49,
+                "narrative_fronts_impacted": {"corruption": 3.5, "public_trust": 1.7},
+                "confidence": 0.68,
+                "assumptions": ["Investigative agencies maintain procedural independence"],
+                "tradeoffs": ["Short-term administrative slowdown while audits run"],
+                "counter_narrative_risk": "Opposition may call this selective prosecution.",
+            }
+        if focus == "trust":
+            return {
+                "name": "Public Trust Rebuild Compact",
+                "description": "Publish weekly delivery scorecards, grievance closure SLAs, and third-party verification.",
+                "rationale": "Trust rebounds when promises become measurable and public.",
+                "why_now": f"Confidence in governance is the explicit priority: {guidance}.",
+                "effects": {"public_trust": 2.8, "social_tension": -1.2, "media_freedom": 0.6, "corruption": -1.0},
+                "campaign_strength": 1.07,
+                "target_groups": ["Undecided Voters", "Civic Groups", "Students"],
+                "expected_stat_delta": {"public_trust": 2.4, "social_tension": -1.0},
+                "opposition_counter_risk": 0.52,
+                "narrative_fronts_impacted": {"public_trust": 3.0, "social_cohesion": 1.1},
+                "confidence": 0.62,
+                "assumptions": ["Departments can report clean weekly metrics"],
+                "tradeoffs": ["Exposes missed targets in the short term"],
+                "counter_narrative_risk": "Opposition may call this dashboard governance without structural reform.",
+            }
+        if focus == "safety":
+            return {
+                "name": "Civic Safety Surge",
+                "description": "Deploy hotspot patrols with community safety councils and rapid-response evidence triage teams.",
+                "rationale": "Visible safety gains can reset fear-driven narrative collapse.",
+                "why_now": f"Public insecurity is the primary concern in this request: {guidance}.",
+                "effects": {"law_and_order": 3.1, "social_tension": -1.5, "public_trust": 0.9},
+                "campaign_strength": 1.08,
+                "target_groups": ["Women Commuters", "Peri-Urban Residents"],
+                "expected_stat_delta": {"law_and_order": 2.7, "social_tension": -1.3},
+                "opposition_counter_risk": 0.53,
+                "narrative_fronts_impacted": {"safety": 3.1, "social_cohesion": 1.0},
+                "confidence": 0.63,
+                "assumptions": ["Force deployment remains disciplined and transparent"],
+                "tradeoffs": ["Operational overtime costs increase"],
+                "counter_narrative_risk": "Opposition may frame this as selective ward optics.",
+            }
+        return {
+            "name": "Targeted Stabilization Package",
+            "description": "Prioritize a focused recovery bundle tied to the city’s most urgent pressure fronts.",
+            "rationale": "Narrowing policy bandwidth improves execution under high narrative pressure.",
+            "why_now": f"Option set was intentionally reweighted to your instruction: {guidance}.",
+            "effects": {"economy": 1.5, "public_trust": 1.1, "social_tension": -1.2},
+            "campaign_strength": 1.05,
+            "target_groups": ["Undecided Voters", "Working Households"],
+            "expected_stat_delta": {"economy": 1.3, "social_tension": -1.0},
+            "opposition_counter_risk": 0.57,
+            "narrative_fronts_impacted": {"services": 1.4, "public_trust": 1.3, "economy": 1.2},
+            "confidence": 0.58,
+            "assumptions": ["Execution bottlenecks are actively managed"],
+            "tradeoffs": ["Less diversification across issue fronts this turn"],
+            "counter_narrative_risk": "Opposition may frame this as tactical short-termism.",
+        }
+
+    def _build_fallback_payload(self, guidance: str | None = None) -> list[dict[str, Any]]:
+        focus = self._detect_focus(guidance)
+        instruction = str(guidance or "").strip()
         fallback = [
             {
                 "name": "Emergency Employment Drive",
@@ -162,4 +287,83 @@ class MayorAdvisor:
                 "counter_narrative_risk": "Opposition may call this bureaucratic theater.",
             },
         ]
+
+        if not instruction:
+            return fallback
+
+        fallback[0] = self._focus_option_payload(focus, instruction)
+        for index in range(1, len(fallback)):
+            item = fallback[index]
+            item["why_now"] = f"{item.get('why_now', '')} Revised guidance: {instruction}."
+            item["rationale"] = (
+                f"{item.get('rationale', '')} This option was tuned to support the requested focus."
+            )
+            if focus == "fuel":
+                item["effects"] = self._shift_effect(item.get("effects", {}), "infrastructure", 0.6)
+                item["effects"] = self._shift_effect(item.get("effects", {}), "social_tension", -0.5)
+            elif focus == "jobs":
+                item["effects"] = self._shift_effect(item.get("effects", {}), "employment", 0.7)
+                item["effects"] = self._shift_effect(item.get("effects", {}), "economy", 0.4)
+            elif focus == "corruption":
+                item["effects"] = self._shift_effect(item.get("effects", {}), "corruption", -0.9)
+                item["effects"] = self._shift_effect(item.get("effects", {}), "public_trust", 0.5)
+            elif focus == "trust":
+                item["effects"] = self._shift_effect(item.get("effects", {}), "public_trust", 0.8)
+            elif focus == "safety":
+                item["effects"] = self._shift_effect(item.get("effects", {}), "law_and_order", 0.8)
+                item["effects"] = self._shift_effect(item.get("effects", {}), "social_tension", -0.4)
+
+        return fallback
+
+    def _generate_live_options(self, user: str) -> list[DynamicPolicy]:
+        if self._client is None or self._disable_live:
+            return []
+        data = self._client.chat(_SYSTEM, user)
+        raw_policies = data.get("policies", [])
+        parsed = [DynamicPolicy.from_llm(p, actor="mayor") for p in raw_policies[:5]]
+        if len(parsed) >= 5:
+            return parsed[:5]
+        return []
+
+    def _enforce_guidance_marker(
+        self, options: list[DynamicPolicy], guidance: str | None
+    ) -> list[DynamicPolicy]:
+        marker = str(guidance or "").strip()
+        if not marker or not options:
+            return options
+        lower_marker = marker.lower()
+        if any(
+            lower_marker in f"{option.name} {option.description} {option.why_now} {option.rationale}".lower()
+            for option in options
+        ):
+            return options
+        options[0].why_now = f"{options[0].why_now} Priority constraint: {marker}."
+        options[0].rationale = (
+            f"{options[0].rationale} This recommendation explicitly targets the requested constraint."
+        )[:400]
+        return options
+
+    def generate_options(self, game_state: "GameState", guidance: str | None = None) -> list[DynamicPolicy]:
+        context = build_city_context(game_state)
+        user = f"City state:\n{context}\n\nGenerate 5 mayor policy options for this turn."
+        if guidance:
+            user += (
+                "\n\nAdditional user constraints for this option set:\n"
+                f"{guidance}\n"
+                "Respect these constraints while still returning a balanced strategic set.\n"
+                "Mandatory: at least 3 of 5 options must explicitly reflect these constraints in why_now."
+            )
+        if self._client is not None and not self._disable_live:
+            try:
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(self._generate_live_options, user)
+                    generated = future.result(timeout=self._timeout_seconds)
+                if generated:
+                    return self._enforce_guidance_marker(generated, guidance)
+            except FutureTimeoutError:
+                pass
+            except Exception:
+                pass
+
+        fallback = self._build_fallback_payload(guidance)
         return [DynamicPolicy.from_llm(item, actor="mayor") for item in fallback]

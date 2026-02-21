@@ -318,7 +318,15 @@ export async function streamTurn(
   })
   if (!actionRes.ok) {
     const errBody = await actionRes.json().catch(() => ({}))
-    throw new Error(String(errBody.error ?? `Action error: ${actionRes.status}`))
+    const err = new Error(String(errBody.error ?? `Action error: ${actionRes.status}`)) as Error & {
+      code?: number
+      details?: Record<string, unknown>
+    }
+    err.code = actionRes.status
+    if (errBody && typeof errBody === 'object') {
+      err.details = errBody as Record<string, unknown>
+    }
+    throw err
   }
   await actionRes.json() as ActionAcceptedResponse
 
