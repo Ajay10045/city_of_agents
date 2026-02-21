@@ -47,6 +47,7 @@ export default function AdvisoryChamberPanel({
   const [loadingSession, setLoadingSession] = useState(false)
   const [streaming, setStreaming] = useState(false)
   const [generateBusy, setGenerateBusy] = useState(false)
+  const [generateError, setGenerateError] = useState<string | null>(null)
   const [optimisticMayorMessage, setOptimisticMayorMessage] = useState<AdvisorMessage | null>(null)
   const [streamDrafts, setStreamDrafts] = useState<AdvisorMessage[]>([])
   const streamAbortRef = useRef<AbortController | null>(null)
@@ -246,6 +247,7 @@ export default function AdvisoryChamberPanel({
   const onSendQuestion = async () => {
     if (!gameId || !session || !question.trim() || streaming) return
     onErrorRef.current(null)
+    setGenerateError(null)
     const trimmedQuestion = question.trim()
     setQuestion('')
     setOptimisticMayorMessage({
@@ -312,6 +314,7 @@ export default function AdvisoryChamberPanel({
     if (!gameId || !session || generateBusy || streaming) return
     setGenerateBusy(true)
     onErrorRef.current(null)
+    setGenerateError(null)
     try {
       const payload = await generateAdvisorPolicies(gameId, session.advisor_session_id, {
         count: 3,
@@ -334,6 +337,13 @@ export default function AdvisoryChamberPanel({
         } catch {
           // Continue with error handling below.
         }
+      }
+      if (message.includes('Generated policies failed quality checks')) {
+        const friendly =
+          'Policy generation failed quality checks. Please ask advisors a more specific direction and retry.'
+        setGenerateError(friendly)
+        onErrorRef.current(friendly)
+        return
       }
       onErrorRef.current(message)
     } finally {
@@ -430,6 +440,7 @@ export default function AdvisoryChamberPanel({
         <button onClick={onGeneratePolicies} disabled={generateBusy || disabled || !session || streaming}>
           {generateBusy ? 'Generating…' : 'Generate Policy'}
         </button>
+        {generateError && <div className="advisor-generate-error">{generateError}</div>}
       </div>
     </section>
   )
