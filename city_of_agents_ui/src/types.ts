@@ -1,17 +1,8 @@
-export type SamplingStrategy = 'stratified' | 'uniform' | 'none'
-
 export type GameSetupConfig = {
   seed?: number
   turns: number
-  turns_to_election: number
   city_id: string
-  population_scale: number
   agent_count: number
-  llm_panel_size: number
-  llm_sampling_strategy: SamplingStrategy
-  llm_micro_batch_size: number
-  max_parallel_llm_requests: number
-  randomness_scale: number
 }
 
 export type SetupOptions = {
@@ -25,25 +16,13 @@ export type SetupOptions = {
     last_error?: string | null
   }>
   defaults: {
-    turns_to_election: number
+    turns: number
     city_id: string
-    population_scale: number
     agent_count: number
-    llm_panel_size: number
-    llm_sampling_strategy: SamplingStrategy
-    llm_micro_batch_size: number
-    max_parallel_llm_requests: number
-    randomness_scale: number
   }
   limits: {
-    turns_to_election: { min: number; max: number }
-    population_scale: { min: number; max: number }
+    turns: { min: number; max: number }
     agent_count: { min: number; max: number }
-    llm_panel_size: { min: number; max: number }
-    llm_sampling_strategy: SamplingStrategy[]
-    llm_micro_batch_size: { min: number; max: number }
-    max_parallel_llm_requests: { min: number; max: number }
-    randomness_scale: { min: number; max: number }
   }
 }
 
@@ -60,6 +39,14 @@ export type StateSnapshot = {
     bias: number
     sensationalism: number
     trust: number
+    outlets?: Array<{
+      outlet_id: string
+      name: string
+      lean: 'mayor' | 'opposition' | 'neutral' | string
+      bias: number
+      sensationalism: number
+      trust: number
+    }>
   }
   campaign_strength: {
     mayor: number
@@ -139,6 +126,15 @@ export type DynamicPolicy = {
     happiness?: number
     radicalization?: number
   }>
+  deliberation_trace?: {
+    mayor_direction_used?: string
+    advisor_inputs_used?: Array<{
+      advisor_id: string
+      portfolio: string
+      point: string
+    }>
+    disagreement_resolved?: string
+  }
 }
 
 export type CounterFrameOption = {
@@ -161,6 +157,9 @@ export type AdvisorMessage = {
   thread_scope: 'global' | 'option' | string
   option_id: string | null
   timestamp: number
+  speaker_advisor_id?: string | null
+  is_streaming?: boolean
+  is_pending?: boolean
   structured?: {
     summary?: string
     drivers?: string[]
@@ -168,18 +167,68 @@ export type AdvisorMessage = {
     tradeoffs?: string[]
     risk?: string
     confidence?: number
+    stance?: 'agree' | 'challenge' | 'extend' | string
+    portfolio_focus?: string
+    responds_to_message_ids?: string[]
+    distinctive_risk?: string
   }
+}
+
+export type AdvisorPersona = {
+  advisor_id: string
+  name: string
+  portfolios: string[]
+  style: string
 }
 
 export type AdvisorSession = {
   advisor_session_id: string
   turn_number: number
   options: DynamicPolicy[]
+  advisors: AdvisorPersona[]
   global_thread: AdvisorMessage[]
   option_threads: Record<string, AdvisorMessage[]>
+  session_status?: 'ready' | 'refining' | 'error' | string
+  option_source?: 'live' | 'fallback' | string
   created_at: number
   updated_at: number
 }
+
+export type AdvisorStreamEvent =
+  | {
+      event_type: 'session_snapshot'
+      game_id: string
+      advisor_session_id: string
+      session: AdvisorSession
+      timestamp: number
+    }
+  | {
+      event_type: 'mayor_message_accepted'
+      game_id: string
+      advisor_session_id: string
+      message: AdvisorMessage
+      timestamp: number
+    }
+  | {
+      event_type: 'advisor_message_start' | 'advisor_message_delta' | 'advisor_message_done'
+      game_id: string
+      advisor_session_id: string
+      message_id: string
+      speaker_advisor_id: string
+      delta?: string
+      content?: string
+      structured?: AdvisorMessage['structured']
+      done?: boolean
+      timestamp: number
+    }
+  | {
+      event_type: 'done' | 'error'
+      game_id: string
+      advisor_session_id: string
+      done?: boolean
+      message?: string
+      timestamp: number
+    }
 
 export type AdvisorAnswerPayload = {
   answer: {
@@ -257,6 +306,8 @@ export type ElectionResult = {
 export type MediaNarrativeCard = {
   headline: string
   source: string
+  outlet_id?: string
+  city_id?: string
   lean: 'mayor' | 'opposition' | 'neutral'
   virality: number
   trust_impact: number

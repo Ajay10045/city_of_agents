@@ -315,7 +315,17 @@ class CitizenDebates:
             group = game_state.identity_groups.get(agent.group_id)
             group_name = group.name if group else agent.group_id
             speaker = self._speaker_name(agent, game_state)
-            if idx % 2 == 0:
+            if agent.alignment >= 20 or (agent.happiness >= 58 and agent.trust_in_government >= 50):
+                line = (
+                    f"{local_token}, {mayor_action.name} finally looks practical; if they deliver on {pressure}, people here will back it."
+                )
+                sentiment = "hopeful"
+            elif agent.radicalization >= 65 or agent.alignment <= -35:
+                line = (
+                    f"{local_token}, {opp_action.name} is catching fire on my street because folks think City Hall keeps missing basic {pressure} fixes."
+                )
+                sentiment = "angry"
+            elif idx % 2 == 0:
                 line = (
                     f"{local_token}, {mayor_action.name} sounds promising, but on my lane we still feel {pressure} pain and {event_focus} is what everyone is discussing."
                 )
@@ -337,6 +347,46 @@ class CitizenDebates:
                     tags=["street", pressure, "trust", "narrative"],
                 )
             )
+        return self._ensure_sentiment_mix(chatter, game_state)
+
+    @staticmethod
+    def _ensure_sentiment_mix(
+        chatter: list[StreetChatterItem],
+        game_state: "GameState",
+    ) -> list[StreetChatterItem]:
+        if len(chatter) < 2:
+            return chatter
+
+        stats = game_state.city_stats
+        extreme_state = (
+            stats.social_tension >= 78
+            or stats.public_trust <= 26
+            or stats.economy <= 28
+            or stats.law_and_order <= 28
+        )
+        if extreme_state:
+            return chatter
+
+        positive = {"supportive", "hopeful"}
+        has_positive = any(item.sentiment in positive for item in chatter)
+        has_non_positive = any(item.sentiment not in positive for item in chatter)
+
+        if not has_positive:
+            candidate = max(chatter, key=lambda item: (item.heat, len(item.tags)))
+            candidate.sentiment = "hopeful"
+            candidate.line = (
+                candidate.line.rstrip(".")
+                + "; still, people think this can improve if delivery stays consistent."
+            )[:220]
+
+        if not has_non_positive:
+            candidate = min(chatter, key=lambda item: (item.heat, len(item.tags)))
+            candidate.sentiment = "skeptical"
+            candidate.line = (
+                candidate.line.rstrip(".")
+                + "; others in the neighborhood are cautious and want proof next turn."
+            )[:220]
+
         return chatter
 
     def generate_street_chatter(
@@ -351,9 +401,13 @@ class CitizenDebates:
             return []
 
         limit = max(3, min(14, int(limit)))
-        configured_panel_size = int(max(0, game_state.simulation_profile.get("llm_panel_size", 0)))
-        panel_size = configured_panel_size or min(120, len(game_state.agents))
-        panel_agents = self._sample_panel_agents(game_state, panel_size)
+        is_v1_session = str(game_state.simulation_profile.get("api_version", "")).strip().lower() == "v1"
+        if is_v1_session:
+            panel_agents = list(game_state.agents)
+        else:
+            configured_panel_size = int(max(0, game_state.simulation_profile.get("llm_panel_size", 0)))
+            panel_size = configured_panel_size or min(120, len(game_state.agents))
+            panel_agents = self._sample_panel_agents(game_state, panel_size)
         speakers = self._pick_speakers(panel_agents, game_state, limit)
         if not speakers:
             return []
@@ -427,7 +481,7 @@ class CitizenDebates:
                             )
                         )
                     if normalized:
-                        return normalized
+                        return self._ensure_sentiment_mix(normalized, game_state)
             except Exception:
                 pass
 

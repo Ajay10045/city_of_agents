@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import asdict
 from typing import Any, Iterable, Protocol
 
@@ -15,6 +16,7 @@ from llm.mayor_advisor import MayorAdvisor
 from llm.opposition_agent import OppositionAgent
 from llm.citizen_debates import CitizenDebates
 from llm.event_generator import EventGenerator
+from llm.agent_reaction_engine import AgentReactionEngine
 from llm.dynamic_policy import DynamicPolicy
 
 
@@ -78,6 +80,7 @@ class TurnManager:
         opposition_agent: OppositionAgentPort | None = None,
         citizen_debates: CitizenDebatesPort | None = None,
         event_generator: EventGeneratorPort | None = None,
+        agent_reaction_engine: AgentReactionEngine | None = None,
     ) -> None:
         self.game_state = game_state
         self.agent_engine = agent_engine
@@ -90,6 +93,7 @@ class TurnManager:
         self.opposition_agent = opposition_agent or OppositionAgent()
         self.citizen_debates = citizen_debates or CitizenDebates()
         self.event_generator = event_generator or EventGenerator()
+        self.agent_reaction_engine = agent_reaction_engine or AgentReactionEngine()
 
         # Cache of current turn's mayor options (id -> DynamicPolicy)
         self._cached_mayor_options: dict[str, DynamicPolicy] = {}
@@ -158,6 +162,32 @@ class TurnManager:
             opposition_group_effects=opposition_action.group_effects,
             rumor_pressure=rumor_pressure,
         )
+
+    def _uses_llm_only_agent_reactions(self) -> bool:
+        return str(self.game_state.simulation_profile.get("api_version", "")).strip().lower() == "v1"
+
+    def _apply_agent_reactions(
+        self,
+        mayor_action: DynamicPolicy,
+        opposition_action: DynamicPolicy,
+        rumor_pressure: float,
+        combined_group_effects: list[dict[str, Any]],
+        campaign_delta: float,
+    ) -> dict[str, Any]:
+        if self._uses_llm_only_agent_reactions():
+            return self.agent_reaction_engine.apply_turn_reactions(
+                game_state=self.game_state,
+                mayor_action=mayor_action,
+                opposition_action=opposition_action,
+                rumor_pressure=rumor_pressure,
+                group_effects=combined_group_effects,
+            )
+
+        # Legacy deterministic flow for non-v1 sessions.
+        self.agent_engine.update_happiness(self.game_state, combined_group_effects, rumor_pressure)
+        self.agent_engine.update_radicalization(self.game_state, rumor_pressure)
+        self.agent_engine.propagate_alignment(self.game_state, campaign_delta, rumor_pressure)
+        return self._run_agent_impact_pass(mayor_action, opposition_action, rumor_pressure)
 
     # ── Public API ─────────────────────────────────────────────────────────
 
@@ -342,6 +372,7 @@ class TurnManager:
         if turn > self.game_state.total_turns:
             return {"error": "Game is already over"}
 
+        turn_state_backup = copy.deepcopy(self.game_state)
         self.game_state.turn_number = turn
         pre_stats = self.game_state.city_stats.as_dict()
 
@@ -367,7 +398,7 @@ class TurnManager:
             {},
         )
 
-        # ── Formula-based agent updates ─────────────────────────────────────
+        # ── Agent updates ───────────────────────────────────────────────────
         avg_rad = self.game_state.average_agent_field("radicalization")
         rumor_chance = self.media_engine.rumor_spread_chance(self.game_state.media_state, avg_rad)
         rumor_pressure = rumor_chance
@@ -379,12 +410,18 @@ class TurnManager:
         combined_group_effects.extend(opp_resolution.group_effects)
         combined_group_effects.extend(long_term_resolution.group_effects)
 
-        self.agent_engine.update_happiness(self.game_state, combined_group_effects, rumor_pressure)
-        self.agent_engine.update_radicalization(self.game_state, rumor_pressure)
-
         campaign_delta = mayor_resolution.campaign_strength - opp_resolution.campaign_strength
-        self.agent_engine.propagate_alignment(self.game_state, campaign_delta, rumor_pressure)
-        agent_impact = self._run_agent_impact_pass(mayor_policy, opp_policy, rumor_pressure)
+        try:
+            agent_impact = self._apply_agent_reactions(
+                mayor_action=mayor_policy,
+                opposition_action=opp_policy,
+                rumor_pressure=rumor_pressure,
+                combined_group_effects=combined_group_effects,
+                campaign_delta=campaign_delta,
+            )
+        except Exception as exc:
+            self.game_state = turn_state_backup
+            return {"error": f"Turn aborted: {exc}"}
         self._apply_counter_frame_effects(counter_frame)
 
         # ── LLM-generated event ─────────────────────────────────────────────
@@ -425,7 +462,7 @@ class TurnManager:
         debate_results = self.citizen_debates.run_debates(
             self.game_state, mayor_policy, opp_policy, all_triggered
         )
-        # Apply debate deltas additively on top of formula-based updates
+        # Apply debate deltas additively on top of agent reaction updates.
         for dr in debate_results:
             for agent in self.game_state.agents:
                 if agent.group_id == dr.group_id:
@@ -450,6 +487,7 @@ class TurnManager:
             triggered_events=all_triggered,
             dominant_fronts=list(agent_impact.get("dominant_fronts", [])),
             media_state=self.game_state.media_state,
+            city_id=str(self.game_state.simulation_profile.get("city_id", "")),
         )
 
         # ── Popularity recalculation ────────────────────────────────────────
@@ -598,6 +636,7 @@ class TurnManager:
             yield {"type": "error", "message": "Game is already over"}
             return
 
+        turn_state_backup = copy.deepcopy(self.game_state)
         self.game_state.turn_number = turn
         pre_stats = self.game_state.city_stats.as_dict()
 
@@ -649,11 +688,19 @@ class TurnManager:
             + opp_resolution.group_effects
             + long_term_resolution.group_effects
         )
-        self.agent_engine.update_happiness(self.game_state, combined_group_effects, rumor_pressure)
-        self.agent_engine.update_radicalization(self.game_state, rumor_pressure)
         campaign_delta = mayor_resolution.campaign_strength - opp_resolution.campaign_strength
-        self.agent_engine.propagate_alignment(self.game_state, campaign_delta, rumor_pressure)
-        agent_impact = self._run_agent_impact_pass(mayor_policy, opp_policy, rumor_pressure)
+        try:
+            agent_impact = self._apply_agent_reactions(
+                mayor_action=mayor_policy,
+                opposition_action=opp_policy,
+                rumor_pressure=rumor_pressure,
+                combined_group_effects=combined_group_effects,
+                campaign_delta=campaign_delta,
+            )
+        except Exception as exc:
+            self.game_state = turn_state_backup
+            yield {"type": "error", "message": f"Turn aborted: {exc}"}
+            return
         yield {"type": "agent_impact_assessed", "summary": agent_impact}
         if agent_impact.get("top_cohorts"):
             yield {
@@ -778,6 +825,7 @@ class TurnManager:
             triggered_events=all_triggered,
             dominant_fronts=dominant_fronts,
             media_state=self.game_state.media_state,
+            city_id=str(self.game_state.simulation_profile.get("city_id", "")),
         )
         yield {
             "type": "media_narrative_published",

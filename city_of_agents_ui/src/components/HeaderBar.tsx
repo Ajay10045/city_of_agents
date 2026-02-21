@@ -23,7 +23,6 @@ export default function HeaderBar({ state, onNewGame, busy }: Props) {
   const cityName = readProfileString(state, 'city_name') ?? readProfileString(state, 'city_id')
   const agentCount =
     readProfileNumber(state, 'actual_agent_count') ?? readProfileNumber(state, 'agent_count')
-  const panelSize = readProfileNumber(state, 'llm_panel_size')
 
   return (
     <header className="header">
@@ -46,7 +45,6 @@ export default function HeaderBar({ state, onNewGame, busy }: Props) {
         {agentCount !== null && (
           <span>
             Agents: <strong>{Math.round(agentCount)}</strong>
-            {panelSize !== null ? ` (panel ${Math.round(panelSize)})` : ''}
           </span>
         )}
         <span>{state.rng_seed !== null ? `Seed: ${state.rng_seed}` : ''}</span>

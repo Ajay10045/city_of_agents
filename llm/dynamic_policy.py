@@ -48,6 +48,7 @@ class DynamicPolicy:
     assumptions: list[str] = field(default_factory=list)
     tradeoffs: list[str] = field(default_factory=list)
     counter_narrative_risk: str = ""
+    deliberation_trace: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_llm(cls, data: dict, actor: str = "mayor") -> "DynamicPolicy":
@@ -134,6 +135,36 @@ class DynamicPolicy:
         )
         confidence = _clamp(_to_float(data.get("confidence"), 0.5) or 0.5, 0.0, 1.0)
 
+        deliberation_trace: dict[str, Any] = {}
+        raw_trace = data.get("deliberation_trace", {})
+        if isinstance(raw_trace, dict):
+            mayor_direction_used = str(raw_trace.get("mayor_direction_used", "")).strip()
+            if mayor_direction_used:
+                deliberation_trace["mayor_direction_used"] = mayor_direction_used[:220]
+            advisor_inputs_used: list[dict[str, str]] = []
+            raw_inputs = raw_trace.get("advisor_inputs_used", [])
+            if isinstance(raw_inputs, list):
+                for item in raw_inputs:
+                    if not isinstance(item, dict):
+                        continue
+                    advisor_id = str(item.get("advisor_id", "")).strip()
+                    portfolio = str(item.get("portfolio", "")).strip()
+                    point = str(item.get("point", "")).strip()
+                    if not (advisor_id and portfolio and point):
+                        continue
+                    advisor_inputs_used.append(
+                        {
+                            "advisor_id": advisor_id[:80],
+                            "portfolio": portfolio[:80],
+                            "point": point[:180],
+                        }
+                    )
+            if advisor_inputs_used:
+                deliberation_trace["advisor_inputs_used"] = advisor_inputs_used[:4]
+            disagreement_resolved = str(raw_trace.get("disagreement_resolved", "")).strip()
+            if disagreement_resolved:
+                deliberation_trace["disagreement_resolved"] = disagreement_resolved[:220]
+
         return cls(
             id=str(uuid.uuid4()),
             name=str(data.get("name", "Unknown Policy"))[:80],
@@ -153,6 +184,7 @@ class DynamicPolicy:
             assumptions=assumptions,
             tradeoffs=tradeoffs,
             counter_narrative_risk=str(data.get("counter_narrative_risk", ""))[:280],
+            deliberation_trace=deliberation_trace,
         )
 
     def to_dict(self) -> dict:
@@ -175,4 +207,5 @@ class DynamicPolicy:
             "assumptions": list(self.assumptions),
             "tradeoffs": list(self.tradeoffs),
             "counter_narrative_risk": self.counter_narrative_risk,
+            "deliberation_trace": dict(self.deliberation_trace),
         }

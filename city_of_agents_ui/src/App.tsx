@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   createGame,
   fetchMediaTimeline,
@@ -21,35 +21,26 @@ import type {
 import HeaderBar from './components/HeaderBar'
 import ErrorBanner from './components/ErrorBanner'
 import CityStatsPanel from './components/CityStatsPanel'
-import IdentityGroupsPanel from './components/IdentityGroupsPanel'
+import IdentityGroupsPanel, { type GroupHappening } from './components/IdentityGroupsPanel'
 import CrisesPanel from './components/CrisesPanel'
-import PoliciesPanel from './components/PoliciesPanel'
 import StreamFeedPanel, { type StreamCardItem } from './components/StreamFeedPanel'
-import SidebarPanels from './components/SidebarPanels'
-import DebatesPanel from './components/DebatesPanel'
 import TurnResultBanner from './components/TurnResultBanner'
 import ElectionOverlay from './components/ElectionOverlay'
 import GameOverOverlay from './components/GameOverOverlay'
 import GameSetupOverlay from './components/GameSetupOverlay'
-import MediaNarrativePanel from './components/MediaNarrativePanel'
-import AdvisorConsole from './components/AdvisorConsole'
-import PolicyImpactModal from './components/PolicyImpactModal'
+import UnifiedMediaPanel from './components/UnifiedMediaPanel'
+import AdvisoryChamberPanel from './components/AdvisoryChamberPanel'
+import CityChatterPanel from './components/CityChatterPanel'
 import TopMetricsPanel from './components/TopMetricsPanel'
+import GeneratedPoliciesPanel from './components/GeneratedPoliciesPanel'
 
 const DEFAULT_TOTAL_TURNS = 50
 
 function buildInitialSetup(options: SetupOptions): GameSetupConfig {
   return {
-    turns: DEFAULT_TOTAL_TURNS,
-    turns_to_election: options.defaults.turns_to_election,
+    turns: options.defaults.turns ?? DEFAULT_TOTAL_TURNS,
     city_id: options.defaults.city_id,
-    population_scale: options.defaults.population_scale,
     agent_count: options.defaults.agent_count,
-    llm_panel_size: options.defaults.llm_panel_size,
-    llm_sampling_strategy: options.defaults.llm_sampling_strategy,
-    llm_micro_batch_size: options.defaults.llm_micro_batch_size,
-    max_parallel_llm_requests: options.defaults.max_parallel_llm_requests,
-    randomness_scale: options.defaults.randomness_scale,
   }
 }
 
@@ -74,14 +65,12 @@ export default function App() {
   const [policies, setPolicies] = useState<DynamicPolicy[]>([])
   const [advisorSessionId, setAdvisorSessionId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [policiesLoading, setPoliciesLoading] = useState(true)
   const [stream, setStream] = useState<StreamCardItem[]>([])
   const [mediaTimeline, setMediaTimeline] = useState<MediaTimelineCard[]>([])
   const [debates, setDebates] = useState<DebateResult[]>([])
   const [streetChatter, setStreetChatter] = useState<StreetChatterItem[]>([])
   const [statChanges, setStatChanges] = useState<Record<string, number>>({})
   const [eventChances, setEventChances] = useState<Record<string, number>>({})
-  const [selectedPolicyId, setSelectedPolicyId] = useState<string | null>(null)
   const [turnResultVisible, setTurnResultVisible] = useState(false)
   const [turnMayorAction, setTurnMayorAction] = useState<DynamicPolicy | null>(null)
   const [turnOppAction, setTurnOppAction] = useState<DynamicPolicy | null>(null)
@@ -97,8 +86,6 @@ export default function App() {
   const [setupConfig, setSetupConfig] = useState<GameSetupConfig | null>(null)
   const [setupError, setSetupError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [advisorFocusOptionId, setAdvisorFocusOptionId] = useState<string | null>(null)
-  const [impactPolicy, setImpactPolicy] = useState<DynamicPolicy | null>(null)
 
   const formatTopStatDeltas = (deltas: Record<string, number>, limit = 3): string => {
     const rows = Object.entries(deltas)
@@ -106,17 +93,6 @@ export default function App() {
       .slice(0, limit)
       .map(([key, value]) => `${key} ${value >= 0 ? '+' : ''}${value.toFixed(1)}`)
     return rows.join(' · ')
-  }
-
-  const loadPolicies = async (gid: string) => {
-    setPoliciesLoading(true)
-    try {
-      const result = await fetchPolicies(gid)
-      setPolicies(result.policies)
-      setAdvisorSessionId(result.advisorSessionId)
-    } finally {
-      setPoliciesLoading(false)
-    }
   }
 
   const loadMedia = async (gid: string) => {
@@ -136,8 +112,6 @@ export default function App() {
     setTurnMayorAction(null)
     setTurnOppAction(null)
     setTurnTriggeredEvents([])
-    setAdvisorFocusOptionId(null)
-    setImpactPolicy(null)
   }
 
   const prepareTurnPanels = () => {
@@ -147,8 +121,6 @@ export default function App() {
     setTurnMayorAction(null)
     setTurnOppAction(null)
     setTurnTriggeredEvents([])
-    setAdvisorFocusOptionId(null)
-    setImpactPolicy(null)
   }
 
   const bootstrapSetup = async () => {
@@ -203,10 +175,6 @@ export default function App() {
       setElectionResult(null)
       setGameOverVisible(false)
       setSetupVisible(false)
-      setAdvisorFocusOptionId(null)
-      void loadPolicies(gid).catch((err) =>
-        setError(err instanceof Error ? err.message : 'Failed to load policies'),
-      )
       void loadMedia(gid).catch((err) =>
         setError(err instanceof Error ? err.message : 'Failed to load media timeline'),
       )
@@ -214,7 +182,6 @@ export default function App() {
       setSetupError(e instanceof Error ? e.message : 'Failed to start simulation')
     } finally {
       setSetupBusy(false)
-      setSelectedPolicyId(null)
     }
   }
 
@@ -223,7 +190,7 @@ export default function App() {
   }, [])
 
   const runTurnForPolicy = async (policyId: string) => {
-    if (busy || councilBusy || !gameId || !state) return
+    if (busy || !gameId || !state) return
     setBusy(true)
     setError(null)
     let activePolicyId = policyId
@@ -235,8 +202,7 @@ export default function App() {
       setAdvisorSessionId(latest.advisorSessionId)
       activeAdvisorSessionId = latest.advisorSessionId
       if (!latest.policies.some((option) => option.id === activePolicyId)) {
-        setSelectedPolicyId(null)
-        throw new Error('Selected option was refreshed by advisor. Please reselect and play.')
+        throw new Error('Generated policy set changed. Generate a fresh set before implementing.')
       }
     } catch (syncErr) {
       setBusy(false)
@@ -244,7 +210,6 @@ export default function App() {
       return
     }
 
-    setSelectedPolicyId(activePolicyId)
     prepareTurnPanels()
 
     let mayorAction: DynamicPolicy | null = null
@@ -414,11 +379,12 @@ export default function App() {
             setElectionResult(msg.election_result)
             setGameOverVisible(Boolean(msg.game_over && !msg.election_result))
             if (!msg.game_over) {
-              loadPolicies(gameId).catch(() => undefined)
+              setPolicies([])
+              setAdvisorSessionId(null)
               loadMedia(gameId).catch(() => undefined)
             } else {
               setPolicies([])
-              setPoliciesLoading(false)
+              setAdvisorSessionId(null)
             }
           }
 
@@ -474,9 +440,7 @@ export default function App() {
               : null
           if (byName) {
             retryPolicyId = byName.id
-            setSelectedPolicyId(byName.id)
           } else {
-            setSelectedPolicyId(null)
             throw new Error('Options changed after advisor update. Please select one of the latest options.')
           }
         }
@@ -487,44 +451,7 @@ export default function App() {
       setError(e instanceof Error ? e.message : 'Stream connection error')
     } finally {
       setBusy(false)
-      setSelectedPolicyId(null)
     }
-  }
-
-  const onPolicySelect = (policyId: string) => {
-    if (
-      busy ||
-      councilBusy ||
-      !state ||
-      state.turn_number >= state.total_turns ||
-      hasMayorLostElection(state)
-    ) {
-      return
-    }
-    setSelectedPolicyId(policyId)
-    setAdvisorFocusOptionId(policyId)
-    setError(null)
-  }
-
-  const onPlaySelectedPolicy = async () => {
-    if (councilBusy) {
-      setError('Council is still deliberating. Wait for advisor response before playing a policy.')
-      return
-    }
-    if (state && hasMayorLostElection(state)) {
-      setError('Simulation is over because the Mayor lost the election.')
-      return
-    }
-    if (!selectedPolicyId) {
-      setError('Select a policy first, then click "Play Selected Policy".')
-      return
-    }
-    if (!policies.some((policy) => policy.id === selectedPolicyId)) {
-      setSelectedPolicyId(null)
-      setError('Selected policy is no longer current. Refresh options and reselect.')
-      return
-    }
-    await runTurnForPolicy(selectedPolicyId)
   }
 
   const onNewGame = async () => {
@@ -543,12 +470,49 @@ export default function App() {
     }
   }
 
-  useEffect(() => {
-    if (!selectedPolicyId) return
-    if (!policies.some((policy) => policy.id === selectedPolicyId)) {
-      setSelectedPolicyId(null)
+  const groupHappeningsByGroup = useMemo<Record<string, GroupHappening[]>>(() => {
+    if (!state) return {}
+    const groupNameToId = new Map<string, string>(
+      Object.entries(state.identity_groups).map(([groupId, group]) => [group.name, groupId]),
+    )
+    const rows: Record<string, GroupHappening[]> = {}
+    for (const groupId of Object.keys(state.identity_groups)) {
+      rows[groupId] = []
     }
-  }, [policies, selectedPolicyId])
+
+    for (const debate of debates) {
+      const groupId = groupNameToId.get(debate.group_name)
+      if (!groupId) continue
+      const turn = typeof debate.turn === 'number' ? debate.turn : state.turn_number
+      rows[groupId].push({
+        id: `pulse-${groupId}-${turn}-${rows[groupId].length}`,
+        kind: 'pulse',
+        turn,
+        text: debate.debate_summary,
+        meta:
+          `Align ${debate.alignment_delta >= 0 ? '+' : ''}${debate.alignment_delta.toFixed(1)} · ` +
+          `Trust ${debate.trust_delta >= 0 ? '+' : ''}${debate.trust_delta.toFixed(1)}`,
+      })
+    }
+
+    for (const chatter of streetChatter) {
+      const groupId = groupNameToId.get(chatter.group_name)
+      if (!groupId) continue
+      const turn = typeof chatter.turn === 'number' ? chatter.turn : state.turn_number
+      rows[groupId].push({
+        id: `chat-${groupId}-${turn}-${rows[groupId].length}`,
+        kind: 'chatter',
+        turn,
+        text: `${chatter.speaker}: "${chatter.line}"`,
+        meta: `${chatter.sentiment} · Heat ${(chatter.heat * 100).toFixed(0)}%`,
+      })
+    }
+
+    for (const groupId of Object.keys(rows)) {
+      rows[groupId].sort((a, b) => b.turn - a.turn)
+    }
+    return rows
+  }, [state, debates, streetChatter])
 
   if (loading) return <div className="page">Loading setup…</div>
 
@@ -565,16 +529,6 @@ export default function App() {
   const gameCompleted = Boolean(
     state && (state.turn_number >= state.total_turns || hasMayorLostElection(state)),
   )
-
-  const nextTurn = state ? state.turn_number + 1 : 1
-  const policyPrompt =
-    !state
-      ? 'Start a simulation from game setup.'
-      : gameCompleted
-      ? 'The simulation has ended.'
-      : busy
-        ? 'Simulating turn — watch agents respond in real time…'
-        : `Turn ${nextTurn} — Select an option, deliberate with advisors, then play it.`
 
   return (
     <div id="app">
@@ -606,65 +560,45 @@ export default function App() {
       {gameReady && state ? (
         <div className="layout layout-v2">
           <aside className="layout-left">
-            <IdentityGroupsPanel state={state} compact />
-            <SidebarPanels state={state} panels={['media']} />
-            <MediaNarrativePanel cards={mediaTimeline} />
+            <IdentityGroupsPanel state={state} compact happeningsByGroup={groupHappeningsByGroup} />
+            <UnifiedMediaPanel state={state} cards={mediaTimeline} />
+            <CityChatterPanel items={streetChatter} />
+            <CrisesPanel state={state} eventChances={eventChances} />
           </aside>
 
           <main className="layout-center">
             <TopMetricsPanel state={state} />
             <CityStatsPanel stats={state.city_stats} changes={statChanges} />
-            <PoliciesPanel
-              policies={policies}
-              busy={busy || councilBusy || gameCompleted}
-              loading={policiesLoading}
-              selectedPolicyId={selectedPolicyId}
-              prompt={policyPrompt}
-              onSelect={onPolicySelect}
-              onPlaySelected={onPlaySelectedPolicy}
-              onAskAdvisor={(optionId) => {
-                setAdvisorFocusOptionId(optionId)
-                const target = document.getElementById('advisor-console')
-                if (target) {
-                  target.scrollIntoView({ behavior: 'smooth', block: 'center' })
-                }
-              }}
-              onImpactAssessment={(optionId) => {
-                const selected = policies.find((policy) => policy.id === optionId) ?? null
-                setImpactPolicy(selected)
-              }}
-            />
-            <AdvisorConsole
-              gameId={gameId}
-              advisorSessionId={advisorSessionId}
-              turnNumber={state.turn_number}
+            <GeneratedPoliciesPanel
               policies={policies}
               disabled={busy || gameCompleted}
-              onCouncilBusyChange={setCouncilBusy}
-              focusOptionId={advisorFocusOptionId}
-              onPoliciesUpdate={(nextPolicies) => {
-                setPolicies(nextPolicies)
-                setSelectedPolicyId((prev) =>
-                  prev && nextPolicies.some((policy) => policy.id === prev) ? prev : null,
-                )
-                if (advisorFocusOptionId && !nextPolicies.some((policy) => policy.id === advisorFocusOptionId)) {
-                  setAdvisorFocusOptionId(null)
+              onImplementPolicy={(policyId) => {
+                if (state && hasMayorLostElection(state)) {
+                  setError('Simulation is over because the Mayor lost the election.')
+                  return
                 }
+                if (!policies.some((policy) => policy.id === policyId)) {
+                  setError('Policy is no longer current. Generate a fresh policy set.')
+                  return
+                }
+                void runTurnForPolicy(policyId)
               }}
-              onSessionUpdate={(nextSessionId) => {
-                setAdvisorSessionId(nextSessionId)
-              }}
-              onError={(message) => setError(message)}
             />
             <StreamFeedPanel items={stream} visible={busy || stream.length > 0} />
           </main>
           <aside className="layout-right">
-            <DebatesPanel
-              debates={debates}
-              streetChatter={streetChatter}
-              visible={debates.length > 0 || streetChatter.length > 0}
+            <AdvisoryChamberPanel
+              gameId={gameId}
+              advisorSessionId={advisorSessionId}
+              turnNumber={state.turn_number}
+              disabled={busy || gameCompleted}
+              onCouncilBusyChange={setCouncilBusy}
+              onPoliciesGenerated={(nextPolicies) => {
+                setPolicies(nextPolicies.slice(0, 3))
+              }}
+              onSessionUpdate={(nextSessionId) => setAdvisorSessionId(nextSessionId)}
+              onError={(message) => setError(message)}
             />
-            <CrisesPanel state={state} eventChances={eventChances} />
           </aside>
         </div>
       ) : (
@@ -676,11 +610,6 @@ export default function App() {
 
       {state && <ElectionOverlay result={electionResult} onContinue={onContinueAfterElection} />}
       {state && <GameOverOverlay state={state} visible={gameOverVisible} onPlayAgain={onNewGame} />}
-      <PolicyImpactModal
-        visible={Boolean(impactPolicy)}
-        policy={impactPolicy}
-        onClose={() => setImpactPolicy(null)}
-      />
       <GameSetupOverlay
         visible={setupVisible}
         options={setupOptions}

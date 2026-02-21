@@ -17,6 +17,32 @@
         "url": "https://sdgindiaindex.niti.gov.in/",
         "snippet": "Public service and environmental progress indicators."
       }
+    ],
+    "media_outlets": [
+      {
+        "id": "delhi_civic_wire",
+        "name": "Delhi Civic Wire",
+        "lean": "mayor",
+        "bias": 6.0,
+        "sensationalism": 44.0,
+        "trust": 58.0
+      },
+      {
+        "id": "bazaar_pulse",
+        "name": "Bazaar Pulse",
+        "lean": "opposition",
+        "bias": -7.0,
+        "sensationalism": 63.0,
+        "trust": 45.0
+      },
+      {
+        "id": "metro_bulletin",
+        "name": "Metro Bulletin",
+        "lean": "neutral",
+        "bias": -1.0,
+        "sensationalism": 52.0,
+        "trust": 51.0
+      }
     ]
   },
   "identity_groups": [
