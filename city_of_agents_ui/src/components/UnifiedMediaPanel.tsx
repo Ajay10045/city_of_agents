@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import type { MediaTimelineCard, StateSnapshot } from '../types'
 
 type Props = {
@@ -13,6 +14,24 @@ function meterClass(value: number): string {
 
 export default function UnifiedMediaPanel({ state, cards }: Props) {
   const outlets = state.media_state.outlets ?? []
+  const narrativeListRef = useRef<HTMLDivElement | null>(null)
+  const pauseNarrativeScrollRef = useRef(false)
+
+  useEffect(() => {
+    const node = narrativeListRef.current
+    if (!node || cards.length < 2) return
+
+    const intervalId = window.setInterval(() => {
+      if (!narrativeListRef.current) return
+      if (pauseNarrativeScrollRef.current) return
+      const list = narrativeListRef.current
+      if (list.scrollHeight <= list.clientHeight + 1) return
+      const reachedEnd = list.scrollTop + list.clientHeight >= list.scrollHeight - 2
+      list.scrollTop = reachedEnd ? 0 : list.scrollTop + 1
+    }, 80)
+
+    return () => window.clearInterval(intervalId)
+  }, [cards.length])
 
   return (
     <section className="panel" id="unified-media-panel">
@@ -56,7 +75,16 @@ export default function UnifiedMediaPanel({ state, cards }: Props) {
         {cards.length === 0 ? (
           <div className="muted">No media narratives yet. Play a turn to generate reporting.</div>
         ) : (
-          <div className="media-timeline">
+          <div
+            className="media-timeline"
+            ref={narrativeListRef}
+            onMouseEnter={() => {
+              pauseNarrativeScrollRef.current = true
+            }}
+            onMouseLeave={() => {
+              pauseNarrativeScrollRef.current = false
+            }}
+          >
             {cards.map((card, idx) => (
               <article
                 key={`${card.turn}-${card.headline}-${idx}`}

@@ -3,10 +3,16 @@ import type { DynamicPolicy } from '../types'
 type Props = {
   policies: DynamicPolicy[]
   disabled: boolean
+  implementingPolicyId?: string | null
   onImplementPolicy: (policyId: string) => void
 }
 
-export default function GeneratedPoliciesPanel({ policies, disabled, onImplementPolicy }: Props) {
+export default function GeneratedPoliciesPanel({
+  policies,
+  disabled,
+  implementingPolicyId = null,
+  onImplementPolicy,
+}: Props) {
   return (
     <section className="panel generated-policies-panel" id="generated-policies-panel">
       <div className="panel-title">Generated Policies</div>
@@ -40,7 +46,7 @@ export default function GeneratedPoliciesPanel({ policies, disabled, onImplement
                   </div>
                 )}
                 <button className="btn-continue" onClick={() => onImplementPolicy(policy.id)} disabled={disabled}>
-                  Implement
+                  {implementingPolicyId === policy.id ? 'Implementing…' : 'Implement'}
                 </button>
               </article>
             ))}
