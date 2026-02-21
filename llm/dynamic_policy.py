@@ -148,17 +148,19 @@ class DynamicPolicy:
                     if not isinstance(item, dict):
                         continue
                     advisor_id = str(item.get("advisor_id", "")).strip()
+                    advisor_name = str(item.get("advisor_name", "")).strip()
                     portfolio = str(item.get("portfolio", "")).strip()
                     point = str(item.get("point", "")).strip()
                     if not (advisor_id and portfolio and point):
                         continue
-                    advisor_inputs_used.append(
-                        {
-                            "advisor_id": advisor_id[:80],
-                            "portfolio": portfolio[:80],
-                            "point": point[:180],
-                        }
-                    )
+                    row = {
+                        "advisor_id": advisor_id[:80],
+                        "portfolio": portfolio[:80],
+                        "point": point[:180],
+                    }
+                    if advisor_name:
+                        row["advisor_name"] = advisor_name[:80]
+                    advisor_inputs_used.append(row)
             if advisor_inputs_used:
                 deliberation_trace["advisor_inputs_used"] = advisor_inputs_used[:4]
             disagreement_resolved = str(raw_trace.get("disagreement_resolved", "")).strip()

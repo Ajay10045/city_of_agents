@@ -130,6 +130,7 @@ export type DynamicPolicy = {
     mayor_direction_used?: string
     advisor_inputs_used?: Array<{
       advisor_id: string
+      advisor_name?: string
       portfolio: string
       point: string
     }>

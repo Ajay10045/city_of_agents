@@ -1479,6 +1479,14 @@ html, body {
 	color: var(--text);
 	border-color: var(--gold);
 }
+.advisor-generate-error {
+	font-size: 11px;
+	color: #fecaca;
+	background: #3b0a0a;
+	border: 1px solid #7f1d1d;
+	border-radius: 8px;
+	padding: 8px 10px;
+}
 .generated-policy-section {
 	border-top: 1px solid var(--border);
 	padding-top: 10px;

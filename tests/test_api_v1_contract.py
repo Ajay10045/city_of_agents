@@ -730,6 +730,8 @@ def test_v1_advisor_generate_policies_contract(api_server: str) -> None:
         trace = policy.get("deliberation_trace") or {}
         assert trace.get("mayor_direction_used")
         assert isinstance(trace.get("advisor_inputs_used"), list)
+        first_input = (trace.get("advisor_inputs_used") or [{}])[0]
+        assert first_input.get("advisor_name")
 
     policies_status, policies_payload = _http_json(
         "GET", f"{api_server}/v1/games/{game_id}/policies"
@@ -765,6 +767,86 @@ def test_v1_advisor_generate_policies_unavailable_requires_live_model(api_server
         generate_payload["error"]
         == "Policy generation requires live advisor model availability."
     )
+
+
+def test_v1_advisor_generate_policies_returns_422_and_preserves_options(api_server: str) -> None:
+    create_status, game_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games",
+        {"seed": 93, "turns": 5, "agent_count": 12},
+    )
+    assert create_status == 201
+    game_id = game_payload["game_id"]
+
+    session_status, session_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games/{game_id}/advisor/sessions",
+        {},
+    )
+    assert session_status in {200, 201}
+    session_id = session_payload["session"]["advisor_session_id"]
+    original_ids = [item["id"] for item in session_payload["session"]["options"]]
+
+    import server as server_module
+
+    class _StubInvalidPolicyClient:
+        @staticmethod
+        def chat(_system: str, _user: str) -> dict:
+            return {
+                "conclusion_summary": "extend",
+                "policies": [
+                    {
+                        "name": "Unknown Policy",
+                        "description": "Targeted intervention to stabilize key city pressures this turn.",
+                        "rationale": "Chosen for near-term impact under current city pressures.",
+                        "why_now": "extend",
+                        "effects": {"economy": 1.0},
+                        "group_effects": [],
+                        "campaign_strength": 1.0,
+                        "media_effects": {},
+                        "target_groups": [],
+                        "deliberation_trace": {
+                            "mayor_direction_used": "extend",
+                            "advisor_inputs_used": [
+                                {
+                                    "advisor_id": "fiscal_growth",
+                                    "portfolio": "economy",
+                                    "point": "short",
+                                }
+                            ],
+                        },
+                    }
+                ]
+                * 3,
+            }
+
+    chamber = server_module._advisory_chamber
+    original_client = chamber._client
+    original_disable_live = chamber._disable_live
+    chamber._client = _StubInvalidPolicyClient()
+    chamber._disable_live = False
+    try:
+        generate_status, generate_payload = _http_json(
+            "POST",
+            f"{api_server}/v1/games/{game_id}/advisor/sessions/{session_id}/generate-policies",
+            {"count": 3, "constraints": "jobs and trust"},
+        )
+    finally:
+        chamber._client = original_client
+        chamber._disable_live = original_disable_live
+
+    assert generate_status == 422
+    assert generate_payload["error"] == "Generated policies failed quality checks"
+    assert isinstance(generate_payload["detail"], list)
+    assert generate_payload["detail"]
+
+    get_status, get_payload = _http_json(
+        "GET",
+        f"{api_server}/v1/games/{game_id}/advisor/sessions/{session_id}",
+    )
+    assert get_status == 200
+    latest_ids = [item["id"] for item in get_payload["session"]["options"]]
+    assert latest_ids == original_ids
 
 
 def test_v1_advisor_session_force_refresh_string_false_is_not_truthy(api_server: str) -> None:

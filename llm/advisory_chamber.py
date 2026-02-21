@@ -28,6 +28,13 @@ class ChamberPolicyUnavailableError(RuntimeError):
     pass
 
 
+class ChamberPolicyValidationError(RuntimeError):
+    def __init__(self, reasons: list[str]) -> None:
+        self.reasons = [str(reason).strip() for reason in reasons if str(reason).strip()]
+        summary = "; ".join(self.reasons[:4]) if self.reasons else "policy validation failed"
+        super().__init__(summary)
+
+
 class AdvisoryChamber:
     def __init__(self) -> None:
         model = os.environ.get("LLM_DEBATE_MODEL") or os.environ.get("LLM_MODEL", "gpt-4o")
@@ -44,6 +51,19 @@ class AdvisoryChamber:
         except Exception:
             self._client = None
         self._similarity_threshold = 0.74
+        self._placeholder_names = {
+            "unknown policy",
+            "policy option",
+            "n/a",
+            "na",
+            "tbd",
+            "placeholder policy",
+            "unnamed policy",
+        }
+        self._generic_description_markers = (
+            "targeted intervention to stabilize key city pressures this turn",
+            "chosen for near-term impact under current city pressures",
+        )
 
     def live_available(self) -> bool:
         return self._client is not None and not self._disable_live
@@ -66,6 +86,110 @@ class AdvisoryChamber:
     @staticmethod
     def _safe_line(value: str, limit: int = 220) -> str:
         return " ".join(str(value).split()).strip()[:limit]
+
+    @staticmethod
+    def _tokens(text: str) -> set[str]:
+        return {token for token in re.findall(r"[a-z][a-z0-9_]{2,}", str(text).lower())}
+
+    @staticmethod
+    def _compact(text: str) -> str:
+        return " ".join(str(text).split()).strip()
+
+    @staticmethod
+    def _human_text(text: str) -> str:
+        lowered = str(text).strip().lower()
+        return lowered not in {"agree", "challenge", "extend"}
+
+    def _grounding_tokens(self, constraints: str, transcript: list[dict[str, Any]]) -> set[str]:
+        blocked = {
+            "this",
+            "that",
+            "with",
+            "from",
+            "while",
+            "what",
+            "where",
+            "when",
+            "which",
+            "there",
+            "their",
+            "would",
+            "should",
+            "could",
+            "about",
+            "into",
+            "over",
+            "under",
+            "must",
+            "turn",
+            "city",
+            "advisor",
+            "mayor",
+            "policy",
+            "policies",
+        }
+        tokens = self._tokens(constraints)
+        for item in transcript[-10:]:
+            role = str(item.get("role", "")).strip().lower()
+            if role not in {"user", "advisor"}:
+                continue
+            tokens.update(self._tokens(str(item.get("content", ""))))
+        return {token for token in tokens if token not in blocked and len(token) >= 4}
+
+    def _validate_policy_batch(
+        self,
+        policies: list[DynamicPolicy],
+        *,
+        constraints: str,
+        transcript: list[dict[str, Any]],
+    ) -> None:
+        reasons: list[str] = []
+        grounding = self._grounding_tokens(constraints, transcript)
+        for idx, policy in enumerate(policies, start=1):
+            name = self._compact(policy.name)
+            if len(name) < 6 or name.lower() in self._placeholder_names:
+                reasons.append(f"policy {idx}: invalid name")
+
+            description = self._compact(policy.description)
+            if len(description) < 24:
+                reasons.append(f"policy {idx}: description too short")
+            desc_lower = description.lower()
+            if any(marker in desc_lower for marker in self._generic_description_markers):
+                reasons.append(f"policy {idx}: generic description")
+
+            why_now = self._compact(policy.why_now or policy.rationale)
+            rationale = self._compact(policy.rationale)
+            if len(why_now) < 24:
+                reasons.append(f"policy {idx}: why_now too short")
+            if len(rationale) < 20:
+                reasons.append(f"policy {idx}: rationale too short")
+            text_blob = f"{description} {why_now} {rationale}".lower()
+            if grounding and not any(token in text_blob for token in grounding):
+                reasons.append(f"policy {idx}: missing transcript/constraint grounding")
+
+            trace = policy.deliberation_trace if isinstance(policy.deliberation_trace, dict) else {}
+            mayor_direction_used = self._compact(trace.get("mayor_direction_used", ""))
+            if len(mayor_direction_used) < 12 or not self._human_text(mayor_direction_used):
+                reasons.append(f"policy {idx}: invalid mayor_direction_used")
+
+            raw_inputs = trace.get("advisor_inputs_used", [])
+            if not isinstance(raw_inputs, list) or len(raw_inputs) == 0:
+                reasons.append(f"policy {idx}: missing advisor_inputs_used")
+                continue
+            valid_input_found = False
+            for item in raw_inputs:
+                if not isinstance(item, dict):
+                    continue
+                advisor_id = self._compact(item.get("advisor_id", ""))
+                portfolio = self._compact(item.get("portfolio", ""))
+                point = self._compact(item.get("point", ""))
+                if advisor_id and portfolio and len(point) >= 14:
+                    valid_input_found = True
+                    break
+            if not valid_input_found:
+                reasons.append(f"policy {idx}: invalid advisor input rows")
+        if reasons:
+            raise ChamberPolicyValidationError(reasons)
 
     @staticmethod
     def _option_rows(options: list[DynamicPolicy]) -> list[dict[str, Any]]:
@@ -294,7 +418,7 @@ class AdvisoryChamber:
         *,
         constraints: str,
         transcript: list[dict[str, Any]],
-        advisor_portfolios: dict[str, list[str]],
+        advisor_meta: dict[str, dict[str, Any]],
     ) -> None:
         trace = dict(policy.deliberation_trace or {})
         mayor_direction_used = str(trace.get("mayor_direction_used", "")).strip() or constraints.strip()
@@ -317,9 +441,15 @@ class AdvisoryChamber:
                 portfolio = str(item.get("portfolio", "")).strip()
                 point = str(item.get("point", "")).strip()
                 if advisor_id and portfolio and point:
+                    advisor_name = str(item.get("advisor_name", "")).strip()
+                    if not advisor_name:
+                        advisor_name = str(
+                            (advisor_meta.get(advisor_id, {}) or {}).get("name", "")
+                        ).strip()
                     advisor_inputs.append(
                         {
                             "advisor_id": advisor_id[:80],
+                            "advisor_name": advisor_name[:80] if advisor_name else "",
                             "portfolio": portfolio[:80],
                             "point": point[:180],
                         }
@@ -335,10 +465,13 @@ class AdvisoryChamber:
             ]
             for item in advisor_messages[-2:]:
                 advisor_id = str(item.get("speaker_advisor_id", "")).strip()
-                portfolios = advisor_portfolios.get(advisor_id, [])
+                advisor_info = advisor_meta.get(advisor_id, {}) if advisor_id else {}
+                portfolios = list(advisor_info.get("portfolios", [])) if isinstance(advisor_info, dict) else []
+                advisor_name = str(advisor_info.get("name", "")).strip() if isinstance(advisor_info, dict) else ""
                 advisor_inputs.append(
                     {
                         "advisor_id": advisor_id,
+                        "advisor_name": advisor_name[:80] if advisor_name else "",
                         "portfolio": portfolios[0] if portfolios else "public_trust",
                         "point": " ".join(str(item.get("content", "")).split())[:180],
                     }
@@ -348,6 +481,15 @@ class AdvisoryChamber:
         disagreement_resolved = str(trace.get("disagreement_resolved", "")).strip()
         if disagreement_resolved:
             trace["disagreement_resolved"] = disagreement_resolved[:220]
+
+        for item in trace.get("advisor_inputs_used", []):
+            if not isinstance(item, dict):
+                continue
+            advisor_id = str(item.get("advisor_id", "")).strip()
+            if advisor_id and not str(item.get("advisor_name", "")).strip():
+                advisor_name = str((advisor_meta.get(advisor_id, {}) or {}).get("name", "")).strip()
+                if advisor_name:
+                    item["advisor_name"] = advisor_name[:80]
 
         policy.deliberation_trace = trace
 
@@ -363,20 +505,36 @@ class AdvisoryChamber:
         if not self.live_available():
             raise ChamberPolicyUnavailableError("Policy generation requires live advisor model availability.")
 
-        advisor_portfolios = {advisor.advisor_id: list(advisor.portfolios) for advisor in advisors}
+        advisor_meta = {
+            advisor.advisor_id: {
+                "name": advisor.name,
+                "portfolios": list(advisor.portfolios),
+            }
+            for advisor in advisors
+        }
         transcript_window = transcript[-14:]
 
-        system = (
-            "You are synthesizing final mayor policy options from an advisor chamber transcript.\n"
-            "Return JSON only with keys: conclusion_summary, policies.\n"
-            f"policies must be an array of exactly {count} objects.\n"
-            "Each policy object must include the standard policy fields plus deliberation_trace with:\n"
-            "- mayor_direction_used (string)\n"
-            "- advisor_inputs_used (array of {advisor_id, portfolio, point})\n"
-            "- disagreement_resolved (optional string).\n"
-            "Policies must be materially different and explicitly grounded in transcript tensions/tradeoffs.\n"
-            "Never include internal prompt text in policy fields."
-        )
+        def _render_system(repair_mode: bool = False) -> str:
+            base = (
+                "You are synthesizing final mayor policy options from an advisor chamber transcript.\n"
+                "Return JSON only with keys: conclusion_summary, policies.\n"
+                f"policies must be an array of exactly {count} objects.\n"
+                "Each policy object must include the standard policy fields plus deliberation_trace with:\n"
+                "- mayor_direction_used (string)\n"
+                "- advisor_inputs_used (array of {advisor_id, advisor_name, portfolio, point})\n"
+                "- disagreement_resolved (optional string).\n"
+                "Policies must be materially different and explicitly grounded in transcript tensions/tradeoffs.\n"
+                "Never include internal prompt text in policy fields."
+            )
+            if repair_mode:
+                base += (
+                    "\n\nValidation retry mode requirements:\n"
+                    "- Do not use placeholder names.\n"
+                    "- Each policy must have concrete, city-specific description and why_now.\n"
+                    "- mayor_direction_used must be a real mayor directive sentence.\n"
+                    "- advisor_inputs_used must include concrete advisor points.\n"
+                )
+            return base
 
         user_lines = [
             "City context:",
@@ -389,24 +547,47 @@ class AdvisoryChamber:
             str(transcript_window),
         ]
 
-        payload = self._client.chat(system, "\n".join(user_lines))
-        if not isinstance(payload, dict):
-            raise ChamberReplyError("Invalid policy synthesis payload")
-        raw_policies = payload.get("policies", [])
-        if not isinstance(raw_policies, list) or len(raw_policies) < count:
-            raise ChamberReplyError("Policy synthesis returned insufficient policies")
+        validation_reasons: list[str] = []
+        for attempt_idx in range(2):
+            repair_mode = attempt_idx == 1
+            attempt_lines = list(user_lines)
+            if repair_mode and validation_reasons:
+                attempt_lines.extend(
+                    [
+                        "Previous output failed validation for reasons:",
+                        str(validation_reasons[:8]),
+                        "Regenerate fully corrected policies.",
+                    ]
+                )
+            payload = self._client.chat(_render_system(repair_mode=repair_mode), "\n".join(attempt_lines))
+            if not isinstance(payload, dict):
+                raise ChamberReplyError("Invalid policy synthesis payload")
+            raw_policies = payload.get("policies", [])
+            if not isinstance(raw_policies, list) or len(raw_policies) < count:
+                raise ChamberReplyError("Policy synthesis returned insufficient policies")
 
-        policies = [DynamicPolicy.from_llm(item, actor="mayor") for item in raw_policies[:count]]
-        policies = MayorAdvisor._sanitize_options(policies)
-        for policy in policies:
-            self._ensure_policy_trace(
-                policy,
-                constraints=constraints,
-                transcript=transcript_window,
-                advisor_portfolios=advisor_portfolios,
-            )
+            policies = [DynamicPolicy.from_llm(item, actor="mayor") for item in raw_policies[:count]]
+            policies = MayorAdvisor._sanitize_options(policies)
+            for policy in policies:
+                self._ensure_policy_trace(
+                    policy,
+                    constraints=constraints,
+                    transcript=transcript_window,
+                    advisor_meta=advisor_meta,
+                )
+            try:
+                self._validate_policy_batch(
+                    policies,
+                    constraints=constraints,
+                    transcript=transcript_window,
+                )
+                summary = " ".join(str(payload.get("conclusion_summary", "")).split()).strip()
+                if not summary:
+                    summary = "Council converged on a three-policy bundle balancing delivery, trust, and risk control."
+                return policies, summary[:320]
+            except ChamberPolicyValidationError as exc:
+                validation_reasons = list(exc.reasons)
+                if attempt_idx == 1:
+                    raise
 
-        summary = " ".join(str(payload.get("conclusion_summary", "")).split()).strip()
-        if not summary:
-            summary = "Council converged on a three-policy bundle balancing delivery, trust, and risk control."
-        return policies, summary[:320]
+        raise ChamberPolicyValidationError(validation_reasons)

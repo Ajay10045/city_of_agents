@@ -28,6 +28,7 @@ from llm.advisor_chat import AdvisorChat
 from llm.advisory_chamber import (
     AdvisoryChamber,
     ChamberPolicyUnavailableError,
+    ChamberPolicyValidationError,
     ChamberReplyError,
 )
 from llm.llm_client import _load_env
@@ -2484,6 +2485,27 @@ class GameHandler(BaseHTTPRequestHandler):
                     "error": str(exc),
                 },
                 503,
+            )
+            return
+        except ChamberPolicyValidationError as exc:
+            _advisor_debug_log(
+                "generate_policies",
+                game_id,
+                (time.time() - started) * 1000,
+                status="invalid",
+                reason=str(exc)[:180],
+                constraints=bool(constraints),
+                transcript_messages=len(generated_from_message_ids) if "generated_from_message_ids" in locals() else 0,
+            )
+            _json_response(
+                self,
+                {
+                    "api_version": "v1",
+                    "game_id": game_id,
+                    "error": "Generated policies failed quality checks",
+                    "detail": exc.reasons[:8],
+                },
+                422,
             )
             return
         except Exception as exc:
