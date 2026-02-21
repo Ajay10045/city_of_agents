@@ -17,6 +17,32 @@
         "url": "https://www.stat.go.jp/english/",
         "snippet": "Labor market and demographic trend baselines."
       }
+    ],
+    "media_outlets": [
+      {
+        "id": "ward_policy_desk",
+        "name": "Ward Policy Desk",
+        "lean": "mayor",
+        "bias": 4.0,
+        "sensationalism": 41.0,
+        "trust": 61.0
+      },
+      {
+        "id": "commuter_mirror",
+        "name": "Commuter Mirror",
+        "lean": "opposition",
+        "bias": -5.2,
+        "sensationalism": 56.0,
+        "trust": 48.0
+      },
+      {
+        "id": "tokyo_city_line",
+        "name": "Tokyo City Line",
+        "lean": "neutral",
+        "bias": -0.3,
+        "sensationalism": 49.0,
+        "trust": 56.0
+      }
     ]
   },
   "identity_groups": [

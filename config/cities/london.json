@@ -17,6 +17,32 @@
         "url": "https://www.ons.gov.uk/",
         "snippet": "Regional labor and inflation indicators."
       }
+    ],
+    "media_outlets": [
+      {
+        "id": "westminster_wire",
+        "name": "Westminster Wire",
+        "lean": "mayor",
+        "bias": 4.5,
+        "sensationalism": 45.0,
+        "trust": 59.0
+      },
+      {
+        "id": "high_street_ledger",
+        "name": "High Street Ledger",
+        "lean": "opposition",
+        "bias": -5.5,
+        "sensationalism": 58.0,
+        "trust": 47.0
+      },
+      {
+        "id": "thames_report",
+        "name": "Thames Report",
+        "lean": "neutral",
+        "bias": 0.2,
+        "sensationalism": 51.0,
+        "trust": 54.0
+      }
     ]
   },
   "identity_groups": [

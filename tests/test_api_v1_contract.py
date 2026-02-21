@@ -6,6 +6,7 @@ from http.server import ThreadingHTTPServer
 from types import MethodType
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+import re
 
 import pytest
 
@@ -30,6 +31,22 @@ def _http_text(url: str) -> tuple[int, str]:
     req = Request(url, method="GET")
     with urlopen(req, timeout=30) as response:
         return response.status, response.read().decode("utf-8")
+
+
+def _http_stream_events(url: str, payload: dict) -> tuple[int, list[dict]]:
+    body = json.dumps(payload).encode("utf-8")
+    req = Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
+    with urlopen(req, timeout=30) as response:
+        raw = response.read().decode("utf-8")
+        events: list[dict] = []
+        for chunk in raw.split("\n\n"):
+            if not chunk.startswith("data: "):
+                continue
+            try:
+                events.append(json.loads(chunk[len("data: ") :]))
+            except json.JSONDecodeError:
+                continue
+        return response.status, events
 
 
 @pytest.fixture()
@@ -169,19 +186,26 @@ def _install_stubbed_turn_flow(game_id: str) -> None:
 
     session.turn_manager.get_mayor_options = MethodType(fake_get_mayor_options, session.turn_manager)
     session.turn_manager.stream_step = MethodType(fake_stream_step, session.turn_manager)
+    with session.action_lock:
+        session.advisor_sessions.clear()
+        session.advisor_session_by_turn.clear()
+        session.advisor_options_cache.clear()
+        session.turn_manager._cached_mayor_options = {}
 
 
 def test_v1_create_game_and_state_contract(api_server: str) -> None:
     status, payload = _http_json(
         "POST",
         f"{api_server}/v1/games",
-        {"seed": 7, "turns": 5, "agent_count": 1000, "llm_panel_size": 100},
+        {"seed": 7, "turns": 5, "agent_count": 12},
     )
     assert status == 201
     assert payload["api_version"] == "v1"
     assert isinstance(payload["game_id"], str) and payload["game_id"]
     assert payload["state"]["turn_number"] == 0
     assert payload["state"]["total_turns"] == 5
+    assert len(payload["state"]["media_state"]["outlets"]) == 3
+    assert all("name" in outlet for outlet in payload["state"]["media_state"]["outlets"])
 
 
 def test_v1_setup_options_contract(api_server: str) -> None:
@@ -191,13 +215,12 @@ def test_v1_setup_options_contract(api_server: str) -> None:
 
     city_ids = {item["id"] for item in payload["cities"]}
     assert city_ids == {"new_delhi", "new_york", "london", "tokyo", "dubai"}
-    assert payload["defaults"]["turns_to_election"] == 10
-    assert payload["defaults"]["agent_count"] == 5000
-    assert payload["defaults"]["llm_panel_size"] == 500
-    assert payload["defaults"]["llm_sampling_strategy"] == "stratified"
-    assert payload["limits"]["agent_count"]["min"] == 1000
-    assert payload["limits"]["agent_count"]["max"] == 50000
-    assert sorted(payload["limits"]["llm_sampling_strategy"]) == ["none", "stratified", "uniform"]
+    assert payload["defaults"]["turns"] == 10
+    assert payload["defaults"]["agent_count"] == 12
+    assert payload["limits"]["turns"]["min"] == 3
+    assert payload["limits"]["turns"]["max"] == 100
+    assert payload["limits"]["agent_count"]["min"] == 10
+    assert payload["limits"]["agent_count"]["max"] == 15
     assert all("profile_ready" in city for city in payload["cities"])
     assert all("profile_version" in city for city in payload["cities"])
 
@@ -216,6 +239,7 @@ def test_v1_setup_city_status_and_profile_contract(api_server: str) -> None:
     assert profile_payload["city_id"] == "new_delhi"
     assert "identity_groups" in profile_payload["profile"]
     assert profile_payload["profile"]["meta"]["city_id"] == "new_delhi"
+    assert len(profile_payload["profile"]["meta"]["media_outlets"]) == 3
 
 
 def test_v1_setup_city_generate_returns_cached(api_server: str) -> None:
@@ -230,57 +254,44 @@ def test_v1_setup_city_generate_returns_cached(api_server: str) -> None:
     assert payload["status"] in {"generated", "cached"}
 
 
-def test_v1_create_game_accepts_agent_impact_setup_fields(api_server: str) -> None:
+def test_v1_create_game_uses_simplified_setup_contract(api_server: str) -> None:
     status, payload = _http_json(
         "POST",
         f"{api_server}/v1/games",
         {
             "seed": 123,
-            "turns": 30,
-            "turns_to_election": 9,
+            "turns": 9,
             "city_id": "new_delhi",
-            "population_scale": 60000,
-            "agent_count": 5000,
-            "llm_panel_size": 600,
-            "llm_sampling_strategy": "stratified",
-            "llm_micro_batch_size": 24,
-            "max_parallel_llm_requests": 10,
-            "randomness_scale": 0.17,
+            "agent_count": 12,
         },
     )
     assert status == 201
-    assert payload["setup"]["turns_to_election"] == 9
+    assert payload["setup"]["turns"] == 9
     assert payload["setup"]["city_id"] == "new_delhi"
-    assert payload["setup"]["population_scale"] == 60000
-    assert payload["setup"]["agent_count"] == 5000
-    assert payload["setup"]["llm_panel_size"] == 600
-    assert payload["setup"]["llm_sampling_strategy"] == "stratified"
-    assert payload["setup"]["llm_micro_batch_size"] == 24
-    assert payload["setup"]["max_parallel_llm_requests"] == 10
-    assert payload["setup"]["randomness_scale"] == 0.17
-    assert payload["state"]["simulation_profile"]["actual_agent_count"] == 5000
-    assert payload["state"]["simulation_profile"]["agent_count"] == 5000
-    assert payload["state"]["simulation_profile"]["randomness_scale"] == 0.17
+    assert payload["setup"]["agent_count"] == 12
+    assert payload["state"]["simulation_profile"]["actual_agent_count"] == 12
+    assert payload["state"]["simulation_profile"]["agent_count"] == 12
     assert payload["state"]["election_turn"] == 9
+    assert payload["state"]["total_turns"] == 9
 
     state_status, state_payload = _http_json(
         "GET", f"{api_server}/v1/games/{payload['game_id']}/state"
     )
     assert state_status == 200
-    assert state_payload["setup"]["agent_count"] == 5000
-    assert state_payload["state"]["simulation_profile"]["llm_panel_size"] == 600
+    assert state_payload["setup"]["agent_count"] == 12
+    assert state_payload["state"]["election_turn"] == state_payload["state"]["total_turns"]
 
 
 def test_v1_city_profile_changes_identity_groups_between_cities(api_server: str) -> None:
     delhi_status, delhi_payload = _http_json(
         "POST",
         f"{api_server}/v1/games",
-        {"seed": 211, "turns": 5, "city_id": "new_delhi", "agent_count": 1000, "llm_panel_size": 100},
+        {"seed": 211, "turns": 5, "city_id": "new_delhi", "agent_count": 12},
     )
     ny_status, ny_payload = _http_json(
         "POST",
         f"{api_server}/v1/games",
-        {"seed": 212, "turns": 5, "city_id": "new_york", "agent_count": 1000, "llm_panel_size": 100},
+        {"seed": 212, "turns": 5, "city_id": "new_york", "agent_count": 12},
     )
     assert delhi_status == 201
     assert ny_status == 201
@@ -292,16 +303,35 @@ def test_v1_city_profile_changes_identity_groups_between_cities(api_server: str)
     assert delhi_groups != ny_groups
 
 
+def test_v1_city_profile_sets_city_specific_media_outlets(api_server: str) -> None:
+    city_ids = ["new_delhi", "new_york", "london", "tokyo", "dubai"]
+    outlet_sets: dict[str, tuple[str, ...]] = {}
+
+    for city_id in city_ids:
+        status, payload = _http_json(
+            "POST",
+            f"{api_server}/v1/games",
+            {"seed": 300 + len(outlet_sets), "turns": 5, "city_id": city_id, "agent_count": 12},
+        )
+        assert status == 201
+        outlets = payload["state"]["media_state"]["outlets"]
+        assert len(outlets) == 3
+        outlet_sets[city_id] = tuple(outlet["name"] for outlet in outlets)
+
+    assert len(set(outlet_sets.values())) == len(city_ids)
+
+
 @pytest.mark.parametrize(
     ("request_payload", "error_contains"),
     [
         ({"city_id": "unknown_city"}, "city_id must be one of"),
-        ({"agent_count": 1000, "llm_panel_size": 2000}, "llm_panel_size must be <= agent_count"),
-        ({"llm_sampling_strategy": "bad"}, "llm_sampling_strategy must be one of"),
-        ({"randomness_scale": 1.5}, "randomness_scale must be between"),
+        ({"agent_count": 1000}, "agent_count must be between"),
+        ({"turns_to_election": 9}, "turns_to_election is no longer supported"),
+        ({"llm_sampling_strategy": "bad"}, "llm_sampling_strategy is no longer supported"),
+        ({"randomness_scale": 1.5}, "randomness_scale is no longer supported"),
     ],
 )
-def test_v1_create_game_rejects_invalid_agent_impact_setup(
+def test_v1_create_game_rejects_invalid_or_deprecated_setup_fields(
     api_server: str, request_payload: dict, error_contains: str
 ) -> None:
     status, payload = _http_json("POST", f"{api_server}/v1/games", request_payload)
@@ -313,7 +343,7 @@ def test_v1_policies_actions_and_events_stream(api_server: str) -> None:
     create_status, game_payload = _http_json(
         "POST",
         f"{api_server}/v1/games",
-        {"seed": 11, "turns": 5, "agent_count": 1000, "llm_panel_size": 100},
+        {"seed": 11, "turns": 5, "agent_count": 12},
     )
     assert create_status == 201
     game_id = game_payload["game_id"]
@@ -376,7 +406,7 @@ def test_v1_counter_frames_contract(api_server: str) -> None:
     create_status, game_payload = _http_json(
         "POST",
         f"{api_server}/v1/games",
-        {"seed": 27, "turns": 5, "agent_count": 1000, "llm_panel_size": 100},
+        {"seed": 27, "turns": 5, "agent_count": 12},
     )
     assert create_status == 201
     game_id = game_payload["game_id"]
@@ -402,7 +432,7 @@ def test_v1_turn_archive_and_media_timeline_contract(api_server: str) -> None:
     create_status, game_payload = _http_json(
         "POST",
         f"{api_server}/v1/games",
-        {"seed": 19, "turns": 5, "agent_count": 1000, "llm_panel_size": 100},
+        {"seed": 19, "turns": 5, "agent_count": 12},
     )
     assert create_status == 201
     game_id = game_payload["game_id"]
@@ -448,7 +478,7 @@ def test_v1_advisor_session_message_and_revise_contract(api_server: str) -> None
     create_status, game_payload = _http_json(
         "POST",
         f"{api_server}/v1/games",
-        {"seed": 31, "turns": 5, "agent_count": 1000, "llm_panel_size": 100},
+        {"seed": 31, "turns": 5, "agent_count": 12},
     )
     assert create_status == 201
     game_id = game_payload["game_id"]
@@ -462,6 +492,7 @@ def test_v1_advisor_session_message_and_revise_contract(api_server: str) -> None
     advisor_session = create_session_payload["session"]
     session_id = advisor_session["advisor_session_id"]
     assert len(advisor_session["options"]) >= 1
+    assert len(advisor_session["advisors"]) == 3
 
     option_id = advisor_session["options"][0]["id"]
     msg_status, msg_payload = _http_json(
@@ -476,6 +507,18 @@ def test_v1_advisor_session_message_and_revise_contract(api_server: str) -> None
     assert msg_status == 200
     assert "answer" in msg_payload
     assert msg_payload["session"]["advisor_session_id"] == session_id
+    advisor_msgs = [
+        message
+        for message in msg_payload["session"]["option_threads"][option_id]
+        if message["role"] == "advisor"
+    ]
+    assert advisor_msgs
+    assert advisor_msgs[-1].get("speaker_advisor_id")
+    structured = advisor_msgs[-1].get("structured", {})
+    assert structured.get("stance") in {"agree", "challenge", "extend"}
+    assert structured.get("portfolio_focus")
+    assert isinstance(structured.get("responds_to_message_ids"), list)
+    assert structured.get("distinctive_risk")
 
     revise_single_status, revise_single_payload = _http_json(
         "POST",
@@ -503,11 +546,299 @@ def test_v1_advisor_session_message_and_revise_contract(api_server: str) -> None
     assert len(revise_full_payload["options"]) == 5
 
 
+def test_v1_advisor_generate_policies_contract(api_server: str) -> None:
+    create_status, game_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games",
+        {"seed": 91, "turns": 5, "agent_count": 12},
+    )
+    assert create_status == 201
+    game_id = game_payload["game_id"]
+
+    session_status, session_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games/{game_id}/advisor/sessions",
+        {},
+    )
+    assert session_status in {200, 201}
+    session_id = session_payload["session"]["advisor_session_id"]
+
+    msg_status, _ = _http_json(
+        "POST",
+        f"{api_server}/v1/games/{game_id}/advisor/sessions/{session_id}/messages",
+        {
+            "thread_scope": "global",
+            "question": "Prioritize jobs while protecting public trust.",
+        },
+    )
+    assert msg_status == 200
+
+    # Force a deterministic "live" chamber response for contract validation.
+    import server as server_module
+
+    class _StubLiveChamberClient:
+        @staticmethod
+        def chat(system: str, user: str) -> dict:
+            if "synthesizing final mayor policy options" in system.lower():
+                return {
+                    "conclusion_summary": "Council converged on job delivery with trust safeguards.",
+                    "policies": [
+                        {
+                            "name": "Ward Jobs Delivery Sprint",
+                            "description": "Launch ward-level jobs contracts with weekly progress publication.",
+                            "rationale": "Combines visible employment support with delivery transparency.",
+                            "why_now": "Jobs pressure is acute and delivery credibility must be protected simultaneously.",
+                            "effects": {"employment": 2.9, "public_trust": 1.1},
+                            "group_effects": [],
+                            "campaign_strength": 1.08,
+                            "media_effects": {"trust": 0.6},
+                            "target_groups": ["Workers", "Youth"],
+                            "expected_stat_delta": {"employment": 2.6, "public_trust": 1.0},
+                            "opposition_counter_risk": 0.51,
+                            "narrative_fronts_impacted": {"economy": 2.4, "public_trust": 1.2},
+                            "confidence": 0.67,
+                            "assumptions": ["Contract disbursal remains on schedule."],
+                            "tradeoffs": ["Requires tight milestone monitoring."],
+                            "counter_narrative_risk": "Opposition may attack if milestones slip.",
+                            "deliberation_trace": {
+                                "mayor_direction_used": "Prioritize jobs while protecting public trust.",
+                                "advisor_inputs_used": [
+                                    {
+                                        "advisor_id": "fiscal_growth",
+                                        "portfolio": "economy",
+                                        "point": "Tie employment push to auditable milestones.",
+                                    },
+                                    {
+                                        "advisor_id": "social_cohesion",
+                                        "portfolio": "public_trust",
+                                        "point": "Include visible service reliability safeguards.",
+                                    },
+                                ],
+                            },
+                        },
+                        {
+                            "name": "Service Reliability Compact",
+                            "description": "Commit to service uptime SLAs in high-friction wards with public dashboards.",
+                            "rationale": "Stabilizes trust while preserving room for growth initiatives.",
+                            "why_now": "Trust risk is rising and predictable services are the fastest confidence signal.",
+                            "effects": {"public_trust": 2.0, "services": 1.3},
+                            "group_effects": [],
+                            "campaign_strength": 1.05,
+                            "media_effects": {"trust": 0.8},
+                            "target_groups": ["Undecided Voters"],
+                            "expected_stat_delta": {"public_trust": 1.7},
+                            "opposition_counter_risk": 0.46,
+                            "narrative_fronts_impacted": {"public_trust": 2.3},
+                            "confidence": 0.64,
+                            "assumptions": ["Departments can meet weekly SLAs."],
+                            "tradeoffs": ["Narrows execution bandwidth for new pilots."],
+                            "counter_narrative_risk": "Opposition may call targets cosmetic.",
+                            "deliberation_trace": {
+                                "mayor_direction_used": "Prioritize jobs while protecting public trust.",
+                                "advisor_inputs_used": [
+                                    {
+                                        "advisor_id": "social_cohesion",
+                                        "portfolio": "services",
+                                        "point": "Use grievance closure metrics as trust proof.",
+                                    }
+                                ],
+                                "disagreement_resolved": "Balanced growth speed with trust safeguards.",
+                            },
+                        },
+                        {
+                            "name": "Integrity Procurement Pulse",
+                            "description": "Publish contract milestones and anti-leak controls for job-linked spending.",
+                            "rationale": "Protects the jobs narrative from corruption attacks.",
+                            "why_now": "Delivery spending will be questioned unless procurement transparency is visible.",
+                            "effects": {"corruption": -2.1, "public_trust": 1.3},
+                            "group_effects": [],
+                            "campaign_strength": 1.04,
+                            "media_effects": {"bias": -0.4, "trust": 0.7},
+                            "target_groups": ["Middle Class", "Civic Networks"],
+                            "expected_stat_delta": {"corruption": -1.9, "public_trust": 1.1},
+                            "opposition_counter_risk": 0.43,
+                            "narrative_fronts_impacted": {"corruption": 2.0, "public_trust": 1.5},
+                            "confidence": 0.66,
+                            "assumptions": ["Audit teams are fully staffed."],
+                            "tradeoffs": ["Can delay contract award speed."],
+                            "counter_narrative_risk": "Opposition may claim selective disclosure.",
+                            "deliberation_trace": {
+                                "mayor_direction_used": "Prioritize jobs while protecting public trust.",
+                                "advisor_inputs_used": [
+                                    {
+                                        "advisor_id": "governance_risk",
+                                        "portfolio": "corruption",
+                                        "point": "Prevent leakage narrative through proactive disclosures.",
+                                    }
+                                ],
+                            },
+                        },
+                    ],
+                }
+            match = re.search(r"Advisor portfolios:\s*(.+)", user)
+            portfolio = (match.group(1).split(",")[0].strip() if match else "public_trust")
+            return {
+                "stance": "extend",
+                "portfolio_focus": portfolio,
+                "response_text": f"From the {portfolio} lens, sequence delivery milestones with trust safeguards and publish a weekly risk trigger.",
+                "references_to_prior": [],
+                "distinctive_risk": f"{portfolio} credibility erosion if milestones miss two consecutive weeks.",
+            }
+
+    chamber = server_module._advisory_chamber
+    original_client = chamber._client
+    original_disable_live = chamber._disable_live
+    chamber._client = _StubLiveChamberClient()
+    chamber._disable_live = False
+    try:
+        generate_status, generate_payload = _http_json(
+            "POST",
+            f"{api_server}/v1/games/{game_id}/advisor/sessions/{session_id}/generate-policies",
+            {"count": 3, "constraints": "Favor delivery realism over high-risk swings."},
+        )
+    finally:
+        chamber._client = original_client
+        chamber._disable_live = original_disable_live
+    assert generate_status == 200
+    assert generate_payload["api_version"] == "v1"
+    assert generate_payload["session"]["advisor_session_id"] == session_id
+    assert len(generate_payload["policies"]) == 3
+    assert len(generate_payload["session"]["options"]) == 3
+    assert isinstance(generate_payload["conclusion_summary"], str)
+    assert isinstance(generate_payload["generated_from_message_ids"], list)
+    blocked_markers = [
+        "generate exactly",
+        "advisor council roster",
+        "recent chamber discussion",
+        "explicit mayor constraints",
+        "priority constraint:",
+        "revised guidance:",
+        "policy generation brief",
+    ]
+    for policy in generate_payload["policies"]:
+        text_blob = " ".join(
+            [
+                str(policy.get("name", "")),
+                str(policy.get("description", "")),
+                str(policy.get("why_now", "")),
+                str(policy.get("rationale", "")),
+            ]
+        ).lower()
+        for marker in blocked_markers:
+            assert marker not in text_blob
+        assert isinstance(policy.get("deliberation_trace"), dict)
+        trace = policy.get("deliberation_trace") or {}
+        assert trace.get("mayor_direction_used")
+        assert isinstance(trace.get("advisor_inputs_used"), list)
+
+    policies_status, policies_payload = _http_json(
+        "GET", f"{api_server}/v1/games/{game_id}/policies"
+    )
+    assert policies_status == 200
+    assert len(policies_payload["policies"]) == 3
+
+
+def test_v1_advisor_generate_policies_unavailable_requires_live_model(api_server: str) -> None:
+    create_status, game_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games",
+        {"seed": 92, "turns": 5, "agent_count": 12},
+    )
+    assert create_status == 201
+    game_id = game_payload["game_id"]
+
+    session_status, session_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games/{game_id}/advisor/sessions",
+        {},
+    )
+    assert session_status in {200, 201}
+    session_id = session_payload["session"]["advisor_session_id"]
+
+    generate_status, generate_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games/{game_id}/advisor/sessions/{session_id}/generate-policies",
+        {"count": 3, "constraints": "Prefer low-risk execution."},
+    )
+    assert generate_status == 503
+    assert (
+        generate_payload["error"]
+        == "Policy generation requires live advisor model availability."
+    )
+
+
+def test_v1_advisor_session_force_refresh_string_false_is_not_truthy(api_server: str) -> None:
+    create_status, game_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games",
+        {"seed": 191, "turns": 5, "agent_count": 12},
+    )
+    assert create_status == 201
+    game_id = game_payload["game_id"]
+
+    first_status, first_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games/{game_id}/advisor/sessions",
+        {},
+    )
+    assert first_status in {200, 201}
+    first_id = first_payload["session"]["advisor_session_id"]
+
+    second_status, second_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games/{game_id}/advisor/sessions",
+        {"force_refresh": "false"},
+    )
+    assert second_status in {200, 201}
+    assert second_payload["session"]["advisor_session_id"] == first_id
+
+
+def test_v1_advisor_message_stream_contract(api_server: str) -> None:
+    create_status, game_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games",
+        {"seed": 291, "turns": 5, "agent_count": 12},
+    )
+    assert create_status == 201
+    game_id = game_payload["game_id"]
+
+    session_status, session_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games/{game_id}/advisor/sessions",
+        {},
+    )
+    assert session_status in {200, 201}
+    session_id = session_payload["session"]["advisor_session_id"]
+
+    stream_status, events = _http_stream_events(
+        f"{api_server}/v1/games/{game_id}/advisor/sessions/{session_id}/messages/stream",
+        {
+            "thread_scope": "global",
+            "question": "How do we protect trust while improving jobs this turn?",
+        },
+    )
+    assert stream_status == 200
+    assert events
+    event_types = [event.get("event_type") for event in events]
+    assert "mayor_message_accepted" in event_types
+    assert event_types.count("advisor_message_start") == 3
+    assert event_types.count("advisor_message_done") == 3
+    assert "session_snapshot" in event_types
+    assert event_types[-1] == "done"
+    done_events = [event for event in events if event.get("event_type") == "advisor_message_done"]
+    assert all(event.get("speaker_advisor_id") for event in done_events)
+    assert all(isinstance(event.get("structured"), dict) for event in done_events)
+    assert all(
+        event.get("structured", {}).get("stance") in {"agree", "challenge", "extend"}
+        for event in done_events
+    )
+
+
 def test_v1_stale_advisor_session_rejected_for_message_and_revise(api_server: str) -> None:
     create_status, game_payload = _http_json(
         "POST",
         f"{api_server}/v1/games",
-        {"seed": 51, "turns": 5, "agent_count": 1000, "llm_panel_size": 100},
+        {"seed": 51, "turns": 5, "agent_count": 12},
     )
     assert create_status == 201
     game_id = game_payload["game_id"]
@@ -565,7 +896,7 @@ def test_v1_actions_reject_stale_policy_id_after_refresh(api_server: str) -> Non
     create_status, game_payload = _http_json(
         "POST",
         f"{api_server}/v1/games",
-        {"seed": 53, "turns": 5, "agent_count": 1000, "llm_panel_size": 100},
+        {"seed": 53, "turns": 5, "agent_count": 12},
     )
     assert create_status == 201
     game_id = game_payload["game_id"]
@@ -629,7 +960,7 @@ def test_v1_expected_turn_conflict_and_idempotent_replay(api_server: str) -> Non
     create_status, game_payload = _http_json(
         "POST",
         f"{api_server}/v1/games",
-        {"seed": 13, "turns": 5, "agent_count": 1000, "llm_panel_size": 100},
+        {"seed": 13, "turns": 5, "agent_count": 12},
     )
     assert create_status == 201
     game_id = game_payload["game_id"]
@@ -670,7 +1001,7 @@ def test_v1_join_role_validation_and_participant_authorization(api_server: str) 
     create_status, game_payload = _http_json(
         "POST",
         f"{api_server}/v1/games",
-        {"seed": 17, "turns": 5, "agent_count": 1000, "llm_panel_size": 100},
+        {"seed": 17, "turns": 5, "agent_count": 12},
     )
     assert create_status == 201
     game_id = game_payload["game_id"]
