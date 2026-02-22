@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   createGame,
   fetchMediaTimeline,
@@ -9,6 +9,7 @@ import {
 } from './api'
 import type {
   DebateResult,
+  DeliveryReport,
   DynamicPolicy,
   ElectionResult,
   GameSetupConfig,
@@ -87,6 +88,8 @@ export default function App() {
   const [setupConfig, setSetupConfig] = useState<GameSetupConfig | null>(null)
   const [setupError, setSetupError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [lastDeliveryReport, setLastDeliveryReport] = useState<DeliveryReport | null>(null)
+  const [lastImplementedPolicyName, setLastImplementedPolicyName] = useState<string | null>(null)
 
   const formatTopStatDeltas = (deltas: Record<string, number>, limit = 3): string => {
     const rows = Object.entries(deltas)
@@ -113,6 +116,8 @@ export default function App() {
     setTurnMayorAction(null)
     setTurnOppAction(null)
     setTurnTriggeredEvents([])
+    setLastDeliveryReport(null)
+    setLastImplementedPolicyName(null)
   }
 
   const prepareTurnPanels = () => {
@@ -232,11 +237,14 @@ export default function App() {
             const action = msg.action
             mayorAction = action
             setTurnMayorAction(action)
+            setLastImplementedPolicyName(action.name)
+            setLastDeliveryReport(null)
             setStream((s) => [
               ...s,
               {
                 kind: 'mayor',
                 turn: messageTurn,
+                phase: 'Policy Proposed',
                 label: `🏛 Mayor: ${action.name}`,
                 name: action.description || action.name,
                 rationale:
@@ -258,12 +266,60 @@ export default function App() {
               {
                 kind: 'opposition',
                 turn: messageTurn,
+                phase: 'Opposition Response',
                 label: `⚔ Opposition: ${action.name}`,
                 name: action.description || action.name,
                 rationale:
                   msg.type === 'opposition_frame_primary'
                     ? msg.message ?? action.rationale
                     : action.rationale,
+              },
+            ])
+          }
+
+          if (msg.type === 'agent_impact_assessed') {
+            const s = msg.summary
+            setStream((prev) => [
+              ...prev,
+              {
+                kind: 'impact',
+                turn: messageTurn,
+                phase: 'Initial Public Reception',
+                label: '👥 Agent Impact Assessed',
+                name: `${s.agent_count_evaluated} agents evaluated · avg happiness ${s.avg_happiness_delta >= 0 ? '+' : ''}${s.avg_happiness_delta.toFixed(2)}`,
+                why: `LLM panels: ${s.llm_panel_count} (${(s.llm_panel_coverage_ratio * 100).toFixed(0)}% coverage)`,
+                meta: `Dominant fronts: ${(s.dominant_fronts ?? []).join(', ') || 'none'}`,
+              },
+            ])
+          }
+
+          if (msg.type === 'implementation_gap_assessed') {
+            const dr = msg.delivery_report
+            setLastDeliveryReport(dr)
+            const targets = (dr.targets ?? []).slice(0, 3).map((t) => ({
+              label: t.label,
+              unit: t.unit,
+              proposed: t.proposed,
+              delivered: t.delivered,
+              completionRatio: t.completion_ratio,
+            }))
+            setStream((prev) => [
+              ...prev,
+              {
+                kind: 'impact',
+                turn: messageTurn,
+                phase: 'Execution Check',
+                label: '🔍 Execution: Promised vs Implemented',
+                name: `Completion ${((dr.execution_score ?? 0) * 100).toFixed(1)}% · Gap ${((dr.implementation_gap ?? 0) * 100).toFixed(1)}%`,
+                why: dr.summary || undefined,
+                delivery: {
+                  completionPct: (dr.execution_score ?? 0) * 100,
+                  implementationGapPct: (dr.implementation_gap ?? 0) * 100,
+                  budgetRequired: dr.budget_required ?? 0,
+                  budgetSpent: dr.budget_spent ?? 0,
+                  summary: dr.summary || undefined,
+                  targets,
+                },
               },
             ])
           }
@@ -288,6 +344,24 @@ export default function App() {
               }))
               setStreetChatter((current) => [...fallback, ...current].slice(0, 250))
             }
+            const perceptionItems = (chatterItems.length > 0 ? chatterItems : []).slice(0, 3)
+            if (perceptionItems.length > 0) {
+              setStream((s) => [
+                ...s,
+                {
+                  kind: 'media',
+                  turn: messageTurn,
+                  phase: 'Post-Implementation Perception',
+                  label: '💬 Street Perception',
+                  name: `${perceptionItems.length} citizen reactions · Fronts: ${(msg.dominant_fronts ?? []).join(', ') || 'none'}`,
+                  perception: perceptionItems.map((c) => ({
+                    speaker: c.speaker ?? 'Citizen',
+                    sentiment: String(c.sentiment ?? 'mixed'),
+                    line: c.line ?? '',
+                  })),
+                },
+              ])
+            }
           }
 
           if (msg.type === 'simulation_stats_applied') {
@@ -300,9 +374,11 @@ export default function App() {
               {
                 kind: 'impact',
                 turn: messageTurn,
+                phase: 'City Stats Changed',
                 label: '📉 Simulation Stats Applied',
                 name: topDeltas || `${Object.keys(msg.stat_deltas ?? {}).length} major stat deltas`,
                 statDeltas: msg.stat_deltas ?? {},
+                why: topDeltas ? `Top movers: ${topDeltas}` : undefined,
                 meta:
                   `Events: ${(msg.triggered_events ?? []).join(', ') || 'none'}` +
                   ` · Escalations: ${(msg.escalated_events ?? []).join(', ') || 'none'}`,
@@ -316,6 +392,7 @@ export default function App() {
               {
                 kind: 'impact',
                 turn: messageTurn,
+                phase: 'Initial Public Reception',
                 label: '👥 Cohort Shifts Aggregated',
                 name: `${msg.cohorts.length} cohort impact rows`,
                 cohortShifts: msg.cohorts,
@@ -329,6 +406,7 @@ export default function App() {
               {
                 kind: 'impact',
                 turn: messageTurn,
+                phase: 'City Stats Changed',
                 label: '📊 Popularity Recalculated',
                 name: `Mayor ${msg.mayor_popularity.toFixed(1)}% · Opp ${msg.opposition_popularity.toFixed(1)}%`,
                 popularity: {
@@ -348,6 +426,7 @@ export default function App() {
                 {
                   kind: 'event',
                   turn: messageTurn,
+                  phase: 'Crisis Event',
                   label: `${ev.severity === 'major' ? '🚨' : ev.severity === 'moderate' ? '⚠️' : '⚡'} Crisis Emerged`,
                   name: ev.name,
                   description: ev.description,
@@ -366,6 +445,7 @@ export default function App() {
                 {
                   kind: 'media',
                   turn: messageTurn,
+                  phase: 'Media Narrative',
                   label: '🗞 Media Narrative',
                   name: msg.cards[0].headline,
                   meta: `${msg.cards.length} media card${msg.cards.length === 1 ? '' : 's'}`,
@@ -381,14 +461,17 @@ export default function App() {
           if (msg.type === 'turn_closed') {
             setTurnResultVisible(true)
             setState(msg.state)
+            const deliverySummary = msg.delivery_report?.summary ?? msg.turn_summary.delivery_summary
             setStream((s) => [
               ...s,
               {
                 kind: 'event',
                 turn: messageTurn,
+                phase: 'Turn Finalized',
                 label: '🏁 Turn Closed',
                 name: `Mayor: ${msg.turn_summary.mayor_action} · Opp: ${msg.turn_summary.opposition_action}`,
                 statDeltas: msg.stat_deltas ?? {},
+                why: deliverySummary || undefined,
                 turnSummary: {
                   mayorAction: msg.turn_summary.mayor_action,
                   oppositionAction: msg.turn_summary.opposition_action,
@@ -567,11 +650,12 @@ export default function App() {
                 }
                 void runTurnForPolicy(policyId)
               }}
+              deliveryReport={lastDeliveryReport}
+              implementedPolicyName={lastImplementedPolicyName}
             />
             <StreamFeedPanel
               items={stream}
               visible={busy || stream.length > 0}
-              identityGroups={state.identity_groups}
             />
           </main>
           <aside className="layout-right">

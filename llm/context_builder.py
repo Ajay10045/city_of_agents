@@ -53,6 +53,10 @@ def build_city_context(game_state: "GameState") -> str:
         f"Popularity: Mayor {s.mayor_popularity:.1f}% | Opposition {s.opposition_popularity:.1f}%."
     )
     lines.append(
+        f"Governing capacity: political_capital {s.political_capital:.1f}/100, "
+        f"campaign_funds {s.campaign_funds:.0f}, opposition_budget {s.opposition_budget:.0f}."
+    )
+    lines.append(
         f"Mayor credibility: {s.credibility_score:.1f}/100 (delta this turn {s.last_credibility_delta:+.2f})."
     )
 
@@ -91,6 +95,18 @@ def build_city_context(game_state: "GameState") -> str:
     if s.long_term_effects:
         lt_parts = [f"{e.source_id} ({e.actor}, {e.remaining_turns} turns left)" for e in s.long_term_effects]
         lines.append("Ongoing policy effects: " + "; ".join(lt_parts) + ".")
+
+    if s.last_delivery_report:
+        delivery_summary = str(s.last_delivery_report.get("summary", "")).strip()
+        implementation_gap = s.last_delivery_report.get("implementation_gap")
+        if delivery_summary:
+            if isinstance(implementation_gap, (int, float)):
+                lines.append(
+                    f"Latest implementation report: {delivery_summary} "
+                    f"(gap {float(implementation_gap) * 100:.1f}%)."
+                )
+            else:
+                lines.append(f"Latest implementation report: {delivery_summary}")
 
     open_promises = [p for p in s.promise_ledger if not p.get("resolved")]
     if open_promises:

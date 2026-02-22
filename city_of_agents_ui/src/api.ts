@@ -63,8 +63,8 @@ type ActionAcceptedResponse = {
   status: 'accepted'
   actor: 'mayor' | 'opposition'
   turn_number: number
-  events_emitted: number
-  last_event_id: number
+  events_emitted?: number
+  last_event_id?: number
   action_id?: string | null
   idempotent_replay?: boolean
 }
@@ -409,7 +409,7 @@ export async function streamTurn(
   await actionRes.json() as ActionAcceptedResponse
 
   return await new Promise<number>((resolve, reject) => {
-    const url = `/v1/games/${encodeURIComponent(gameId)}/events?after_event_id=${afterEventId}&follow=0&timeout=10`
+    const url = `/v1/games/${encodeURIComponent(gameId)}/events?after_event_id=${afterEventId}&follow=1&timeout=120`
     const es = new EventSource(url)
 
     let doneSeen = false
@@ -421,6 +421,9 @@ export async function streamTurn(
       onEvent(envelope.payload, envelope.event_id)
       if (envelope.payload.type === 'done') {
         doneSeen = true
+        es.close()
+        resolve(lastSeen)
+        return
       }
       if (envelope.payload.type === 'error') {
         es.close()

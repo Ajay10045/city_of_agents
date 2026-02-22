@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from queue import Empty, Queue
 from threading import Thread
 from typing import TYPE_CHECKING, Any
@@ -22,6 +23,14 @@ Return a JSON object with key "policies" containing a list of 5 policy objects. 
 - "description": 1 sentence explaining what the policy does in city terms
 - "rationale": 1-2 sentences explaining why a mayor might choose this now given the city state
 - "why_now": one concise paragraph linking this option to the city's current pressure points
+- "budget_cost": estimated policy cost as a positive number (city currency units)
+- "intent": one sentence stating what real-world measurable change this policy is trying to deliver
+- "implementation_targets": array of 1-4 objects with:
+  - "key": snake_case target id
+  - "label": readable target name
+  - "unit": jobs|km|sites|audits|patrols|zones|units
+  - "proposed": positive number of promised units
+  - "difficulty": 0.05 to 0.6 implementation difficulty
 - "effects": object with city stat changes. Keys from: economy, employment, law_and_order, infrastructure, environment, corruption, social_tension, media_freedom, public_trust. Values: floats -10 to +10. Only include stats actually affected. Use realistic magnitudes — most effects ±1 to ±5.
 - "group_effects": list of group impact objects. Each has "match" (object with one key: "religion", "caste", or "language" and the group's value), and some of: "happiness" (-8 to 8), "alignment" (-8 to 8), "radicalization" (-8 to 8). Only include groups actually affected.
 - "campaign_strength": float 0.9 to 1.4 (how much this boosts mayor campaign)
@@ -56,6 +65,21 @@ class MayorAdvisor:
         "tbd",
         "placeholder policy",
         "unnamed policy",
+    }
+    _GENERIC_TITLE_TOKENS = {
+        "strategic",
+        "action",
+        "plan",
+        "policy",
+        "option",
+        "initiative",
+        "program",
+        "project",
+        "proposal",
+        "unknown",
+        "unnamed",
+        "general",
+        "city",
     }
 
     def __init__(self) -> None:
@@ -106,6 +130,53 @@ class MayorAdvisor:
         out = dict(base)
         out[stat] = round(float(out.get(stat, 0.0)) + delta, 2)
         return out
+
+    @staticmethod
+    def _default_targets_for_focus(focus: str) -> list[dict[str, Any]]:
+        if focus == "jobs":
+            return [
+                {"key": "jobs_supported", "label": "Jobs Supported", "unit": "jobs", "proposed": 1200, "difficulty": 0.2},
+                {"key": "service_nodes_upgraded", "label": "Service Nodes Upgraded", "unit": "sites", "proposed": 14, "difficulty": 0.22},
+            ]
+        if focus == "fuel":
+            return [
+                {"key": "service_nodes_upgraded", "label": "Fuel Distribution Nodes", "unit": "sites", "proposed": 18, "difficulty": 0.24},
+                {"key": "infrastructure_km", "label": "Priority Corridor Reliability", "unit": "km", "proposed": 38, "difficulty": 0.28},
+            ]
+        if focus == "corruption":
+            return [
+                {"key": "audit_cycles", "label": "Procurement Audits", "unit": "audits", "proposed": 6, "difficulty": 0.18},
+                {"key": "service_nodes_upgraded", "label": "Contract Transparency Dashboards", "unit": "sites", "proposed": 8, "difficulty": 0.16},
+            ]
+        if focus == "safety":
+            return [
+                {"key": "safety_patrol_units", "label": "Safety Patrol Deployments", "unit": "patrols", "proposed": 10, "difficulty": 0.22},
+                {"key": "service_nodes_upgraded", "label": "Grievance Response Nodes", "unit": "sites", "proposed": 12, "difficulty": 0.20},
+            ]
+        if focus == "trust":
+            return [
+                {"key": "service_nodes_upgraded", "label": "Public Dashboard Releases", "unit": "sites", "proposed": 10, "difficulty": 0.16},
+                {"key": "audit_cycles", "label": "Independent Audit Reviews", "unit": "audits", "proposed": 4, "difficulty": 0.17},
+            ]
+        return [
+            {"key": "service_nodes_upgraded", "label": "Service Delivery Milestones", "unit": "sites", "proposed": 9, "difficulty": 0.2},
+        ]
+
+    def _attach_execution_blueprint(self, item: dict[str, Any], focus: str) -> dict[str, Any]:
+        data = dict(item)
+        if "budget_cost" not in data:
+            scale = 0.0
+            effects = data.get("effects", {})
+            if isinstance(effects, dict):
+                scale = sum(abs(float(value)) for value in effects.values() if isinstance(value, (int, float)))
+            data["budget_cost"] = round(max(180_000.0, 120_000.0 + scale * 85_000.0), 2)
+        if not str(data.get("intent", "")).strip():
+            data["intent"] = (
+                f"Deliver measurable {focus if focus != 'general' else 'city'} improvements this turn with trackable outcomes."
+            )
+        if not isinstance(data.get("implementation_targets"), list) or not data.get("implementation_targets"):
+            data["implementation_targets"] = self._default_targets_for_focus(focus)
+        return data
 
     def _focus_option_payload(self, focus: str) -> dict[str, Any]:
         if focus == "fuel":
@@ -309,7 +380,7 @@ class MayorAdvisor:
         ]
 
         if not instruction:
-            return fallback
+            return [self._attach_execution_blueprint(item, focus) for item in fallback]
 
         fallback[0] = self._focus_option_payload(focus)
         for index in range(1, len(fallback)):
@@ -329,7 +400,7 @@ class MayorAdvisor:
                 item["effects"] = self._shift_effect(item.get("effects", {}), "law_and_order", 0.8)
                 item["effects"] = self._shift_effect(item.get("effects", {}), "social_tension", -0.4)
 
-        return fallback
+        return [self._attach_execution_blueprint(item, focus) for item in fallback]
 
     def _generate_live_options(self, user: str) -> list[DynamicPolicy]:
         if self._client is None or self._disable_live:
@@ -383,15 +454,104 @@ class MayorAdvisor:
             text = fallback
         return text[:max_len]
 
+    @staticmethod
+    def _normalized_name(name: str | None) -> str:
+        return re.sub(r"[^a-z0-9]+", "", str(name or "").lower())
+
+    @classmethod
+    def _is_weak_policy_name(cls, name: str | None) -> bool:
+        text = " ".join(str(name or "").split()).strip()
+        if not text:
+            return True
+        normalized = cls._normalized_name(text)
+        if not normalized:
+            return True
+        placeholder_norms = {
+            cls._normalized_name(item) for item in cls._PLACEHOLDER_POLICY_NAMES
+        }
+        placeholder_norms.update(
+            {
+                "unknownpolicy",
+                "policyoption",
+                "unknownpolicyoption",
+                "napolicy",
+                "tbdpolicy",
+            }
+        )
+        if normalized in placeholder_norms:
+            return True
+        tokens = [token for token in re.findall(r"[a-z0-9]+", text.lower()) if token]
+        meaningful = [token for token in tokens if token not in cls._GENERIC_TITLE_TOKENS and len(token) >= 3]
+        if len(meaningful) >= 2:
+            return False
+        if len(tokens) <= 3 and all(token in cls._GENERIC_TITLE_TOKENS for token in tokens):
+            return True
+        return len(meaningful) == 0
+
+    @staticmethod
+    def _infer_policy_domain(intent: str, effects: dict[str, float]) -> str:
+        text = str(intent or "").lower()
+        if "job" in text or "employment" in text:
+            return "Jobs"
+        if "trust" in text:
+            return "Trust"
+        if "corruption" in text or "integrity" in text or "audit" in text:
+            return "Integrity"
+        if "safety" in text or "crime" in text or "law" in text:
+            return "Safety"
+        if "infrastructure" in text or "transport" in text or "service" in text:
+            return "Infrastructure"
+        if "environment" in text or "air" in text:
+            return "Environment"
+        if "cohesion" in text or "tension" in text:
+            return "Cohesion"
+        if float(effects.get("employment", 0.0)) != 0 or float(effects.get("economy", 0.0)) != 0:
+            return "Jobs"
+        if float(effects.get("public_trust", 0.0)) != 0:
+            return "Trust"
+        if float(effects.get("corruption", 0.0)) != 0:
+            return "Integrity"
+        if float(effects.get("law_and_order", 0.0)) != 0:
+            return "Safety"
+        if float(effects.get("infrastructure", 0.0)) != 0:
+            return "Infrastructure"
+        return "City"
+
+    @classmethod
+    def _derive_repaired_title(cls, option: DynamicPolicy) -> str:
+        target_label = ""
+        if option.implementation_targets:
+            target_label = str(option.implementation_targets[0].get("label", "")).strip()
+        if not target_label:
+            target_label = str(option.name or "").strip()
+        target_label = " ".join(target_label.split())
+        if target_label:
+            target_label = re.sub(r"[^A-Za-z0-9 ]+", " ", target_label).strip()
+            target_tokens = [token for token in target_label.split() if token][:3]
+            target_label = " ".join(target_tokens)
+
+        domain = cls._infer_policy_domain(option.intent, option.effects)
+        if target_label:
+            label_norm = target_label.lower()
+            if domain.lower() in label_norm:
+                return f"{target_label} Delivery Plan"
+            return f"{target_label} {domain} Delivery Plan"
+        return f"{domain} Delivery Plan"
+
     @classmethod
     def _sanitize_options(cls, options: list[DynamicPolicy]) -> list[DynamicPolicy]:
         for option in options:
-            option.name = cls._sanitize_text(
+            candidate_name = cls._sanitize_text(
                 option.name,
-                fallback="Strategic Action Plan",
+                fallback="",
                 max_len=120,
                 guard_placeholders=True,
             )
+            if cls._is_weak_policy_name(candidate_name):
+                candidate_name = cls._derive_repaired_title(option)
+            if cls._is_weak_policy_name(candidate_name):
+                candidate_name = "Strategic Action Plan"
+            option.name = candidate_name[:120]
             option.description = cls._sanitize_text(
                 option.description,
                 fallback="Targeted intervention to stabilize key city pressures this turn.",

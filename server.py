@@ -37,6 +37,7 @@ from llm.advisory_chamber import (
     ChamberPolicyValidationError,
     ChamberReplyError,
 )
+from llm.mayor_advisor import MayorAdvisor
 from llm.llm_client import _load_env
 from media.media_engine import MediaEngine, MediaState
 from politics.election_engine import ElectionEngine
@@ -150,6 +151,7 @@ class GameSession:
     advisor_session_by_turn: dict[int, str] = field(default_factory=dict)
     advisor_options_cache: dict[str, CachedAdvisorOptions] = field(default_factory=dict)
     advisor_refresh_inflight: set[str] = field(default_factory=set)
+    turn_running: bool = False
     action_lock: object = field(default_factory=Lock, repr=False)
 
 
@@ -215,6 +217,9 @@ def _build_game(
     profile["evidence_sources"] = list(meta.get("evidence_sources", []))
     profile["media_outlets"] = [item.name for item in media_outlets]
     profile["actual_agent_count"] = len(agents)
+    profile["mayor_competence"] = float(profile.get("mayor_competence", 0.58))
+    profile["council_competence"] = float(profile.get("council_competence", 0.62))
+    profile["implementation_variance"] = float(profile.get("implementation_variance", 0.08))
 
     game_state = GameState(
         turn_number=0,
@@ -231,6 +236,9 @@ def _build_game(
         rng=rng,
         rng_seed=seed,
         simulation_profile=profile,
+        political_capital=float(profile.get("political_capital", 60.0)),
+        campaign_funds=float(profile.get("campaign_funds", 1_200_000.0)),
+        opposition_budget=float(profile.get("opposition_budget", 1_200_000.0)),
     )
 
     policy_engine = PolicyEngine(CONFIG_DIR / "policies.json")
@@ -306,6 +314,7 @@ def _actor_for_message(message_type: str, payload: dict) -> str | None:
     if message_type in {
         "agent_impact_assessed",
         "cohort_shift_aggregated",
+        "implementation_gap_assessed",
         "street_chatter_synthesized",
         "simulation_stats_applied",
         "popularity_recalculated",
@@ -1375,7 +1384,8 @@ class GameHandler(BaseHTTPRequestHandler):
         try:
             with session.action_lock:
                 advisor_session = _ensure_advisor_session_unlocked(session, force_refresh=False)
-                options = advisor_session.options
+                options = MayorAdvisor._sanitize_options(list(advisor_session.options))
+                advisor_session.options = list(options)
         except Exception as exc:
             _json_response(self, {"error": "Failed to generate policies", "detail": str(exc)}, 500)
             return
@@ -1768,7 +1778,10 @@ class GameHandler(BaseHTTPRequestHandler):
         try:
             with session.action_lock:
                 advisor_session = _ensure_advisor_session_unlocked(session, force_refresh=False)
-                options = list(advisor_session.options)
+                options = MayorAdvisor._sanitize_options(list(advisor_session.options))
+                advisor_session.options = list(options)
+                advisor_session.updated_at = time.time()
+                _sync_mayor_option_cache(session, advisor_session.options)
         except Exception as exc:
             _json_response(
                 self,
@@ -2734,13 +2747,15 @@ class GameHandler(BaseHTTPRequestHandler):
             )
             return
 
+        sanitized_options = MayorAdvisor._sanitize_options(list(advisor_session.options))
+        advisor_session.options = list(sanitized_options)
         _json_response(
             self,
             {
                 "api_version": "v1",
                 "game_id": game_id,
                 "session": payload,
-                "options": [option.to_dict() for option in advisor_session.options],
+                "options": [option.to_dict() for option in sanitized_options],
                 "diff_summary": diff,
             },
         )
@@ -3158,33 +3173,45 @@ class GameHandler(BaseHTTPRequestHandler):
                         _json_response(self, conflict, 409)
                         return
 
-                _sync_mayor_option_cache(session, active_advisor_session.options)
-                events = _run_turn_and_capture_events_unlocked(
-                    session,
-                    game_id,
-                    submission.policy_id,
-                    counter_frame_id=submission.counter_frame_id,
-                )
-                if events and events[-1]["type"] == "error":
-                    error_body = {
-                        "api_version": "v1",
-                        "game_id": game_id,
-                        "error": events[-1]["payload"].get("message", "action failed"),
-                    }
-                    if submission.action_id:
-                        _cache_action_result(session, submission.action_id, 400, error_body)
-                    _json_response(self, error_body, 400)
+                if session.turn_running:
+                    _json_response(
+                        self,
+                        {
+                            "api_version": "v1",
+                            "game_id": game_id,
+                            "error": "A turn is already in progress",
+                        },
+                        409,
+                    )
                     return
 
-                last_event_id = events[-1]["event_id"] if events else session.next_event_id - 1
+                _sync_mayor_option_cache(session, active_advisor_session.options)
+                session.turn_running = True
+
+                turn_policy_id = submission.policy_id
+                turn_counter_frame_id = submission.counter_frame_id
+
+                def _run_turn_background():
+                    try:
+                        for msg in session.turn_manager.stream_step(
+                            turn_policy_id, counter_frame_id=turn_counter_frame_id
+                        ):
+                            _append_event(session, game_id, msg)
+                    except Exception as bg_exc:
+                        _append_event(
+                            session, game_id, {"type": "error", "message": str(bg_exc)}
+                        )
+                    finally:
+                        session.turn_running = False
+
+                next_turn = session.turn_manager.game_state.turn_number + 1
+                Thread(target=_run_turn_background, daemon=True).start()
                 accepted = {
                     "api_version": "v1",
                     "game_id": game_id,
                     "status": "accepted",
                     "actor": submission.actor,
-                    "turn_number": session.turn_manager.game_state.turn_number,
-                    "events_emitted": len(events),
-                    "last_event_id": last_event_id,
+                    "turn_number": next_turn,
                     "counter_frame_id": submission.counter_frame_id,
                     "action_id": submission.action_id,
                     "idempotent_replay": False,
@@ -3229,13 +3256,18 @@ class GameHandler(BaseHTTPRequestHandler):
                 with session.action_lock:
                     pending = [event for event in session.events if int(event["event_id"]) > last_seen]
 
+                done_seen = False
                 for event in pending:
                     msg = f"data: {json.dumps(event)}\n\n"
                     self.wfile.write(msg.encode("utf-8"))
                     self.wfile.flush()
                     last_seen = int(event["event_id"])
+                    if event.get("type") == "done":
+                        done_seen = True
 
                 if not follow:
+                    break
+                if done_seen:
                     break
                 if time.time() >= deadline:
                     break

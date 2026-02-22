@@ -309,6 +309,8 @@ class CitizenDebates:
         stats = game_state.city_stats
         pressure = "costs" if stats.economy < 45 else "jobs" if stats.employment < 45 else "services"
         event_focus = triggered_events[0] if triggered_events else "no new crisis"
+        delivery_summary = str(getattr(mayor_action, "delivery_summary", "")).strip()
+        implementation_gap = float(getattr(mayor_action, "implementation_gap", 0.0) or 0.0)
 
         chatter: list[StreetChatterItem] = []
         for idx, agent in enumerate(speakers):
@@ -335,6 +337,11 @@ class CitizenDebates:
                     f"{local_token}, {opp_action.name} is trending in tea stalls, but people in my block want proof, not slogans, before switching sides."
                 )
                 sentiment = "mixed"
+            if delivery_summary and implementation_gap > 0.28 and sentiment in {"skeptical", "mixed", "angry"}:
+                line = (
+                    f"{line.rstrip('.')} People keep mentioning the delivery gap: "
+                    f"{delivery_summary[:90]}."
+                )
             heat = _clamp(0.45 + abs(agent.alignment) / 240.0 + agent.radicalization / 300.0, 0.15, 1.0)
             chatter.append(
                 StreetChatterItem(
@@ -436,6 +443,7 @@ class CitizenDebates:
             f"{self._city_flavor(city_id)}\n"
             f"Turn: {game_state.turn_number}\n"
             f"Mayor action: {mayor_action.name} — {mayor_action.description}\n"
+            f"Implementation summary: {getattr(mayor_action, 'delivery_summary', '') or 'No delivery summary yet.'}\n"
             f"Opposition action: {opp_action.name} — {opp_action.description}\n"
             f"Triggered events: {event_str}\n"
             f"City stats snapshot: economy={stats.economy:.0f}, employment={stats.employment:.0f}, "
@@ -540,6 +548,7 @@ class CitizenDebates:
             f"Grievance score: {info.grievance_score:.2f}/1.0\n\n"
             f"This turn:\n"
             f"  Mayor played: '{mayor_action.name}' — {mayor_action.description}\n"
+            f"  Delivery summary: {getattr(mayor_action, 'delivery_summary', '') or 'No implementation gap recorded.'}\n"
             f"  Opposition played: '{opp_action.name}' — {opp_action.description}\n"
             f"  Events triggered: {event_str}\n"
             f"  City corruption: {game_state.city_stats.corruption:.0f}, "
@@ -569,10 +578,13 @@ class CitizenDebates:
         radical_delta = 0.35 if metrics.get("radicalization", 30) > 50 else -0.15
         trust_delta = -0.25 if game_state.city_stats.corruption > 55 else 0.15
 
+        delivery_summary = str(getattr(mayor_action, "delivery_summary", "")).strip()
         summary = (
             f"{info.name} residents weigh {mayor_action.name} against {opp_action.name}, "
             "with conversations centered on delivery credibility and daily pressure."
         )
+        if delivery_summary:
+            summary = f"{summary} {delivery_summary}"
         quote = "Show us results, not speeches."
 
         return DebateResult(

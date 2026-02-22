@@ -372,7 +372,7 @@ def test_v1_policies_actions_and_events_stream(api_server: str) -> None:
     assert action_payload["idempotent_replay"] is False
 
     events_status, events_text = _http_text(
-        f"{api_server}/v1/games/{game_id}/events?after_event_id=0&follow=0&timeout=5"
+        f"{api_server}/v1/games/{game_id}/events?after_event_id=0&follow=1&timeout=3"
     )
     assert events_status == 200
 
