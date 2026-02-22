@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -50,6 +51,208 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def _normalize_portfolio_token(value: Any) -> str:
+    token = re.sub(r"[^a-z0-9_]+", "_", str(value).strip().lower()).strip("_")
+    return token
+
+
+def _normalize_alias(value: Any) -> str:
+    alias = str(value).strip().lower()
+    if alias.startswith("@"):
+        alias = alias[1:]
+    alias = re.sub(r"\s+", " ", alias)
+    return alias
+
+
+def _normalize_phrase(value: Any) -> str:
+    phrase = " ".join(str(value).strip().split())
+    return phrase
+
+
+def _synthesized_personality(portfolios: list[str]) -> dict[str, Any]:
+    first = portfolios[0] if portfolios else ""
+    if first in {"corruption", "law_and_order", "media", "governance_risk"}:
+        return {
+            "tone": "skeptical_guardrail",
+            "voice_traits": [
+                "flags downside risks early",
+                "asks for accountability checkpoints",
+                "focuses on credibility safeguards",
+            ],
+            "conversational_habits": [
+                "states one clear risk",
+                "offers one concrete mitigation",
+            ],
+            "taboo_patterns": ["as an ai", "i cannot help"],
+        }
+    if first in {"social_cohesion", "public_trust", "services"}:
+        return {
+            "tone": "grounded_empathic",
+            "voice_traits": [
+                "centers people impact",
+                "bridges tensions calmly",
+                "uses plain civic language",
+            ],
+            "conversational_habits": [
+                "acknowledges concern before advice",
+                "keeps suggestions practical",
+            ],
+            "taboo_patterns": ["as an ai", "i cannot help"],
+        }
+    return {
+        "tone": "calm_analytical",
+        "voice_traits": [
+            "uses concrete metrics",
+            "keeps delivery framing",
+            "states tradeoffs crisply",
+        ],
+        "conversational_habits": [
+            "opens with direct answer",
+            "adds one measurable next step",
+        ],
+        "taboo_patterns": ["as an ai", "i cannot help"],
+    }
+
+
+def _clean_media_outlets(raw_outlets: Any) -> list[dict[str, Any]]:
+    cleaned: list[dict[str, Any]] = []
+    if not isinstance(raw_outlets, list):
+        return cleaned
+    for item in raw_outlets:
+        if not isinstance(item, dict):
+            continue
+        outlet_id = str(item.get("id", "")).strip()
+        name = str(item.get("name", "")).strip()
+        if not outlet_id or not name:
+            continue
+        lean = str(item.get("lean", "neutral")).strip().lower() or "neutral"
+        try:
+            bias = float(item.get("bias", 0.0))
+        except (TypeError, ValueError):
+            bias = 0.0
+        try:
+            sensationalism = float(item.get("sensationalism", 50.0))
+        except (TypeError, ValueError):
+            sensationalism = 50.0
+        try:
+            trust = float(item.get("trust", 50.0))
+        except (TypeError, ValueError):
+            trust = 50.0
+        cleaned.append(
+            {
+                "id": outlet_id,
+                "name": name,
+                "lean": lean,
+                "bias": bias,
+                "sensationalism": sensationalism,
+                "trust": trust,
+            }
+        )
+    return cleaned
+
+
+def _clean_advisors(raw_advisors: Any) -> tuple[list[dict[str, Any]], str | None]:
+    if raw_advisors is None:
+        return [], None
+    if not isinstance(raw_advisors, list):
+        return [], "meta.advisors must be a list when provided"
+    if not raw_advisors:
+        return [], "meta.advisors cannot be empty when provided"
+
+    cleaned: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for idx, item in enumerate(raw_advisors):
+        if not isinstance(item, dict):
+            return [], f"meta.advisors[{idx}] must be an object"
+        advisor_id = _normalize_portfolio_token(item.get("advisor_id", ""))
+        if not advisor_id:
+            return [], f"meta.advisors[{idx}].advisor_id is required"
+        if advisor_id in seen_ids:
+            return [], f"meta.advisors advisor_id must be unique; duplicate: {advisor_id}"
+
+        name = str(item.get("name", "")).strip()
+        if not name:
+            return [], f"meta.advisors[{idx}].name is required"
+
+        raw_portfolios = item.get("portfolios")
+        if not isinstance(raw_portfolios, list) or not raw_portfolios:
+            return [], f"meta.advisors[{idx}].portfolios must be a non-empty list"
+        portfolios: list[str] = []
+        for portfolio in raw_portfolios:
+            token = _normalize_portfolio_token(portfolio)
+            if token and token not in portfolios:
+                portfolios.append(token)
+        if not portfolios:
+            return [], f"meta.advisors[{idx}].portfolios must include at least one valid token"
+
+        style = str(item.get("style", "")).strip()
+        if not style:
+            return [], f"meta.advisors[{idx}].style is required"
+
+        raw_aliases = item.get("aliases")
+        if not isinstance(raw_aliases, list) or not raw_aliases:
+            return [], f"meta.advisors[{idx}].aliases must be a non-empty list"
+        aliases: list[str] = []
+        for alias in raw_aliases:
+            normalized = _normalize_alias(alias)
+            if normalized and normalized not in aliases:
+                aliases.append(normalized)
+        if not aliases:
+            return [], f"meta.advisors[{idx}].aliases must include at least one valid alias"
+
+        personality = _synthesized_personality(portfolios)
+        tone = _normalize_portfolio_token(item.get("tone", personality["tone"]))
+        if not tone:
+            tone = str(personality["tone"])
+
+        raw_voice_traits = item.get("voice_traits")
+        voice_traits: list[str] = []
+        if isinstance(raw_voice_traits, list):
+            for trait in raw_voice_traits:
+                normalized = _normalize_phrase(trait)
+                if normalized and normalized not in voice_traits:
+                    voice_traits.append(normalized)
+        if not voice_traits:
+            voice_traits = list(personality["voice_traits"])
+
+        raw_habits = item.get("conversational_habits")
+        conversational_habits: list[str] = []
+        if isinstance(raw_habits, list):
+            for habit in raw_habits:
+                normalized = _normalize_phrase(habit)
+                if normalized and normalized not in conversational_habits:
+                    conversational_habits.append(normalized)
+        if not conversational_habits:
+            conversational_habits = list(personality["conversational_habits"])
+
+        raw_taboo = item.get("taboo_patterns")
+        taboo_patterns: list[str] = []
+        if isinstance(raw_taboo, list):
+            for pattern in raw_taboo:
+                normalized = _normalize_phrase(pattern).lower()
+                if normalized and normalized not in taboo_patterns:
+                    taboo_patterns.append(normalized)
+        if not taboo_patterns:
+            taboo_patterns = list(personality["taboo_patterns"])
+
+        seen_ids.add(advisor_id)
+        cleaned.append(
+            {
+                "advisor_id": advisor_id,
+                "name": name,
+                "portfolios": portfolios,
+                "style": style,
+                "aliases": aliases,
+                "tone": tone,
+                "voice_traits": voice_traits[:5],
+                "conversational_habits": conversational_habits[:5],
+                "taboo_patterns": taboo_patterns[:6],
+            }
+        )
+
+    return cleaned, None
+
+
 def _ensure_meta(meta: dict[str, Any], city_id: str, city_name: str) -> dict[str, Any]:
     cleaned_sources: list[dict[str, str]] = []
     for item in meta.get("evidence_sources", []) if isinstance(meta.get("evidence_sources"), list) else []:
@@ -61,7 +264,7 @@ def _ensure_meta(meta: dict[str, Any], city_id: str, city_name: str) -> dict[str
         if title or url or snippet:
             cleaned_sources.append({"title": title, "url": url, "snippet": snippet})
 
-    return {
+    normalized_meta = {
         "city_id": city_id,
         "city_name": city_name,
         "profile_version": str(meta.get("profile_version", f"v-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}")).strip(),
@@ -70,6 +273,16 @@ def _ensure_meta(meta: dict[str, Any], city_id: str, city_name: str) -> dict[str
         "generator_model": str(meta.get("generator_model", "builtin-seed")).strip(),
         "evidence_sources": cleaned_sources,
     }
+    outlets = _clean_media_outlets(meta.get("media_outlets"))
+    if outlets:
+        normalized_meta["media_outlets"] = outlets
+
+    advisors, advisors_error = _clean_advisors(meta.get("advisors"))
+    if advisors:
+        normalized_meta["advisors"] = advisors
+    if advisors_error:
+        normalized_meta["advisors_validation_error"] = advisors_error
+    return normalized_meta
 
 
 def validate_city_profile_payload(payload: dict[str, Any], expected_city_id: str | None = None) -> dict[str, Any]:

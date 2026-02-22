@@ -12,6 +12,8 @@ City profiles are loaded from `config/cities/<city_id>.json` and validated by `c
   - `generator_provider`
   - `generator_model`
   - `evidence_sources` (list of `{title,url,snippet}`)
+  - optional: `media_outlets` (list of `{id,name,lean,bias,sensationalism,trust}`)
+  - optional: `advisors` (list of `{advisor_id,name,portfolios,style,aliases,tone?,voice_traits?,conversational_habits?,taboo_patterns?}`)
 - `identity_groups` (compatible with `IdentityGroup.from_dict`)
 - `role_distribution`
 - `initial_city_stats`
