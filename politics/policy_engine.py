@@ -159,9 +159,19 @@ class PolicyEngine:
 
         return self._weighted_choice(rng, options, dynamic_weights)
 
-    def apply_dynamic_action(self, game_state: "GameState", policy: "Any") -> ActionResolution:
+    def apply_dynamic_action(
+        self,
+        game_state: "GameState",
+        policy: "Any",
+        *,
+        apply_city_effects: bool = True,
+    ) -> ActionResolution:
         """Apply a DynamicPolicy (LLM-generated) to the game state."""
-        immediate_changes = game_state.city_stats.apply_delta(policy.effects)
+        immediate_changes = (
+            game_state.city_stats.apply_delta(policy.effects)
+            if apply_city_effects
+            else {}
+        )
 
         current = game_state.campaign_strength.get(policy.actor, 1.0)
         game_state.campaign_strength[policy.actor] = _clamp(

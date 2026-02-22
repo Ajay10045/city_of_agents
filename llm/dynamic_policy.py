@@ -49,6 +49,63 @@ class DynamicPolicy:
     tradeoffs: list[str] = field(default_factory=list)
     counter_narrative_risk: str = ""
     deliberation_trace: dict[str, Any] = field(default_factory=dict)
+    budget_cost: float = 0.0
+    intent: str = ""
+    implementation_targets: list[dict[str, Any]] = field(default_factory=list)
+    delivered_outcomes: list[dict[str, Any]] = field(default_factory=list)
+    implementation_gap: float = 0.0
+    delivery_summary: str = ""
+
+    @staticmethod
+    def _infer_implementation_targets(
+        name: str,
+        description: str,
+        effects: dict[str, float],
+    ) -> list[dict[str, Any]]:
+        lowered = f"{name} {description}".lower()
+        targets: list[dict[str, Any]] = []
+        if "job" in lowered or "employment" in lowered or "employment" in effects:
+            targets.append(
+                {
+                    "key": "jobs_supported",
+                    "label": "Jobs Supported",
+                    "unit": "jobs",
+                    "proposed": max(150.0, abs(float(effects.get("employment", 1.5))) * 320.0),
+                    "difficulty": 0.20,
+                }
+            )
+        if "road" in lowered or "infrastructure" in lowered or "transit" in lowered or "infrastructure" in effects:
+            targets.append(
+                {
+                    "key": "infrastructure_km",
+                    "label": "Transport/Infrastructure Build",
+                    "unit": "km",
+                    "proposed": max(2.0, abs(float(effects.get("infrastructure", 1.2))) * 2.4),
+                    "difficulty": 0.30,
+                }
+            )
+        if "corruption" in lowered or "audit" in lowered or "corruption" in effects:
+            targets.append(
+                {
+                    "key": "audit_cycles",
+                    "label": "Procurement Audits Completed",
+                    "unit": "audits",
+                    "proposed": max(1.0, abs(float(effects.get("corruption", 1.0))) * 2.0),
+                    "difficulty": 0.18,
+                }
+            )
+        if not targets:
+            proposed = max(2.0, abs(sum(float(value) for value in effects.values())) * 0.7)
+            targets.append(
+                {
+                    "key": "service_nodes_upgraded",
+                    "label": "Service Delivery Milestones",
+                    "unit": "sites",
+                    "proposed": proposed,
+                    "difficulty": 0.21,
+                }
+            )
+        return targets[:4]
 
     @classmethod
     def from_llm(cls, data: dict, actor: str = "mayor") -> "DynamicPolicy":
@@ -167,10 +224,37 @@ class DynamicPolicy:
             if disagreement_resolved:
                 deliberation_trace["disagreement_resolved"] = disagreement_resolved[:220]
 
+        implementation_targets: list[dict[str, Any]] = []
+        raw_targets = data.get("implementation_targets", [])
+        if isinstance(raw_targets, list):
+            for item in raw_targets:
+                if not isinstance(item, dict):
+                    continue
+                key = str(item.get("key", "")).strip().lower()
+                label = str(item.get("label", "")).strip()
+                unit = str(item.get("unit", "")).strip()
+                proposed = _to_float(item.get("proposed"))
+                if not key or proposed is None or proposed <= 0:
+                    continue
+                implementation_targets.append(
+                    {
+                        "key": key[:64],
+                        "label": (label or key.replace("_", " ").title())[:96],
+                        "unit": (unit or "units")[:32],
+                        "proposed": _clamp(proposed, 0.1, 1_000_000_000.0),
+                        "difficulty": _clamp(_to_float(item.get("difficulty"), 0.2) or 0.2, 0.05, 0.6),
+                    }
+                )
+
+        name = str(data.get("name", "Unknown Policy"))[:80]
+        description = str(data.get("description", ""))[:300]
+        if not implementation_targets:
+            implementation_targets = cls._infer_implementation_targets(name, description, effects)
+
         return cls(
             id=str(uuid.uuid4()),
-            name=str(data.get("name", "Unknown Policy"))[:80],
-            description=str(data.get("description", ""))[:300],
+            name=name,
+            description=description,
             rationale=str(data.get("rationale", ""))[:400],
             effects=effects,
             group_effects=group_effects,
@@ -187,6 +271,12 @@ class DynamicPolicy:
             tradeoffs=tradeoffs,
             counter_narrative_risk=str(data.get("counter_narrative_risk", ""))[:280],
             deliberation_trace=deliberation_trace,
+            budget_cost=max(0.0, _to_float(data.get("budget_cost"), 0.0) or 0.0),
+            intent=str(data.get("intent", "")).strip()[:220],
+            implementation_targets=implementation_targets[:4],
+            delivered_outcomes=[],
+            implementation_gap=_clamp(_to_float(data.get("implementation_gap"), 0.0) or 0.0, 0.0, 1.0),
+            delivery_summary=str(data.get("delivery_summary", "")).strip()[:260],
         )
 
     def to_dict(self) -> dict:
@@ -210,4 +300,10 @@ class DynamicPolicy:
             "tradeoffs": list(self.tradeoffs),
             "counter_narrative_risk": self.counter_narrative_risk,
             "deliberation_trace": dict(self.deliberation_trace),
+            "budget_cost": self.budget_cost,
+            "intent": self.intent,
+            "implementation_targets": [dict(item) for item in self.implementation_targets],
+            "delivered_outcomes": [dict(item) for item in self.delivered_outcomes],
+            "implementation_gap": self.implementation_gap,
+            "delivery_summary": self.delivery_summary,
         }

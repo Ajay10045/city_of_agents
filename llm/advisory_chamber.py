@@ -60,6 +60,21 @@ class AdvisoryChamber:
             "placeholder policy",
             "unnamed policy",
         }
+        self._generic_title_tokens = {
+            "strategic",
+            "action",
+            "plan",
+            "policy",
+            "option",
+            "initiative",
+            "program",
+            "project",
+            "proposal",
+            "city",
+            "general",
+            "unknown",
+            "unnamed",
+        }
         self._generic_description_markers = (
             "targeted intervention to stabilize key city pressures this turn",
             "chosen for near-term impact under current city pressures",
@@ -94,6 +109,33 @@ class AdvisoryChamber:
     @staticmethod
     def _compact(text: str) -> str:
         return " ".join(str(text).split()).strip()
+
+    @staticmethod
+    def _normalize_name(text: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "", str(text).lower())
+
+    def _is_weak_title(self, name: str, policy: DynamicPolicy) -> bool:
+        compact = self._compact(name)
+        if len(compact) < 6:
+            return True
+
+        normalized = self._normalize_name(compact)
+        placeholder_norms = {self._normalize_name(item) for item in self._placeholder_names}
+        placeholder_norms.update(
+            {"unknownpolicy", "policyoption", "unknownpolicyoption", "napolicy", "tbdpolicy"}
+        )
+        if normalized in placeholder_norms:
+            return True
+
+        tokens = [token for token in re.findall(r"[a-z0-9]+", compact.lower()) if token]
+        meaningful = [token for token in tokens if token not in self._generic_title_tokens and len(token) >= 3]
+        if len(tokens) <= 3 and all(token in self._generic_title_tokens for token in tokens):
+            has_supporting_context = bool(
+                str(getattr(policy, "intent", "")).strip()
+                and list(getattr(policy, "implementation_targets", []))
+            )
+            return not has_supporting_context
+        return len(meaningful) < 2
 
     @staticmethod
     def _human_text(text: str) -> str:
@@ -247,8 +289,8 @@ class AdvisoryChamber:
         grounding = self._grounding_tokens(constraints, transcript)
         for idx, policy in enumerate(policies, start=1):
             name = self._compact(policy.name)
-            if len(name) < 6 or name.lower() in self._placeholder_names:
-                reasons.append(f"policy {idx}: invalid name")
+            if self._is_weak_title(name, policy):
+                reasons.append(f"policy {idx}: weak title")
 
             description = self._compact(policy.description)
             if len(description) < 24:
@@ -818,7 +860,7 @@ class AdvisoryChamber:
                 "You are synthesizing final mayor policy options from an advisor chamber transcript.\n"
                 "Return JSON only with keys: conclusion_summary, policies.\n"
                 f"policies must be an array of exactly {count} objects.\n"
-                "Each policy object must include the standard policy fields plus deliberation_trace with:\n"
+                "Each policy object must include the standard policy fields plus budget_cost, intent, implementation_targets, and deliberation_trace with:\n"
                 "- mayor_direction_used (string)\n"
                 "- advisor_inputs_used (array of {advisor_id, advisor_name, portfolio, point})\n"
                 "- disagreement_resolved (optional string).\n"

@@ -53,6 +53,11 @@ class GameState:
     simulation_profile: dict[str, Any] = field(default_factory=dict)
     cohort_metrics: dict[str, dict[str, Any]] = field(default_factory=dict)
     last_agent_impact: dict[str, Any] = field(default_factory=dict)
+    political_capital: float = 60.0
+    campaign_funds: float = 1_200_000.0
+    opposition_budget: float = 1_200_000.0
+    last_delivery_report: dict[str, Any] = field(default_factory=dict)
+    delivery_history: list[dict[str, Any]] = field(default_factory=list)
 
     def average_agent_field(self, field_name: str) -> float:
         total_weight = sum(agent.population_weight for agent in self.agents)
@@ -97,6 +102,11 @@ class GameState:
             "simulation_profile": dict(self.simulation_profile),
             "cohort_metrics": dict(self.cohort_metrics),
             "last_agent_impact": dict(self.last_agent_impact),
+            "political_capital": self.political_capital,
+            "campaign_funds": self.campaign_funds,
+            "opposition_budget": self.opposition_budget,
+            "last_delivery_report": dict(self.last_delivery_report),
+            "delivery_history": list(self.delivery_history),
         }
 
     def save_snapshot(self, path: str | Path) -> None:

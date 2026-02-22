@@ -12,6 +12,7 @@ from media.media_engine import MediaEngine
 from politics.election_engine import ElectionEngine
 from politics.policy_engine import PolicyEngine
 from core.credibility import apply_credibility_turn
+from core.city_simulation_engine import CitySimulationEngine, DeliverySimulationResult
 from llm.mayor_advisor import MayorAdvisor
 from llm.opposition_agent import OppositionAgent
 from llm.citizen_debates import CitizenDebates
@@ -94,6 +95,7 @@ class TurnManager:
         self.citizen_debates = citizen_debates or CitizenDebates()
         self.event_generator = event_generator or EventGenerator()
         self.agent_reaction_engine = agent_reaction_engine or AgentReactionEngine()
+        self.city_simulation_engine = CitySimulationEngine()
 
         # Cache of current turn's mayor options (id -> DynamicPolicy)
         self._cached_mayor_options: dict[str, DynamicPolicy] = {}
@@ -165,6 +167,49 @@ class TurnManager:
 
     def _uses_llm_only_agent_reactions(self) -> bool:
         return str(self.game_state.simulation_profile.get("api_version", "")).strip().lower() == "v1"
+
+    def _uses_delivery_simulation(self) -> bool:
+        return str(self.game_state.simulation_profile.get("api_version", "")).strip().lower() == "v1"
+
+    def _apply_delivery_simulation(
+        self,
+        mayor_policy: DynamicPolicy,
+    ) -> DeliverySimulationResult:
+        delivery = self.city_simulation_engine.simulate_delivery(self.game_state, mayor_policy)
+        applied = self.game_state.city_stats.apply_delta(delivery.stat_deltas)
+        delivery_payload = delivery.to_dict()
+        delivery_payload["applied_stat_deltas"] = {
+            key: round(value, 4) for key, value in applied.items()
+        }
+
+        mayor_policy.delivered_outcomes = [item.to_dict() for item in delivery.targets]
+        mayor_policy.implementation_gap = delivery.implementation_gap
+        mayor_policy.delivery_summary = delivery.summary
+
+        self.game_state.last_delivery_report = delivery_payload
+        self.game_state.delivery_history.append(
+            {
+                "turn": self.game_state.turn_number,
+                "policy_id": mayor_policy.id,
+                "policy_name": mayor_policy.name,
+                **delivery_payload,
+            }
+        )
+        if len(self.game_state.delivery_history) > 40:
+            self.game_state.delivery_history = self.game_state.delivery_history[-40:]
+
+        # Political and resource consequences from implementation quality.
+        capital_delta = (0.58 - float(delivery.implementation_gap)) * 4.0
+        self.game_state.political_capital = _clamp(
+            float(self.game_state.political_capital) + capital_delta,
+            0.0,
+            100.0,
+        )
+        self.game_state.campaign_funds = max(
+            0.0,
+            float(self.game_state.campaign_funds) - float(delivery.budget_spent),
+        )
+        return delivery
 
     def _apply_agent_reactions(
         self,
@@ -321,6 +366,17 @@ class TurnManager:
         post_stats: dict[str, float],
     ) -> tuple[float, float]:
         previous_mayor = float(self.game_state.mayor_popularity)
+        if self._uses_delivery_simulation() and self.game_state.agents:
+            alignment_avg = self.game_state.average_agent_field("alignment")
+            alignment_vote = (alignment_avg + 100.0) / 2.0
+            trust_vote = (
+                post_stats.get("public_trust", 50.0) * 0.55
+                + (100.0 - post_stats.get("corruption", 50.0)) * 0.45
+            )
+            mayor_target = _clamp(alignment_vote * 0.78 + trust_vote * 0.22, 0.0, 100.0)
+            mayor_target = _clamp(mayor_target, previous_mayor - 8.0, previous_mayor + 8.0)
+            mayor_smooth = _clamp(previous_mayor * 0.55 + mayor_target * 0.45, 0.0, 100.0)
+            return mayor_smooth, 100.0 - mayor_smooth
 
         service_delta = (
             (post_stats.get("employment", 50.0) - pre_stats.get("employment", 50.0))
@@ -381,11 +437,24 @@ class TurnManager:
         if mayor_policy is None:
             return {"error": f"Unknown policy id: {mayor_policy_id!r}"}
         counter_frame = self._resolve_counter_frame(mayor_policy_id, counter_frame_id)
-        mayor_resolution = self.policy_engine.apply_dynamic_action(self.game_state, mayor_policy)
+        use_delivery_simulation = self._uses_delivery_simulation()
+        mayor_resolution = self.policy_engine.apply_dynamic_action(
+            self.game_state,
+            mayor_policy,
+            apply_city_effects=not use_delivery_simulation,
+        )
 
         # ── Opposition action (LLM agent reasons and decides) ───────────────
         opp_policy = self.opposition_agent.decide_action(self.game_state, mayor_policy)
-        opp_resolution = self.policy_engine.apply_dynamic_action(self.game_state, opp_policy)
+        opp_resolution = self.policy_engine.apply_dynamic_action(
+            self.game_state,
+            opp_policy,
+            apply_city_effects=not use_delivery_simulation,
+        )
+
+        delivery_result: DeliverySimulationResult | None = None
+        if use_delivery_simulation:
+            delivery_result = self._apply_delivery_simulation(mayor_policy)
 
         # ── Long-term effects (carry-over from previous turns) ──────────────
         long_term_resolution = self.policy_engine.apply_long_term_effects(self.game_state)
@@ -409,6 +478,8 @@ class TurnManager:
         combined_group_effects.extend(mayor_resolution.group_effects)
         combined_group_effects.extend(opp_resolution.group_effects)
         combined_group_effects.extend(long_term_resolution.group_effects)
+        if delivery_result is not None:
+            combined_group_effects.extend(list(delivery_result.sentiment_effects))
 
         campaign_delta = mayor_resolution.campaign_strength - opp_resolution.campaign_strength
         try:
@@ -553,6 +624,7 @@ class TurnManager:
             ],
             "generated_event": generated_event.to_dict() if generated_event else None,
             "media_cards": media_cards,
+            "delivery_report": dict(self.game_state.last_delivery_report) if delivery_result is not None else None,
             "credibility": credibility_result,
             "election_result": election_result,
             "game_over": self._is_game_over(),
@@ -610,6 +682,11 @@ class TurnManager:
             "simulation_profile": dict(self.game_state.simulation_profile),
             "last_agent_impact": dict(self.game_state.last_agent_impact),
             "cohort_metrics": dict(self.game_state.cohort_metrics),
+            "political_capital": round(float(self.game_state.political_capital), 2),
+            "campaign_funds": round(float(self.game_state.campaign_funds), 2),
+            "opposition_budget": round(float(self.game_state.opposition_budget), 2),
+            "last_delivery_report": dict(self.game_state.last_delivery_report),
+            "delivery_history": list(self.game_state.delivery_history),
             "long_term_effects": [
                 {"source_id": e.source_id, "actor": e.actor, "remaining_turns": e.remaining_turns}
                 for e in self.game_state.long_term_effects
@@ -641,7 +718,12 @@ class TurnManager:
         pre_stats = self.game_state.city_stats.as_dict()
 
         # ── Duel step 1: Mayor action submitted ─────────────────────────────
-        mayor_resolution = self.policy_engine.apply_dynamic_action(self.game_state, mayor_policy)
+        use_delivery_simulation = self._uses_delivery_simulation()
+        mayor_resolution = self.policy_engine.apply_dynamic_action(
+            self.game_state,
+            mayor_policy,
+            apply_city_effects=not use_delivery_simulation,
+        )
         yield {
             "type": "mayor_action_submitted",
             "turn": turn,
@@ -650,13 +732,28 @@ class TurnManager:
             "target_groups": list(mayor_policy.target_groups),
             "front_weights": dict(mayor_policy.narrative_fronts_impacted),
             "estimated_shift": dict(mayor_policy.expected_stat_delta),
+            "implementation_targets": [dict(item) for item in mayor_policy.implementation_targets],
+            "budget_cost": mayor_policy.budget_cost,
         }
         # legacy compatibility event
         yield {"type": "mayor_action", "turn": turn, "action": mayor_policy.to_dict()}
 
         # ── Duel step 2: Opposition primary frame ───────────────────────────
         opp_policy = self.opposition_agent.decide_action(self.game_state, mayor_policy)
-        opp_resolution = self.policy_engine.apply_dynamic_action(self.game_state, opp_policy)
+        opp_resolution = self.policy_engine.apply_dynamic_action(
+            self.game_state,
+            opp_policy,
+            apply_city_effects=not use_delivery_simulation,
+        )
+
+        delivery_result: DeliverySimulationResult | None = None
+        if use_delivery_simulation:
+            delivery_result = self._apply_delivery_simulation(mayor_policy)
+            yield {
+                "type": "implementation_gap_assessed",
+                "turn": turn,
+                "delivery_report": dict(self.game_state.last_delivery_report),
+            }
         yield {
             "type": "opposition_frame_primary",
             "turn": turn,
@@ -688,6 +785,8 @@ class TurnManager:
             + opp_resolution.group_effects
             + long_term_resolution.group_effects
         )
+        if delivery_result is not None:
+            combined_group_effects += list(delivery_result.sentiment_effects)
         campaign_delta = mayor_resolution.campaign_strength - opp_resolution.campaign_strength
         try:
             agent_impact = self._apply_agent_reactions(
@@ -901,6 +1000,7 @@ class TurnManager:
                 "opposition_action": opp_policy.name,
                 "dominant_fronts": dominant_fronts,
                 "events_triggered": list(all_triggered),
+                "delivery_summary": mayor_policy.delivery_summary,
             },
             "stat_deltas": stat_changes,
             "popularity_delta": {
@@ -910,6 +1010,7 @@ class TurnManager:
             "key_events": list(all_triggered),
             "state": self._build_state_snapshot(group_metrics),
             "media_cards": media_cards,
+            "delivery_report": dict(self.game_state.last_delivery_report) if delivery_result is not None else None,
             "election_result": election_result,
             "game_over": self._is_game_over(),
         }
@@ -928,6 +1029,7 @@ class TurnManager:
             "debate_results": [dr.to_dict() for dr in debate_results],
             "generated_event": generated_event.to_dict() if generated_event else None,
             "media_cards": media_cards,
+            "delivery_report": dict(self.game_state.last_delivery_report) if delivery_result is not None else None,
             "credibility": credibility_result,
             "election_result": election_result,
             "game_over": self._is_game_over(),

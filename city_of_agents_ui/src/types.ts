@@ -52,7 +52,12 @@ export type StateSnapshot = {
     mayor: number
     opposition: number
   }
+  political_capital: number
+  campaign_funds: number
+  opposition_budget: number
   simulation_profile?: Record<string, unknown>
+  last_delivery_report?: DeliveryReport
+  delivery_history?: Array<DeliveryReport & { turn: number; policy_id: string; policy_name: string }>
   last_agent_impact?: {
     agent_count_evaluated: number
     llm_panel_count: number
@@ -121,6 +126,26 @@ export type DynamicPolicy = {
   tradeoffs?: string[]
   counter_narrative_risk?: string
   effects?: Record<string, number>
+  budget_cost?: number
+  intent?: string
+  implementation_targets?: Array<{
+    key: string
+    label: string
+    unit: string
+    proposed: number
+    difficulty?: number
+  }>
+  delivered_outcomes?: Array<{
+    key: string
+    label: string
+    unit: string
+    proposed: number
+    delivered: number
+    completion_ratio: number
+    gap: number
+  }>
+  implementation_gap?: number
+  delivery_summary?: string
   group_effects?: Array<{
     match?: Record<string, string>
     happiness?: number
@@ -356,6 +381,28 @@ export type TurnEvent = {
   payload: Record<string, unknown>
 }
 
+export type DeliveryReport = {
+  execution_score: number
+  competence_factor: number
+  integrity_drag: number
+  implementation_gap: number
+  budget_required: number
+  budget_spent: number
+  stat_deltas: Record<string, number>
+  sentiment_effects: Array<Record<string, unknown>>
+  targets: Array<{
+    key: string
+    label: string
+    unit: string
+    proposed: number
+    delivered: number
+    completion_ratio: number
+    gap: number
+  }>
+  summary: string
+  applied_stat_deltas?: Record<string, number>
+}
+
 export type TurnDetail = TurnSummary & {
   stat_deltas: Record<string, number>
   media_cards: MediaTimelineCard[]
@@ -371,6 +418,8 @@ export type StreamMessage =
       target_groups?: string[]
       front_weights?: Record<string, number>
       estimated_shift?: Record<string, number>
+      implementation_targets?: DynamicPolicy['implementation_targets']
+      budget_cost?: number
     }
   | {
       type: 'opposition_frame_primary'
@@ -422,7 +471,23 @@ export type StreamMessage =
         avg_alignment_delta: number
         avg_trust_delta: number
         dominant_fronts: string[]
+        top_cohorts?: Array<{
+          cohort_id: string
+          group_id: string
+          role: string
+          population: number
+          happiness_delta: number
+          radicalization_delta: number
+          alignment_delta: number
+          trust_delta: number
+          narrative_shift_delta: number
+        }>
       }
+    }
+  | {
+      type: 'implementation_gap_assessed'
+      turn: number
+      delivery_report: DeliveryReport
     }
   | {
       type: 'cohort_shift_aggregated'
@@ -467,6 +532,7 @@ export type StreamMessage =
         opposition_action: string
         dominant_fronts: string[]
         events_triggered: string[]
+        delivery_summary?: string
       }
       stat_deltas: Record<string, number>
       popularity_delta: {
@@ -476,6 +542,7 @@ export type StreamMessage =
       key_events: string[]
       state: StateSnapshot
       media_cards: MediaNarrativeCard[]
+      delivery_report?: DeliveryReport | null
       election_result: ElectionResult | null
       game_over: boolean
     }
@@ -496,5 +563,6 @@ export type StreamMessage =
       }
       election_result: ElectionResult | null
       game_over: boolean
+      delivery_report?: DeliveryReport | null
     }
   | { type: 'error'; message: string }
