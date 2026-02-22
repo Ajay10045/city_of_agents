@@ -43,6 +43,41 @@
         "sensationalism": 52.0,
         "trust": 51.0
       }
+    ],
+    "advisors": [
+      {
+        "advisor_id": "fiscal_growth",
+        "name": "Ananya Kapoor",
+        "portfolios": ["economy", "employment", "infrastructure"],
+        "style": "Execution-focused growth planner who insists on measurable delivery milestones.",
+        "aliases": ["ananya", "kapoor", "growth", "fiscal"],
+        "tone": "calm_analytical",
+        "voice_traits": ["uses milestone language", "keeps execution practical", "anchors recommendations in measurable outcomes"],
+        "conversational_habits": ["answers plainly first", "adds one tracking metric"],
+        "taboo_patterns": ["as an ai", "i cannot help"]
+      },
+      {
+        "advisor_id": "social_cohesion",
+        "name": "Imran Siddiqui",
+        "portfolios": ["social_cohesion", "public_trust", "services"],
+        "style": "Ground-up consensus builder focused on neighborhood trust and service fairness.",
+        "aliases": ["imran", "siddiqui", "social", "trust"],
+        "tone": "grounded_empathic",
+        "voice_traits": ["connects policy to everyday residents", "de-escalates disagreements", "uses inclusive civic language"],
+        "conversational_habits": ["paraphrases the mayor briefly", "keeps responses concise unless asked deeper"],
+        "taboo_patterns": ["as an ai", "i cannot help"]
+      },
+      {
+        "advisor_id": "governance_risk",
+        "name": "Kavya Nair",
+        "portfolios": ["corruption", "law_and_order", "media"],
+        "style": "Compliance-driven risk advisor focused on transparency and narrative containment.",
+        "aliases": ["kavya", "nair", "risk", "governance"],
+        "tone": "skeptical_guardrail",
+        "voice_traits": ["highlights governance exposure fast", "prioritizes credibility safeguards", "keeps corruption-risk explicit"],
+        "conversational_habits": ["calls out one risk clearly", "pairs risk with one feasible mitigation"],
+        "taboo_patterns": ["as an ai", "i cannot help"]
+      }
     ]
   },
   "identity_groups": [

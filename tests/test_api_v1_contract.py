@@ -492,7 +492,11 @@ def test_v1_advisor_session_message_and_revise_contract(api_server: str) -> None
     advisor_session = create_session_payload["session"]
     session_id = advisor_session["advisor_session_id"]
     assert len(advisor_session["options"]) >= 1
-    assert len(advisor_session["advisors"]) == 3
+    assert len(advisor_session["advisors"]) >= 1
+    assert "global_memory_summary" in advisor_session
+    assert "global_memory_anchor_message_id" in advisor_session
+    assert advisor_session["advisors"][0].get("tone")
+    assert isinstance(advisor_session["advisors"][0].get("voice_traits"), list)
 
     option_id = advisor_session["options"][0]["id"]
     msg_status, msg_payload = _http_json(
@@ -519,6 +523,7 @@ def test_v1_advisor_session_message_and_revise_contract(api_server: str) -> None
     assert structured.get("portfolio_focus")
     assert isinstance(structured.get("responds_to_message_ids"), list)
     assert structured.get("distinctive_risk")
+    assert structured.get("interaction_intent")
 
     revise_single_status, revise_single_payload = _http_json(
         "POST",
@@ -891,6 +896,8 @@ def test_v1_advisor_message_stream_contract(api_server: str) -> None:
     )
     assert session_status in {200, 201}
     session_id = session_payload["session"]["advisor_session_id"]
+    expected_count = len(session_payload["session"]["advisors"])
+    assert expected_count >= 1
 
     stream_status, events = _http_stream_events(
         f"{api_server}/v1/games/{game_id}/advisor/sessions/{session_id}/messages/stream",
@@ -903,8 +910,8 @@ def test_v1_advisor_message_stream_contract(api_server: str) -> None:
     assert events
     event_types = [event.get("event_type") for event in events]
     assert "mayor_message_accepted" in event_types
-    assert event_types.count("advisor_message_start") == 3
-    assert event_types.count("advisor_message_done") == 3
+    assert event_types.count("advisor_message_start") == expected_count
+    assert event_types.count("advisor_message_done") == expected_count
     assert "session_snapshot" in event_types
     assert event_types[-1] == "done"
     done_events = [event for event in events if event.get("event_type") == "advisor_message_done"]
@@ -914,6 +921,234 @@ def test_v1_advisor_message_stream_contract(api_server: str) -> None:
         event.get("structured", {}).get("stance") in {"agree", "challenge", "extend"}
         for event in done_events
     )
+    assert all(event.get("structured", {}).get("interaction_intent") for event in done_events)
+
+
+@pytest.mark.parametrize(
+    ("question", "expected_mode"),
+    [
+        ("@all quick sync before we start", "all"),
+        ("@everyone can you react to this trust-risk plan?", "all"),
+        ("Please review trust and jobs tradeoffs this turn.", "auto"),
+        ("@unknownadvisor should we move now?", "auto"),
+    ],
+)
+def test_v1_advisor_message_stream_mention_routing_all_or_auto(
+    api_server: str,
+    question: str,
+    expected_mode: str,
+) -> None:
+    create_status, game_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games",
+        {"seed": 298, "turns": 5, "city_id": "new_delhi", "agent_count": 12},
+    )
+    assert create_status == 201
+    game_id = game_payload["game_id"]
+
+    session_status, session_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games/{game_id}/advisor/sessions",
+        {},
+    )
+    assert session_status in {200, 201}
+    session_id = session_payload["session"]["advisor_session_id"]
+    expected_count = len(session_payload["session"]["advisors"])
+    assert expected_count >= 1
+
+    stream_status, events = _http_stream_events(
+        f"{api_server}/v1/games/{game_id}/advisor/sessions/{session_id}/messages/stream",
+        {
+            "thread_scope": "global",
+            "question": question,
+        },
+    )
+    assert stream_status == 200
+    done_events = [event for event in events if event.get("event_type") == "advisor_message_done"]
+    assert len(done_events) == expected_count
+    assert all(
+        event.get("structured", {}).get("addressed_via") == expected_mode
+        for event in done_events
+    )
+
+
+def test_v1_advisor_message_stream_single_mention_routes_one_responder(api_server: str) -> None:
+    create_status, game_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games",
+        {"seed": 299, "turns": 5, "city_id": "new_delhi", "agent_count": 12},
+    )
+    assert create_status == 201
+    game_id = game_payload["game_id"]
+
+    session_status, session_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games/{game_id}/advisor/sessions",
+        {},
+    )
+    assert session_status in {200, 201}
+    session = session_payload["session"]
+    session_id = session["advisor_session_id"]
+    advisors = session["advisors"]
+    assert advisors
+    first_alias = (advisors[0].get("aliases") or [advisors[0]["name"].split(" ")[0]])[0]
+    question = f"@{first_alias} what is your read if we just started?"
+
+    stream_status, events = _http_stream_events(
+        f"{api_server}/v1/games/{game_id}/advisor/sessions/{session_id}/messages/stream",
+        {
+            "thread_scope": "global",
+            "question": question,
+        },
+    )
+    assert stream_status == 200
+    done_events = [event for event in events if event.get("event_type") == "advisor_message_done"]
+    assert len(done_events) == 1
+    assert done_events[0].get("speaker_advisor_id") == advisors[0]["advisor_id"]
+    assert done_events[0].get("structured", {}).get("addressed_via") == "mention"
+
+
+def test_v1_advisor_message_single_mention_routes_one_responder_non_stream(api_server: str) -> None:
+    create_status, game_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games",
+        {"seed": 300, "turns": 5, "city_id": "new_delhi", "agent_count": 12},
+    )
+    assert create_status == 201
+    game_id = game_payload["game_id"]
+
+    session_status, session_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games/{game_id}/advisor/sessions",
+        {},
+    )
+    assert session_status in {200, 201}
+    session = session_payload["session"]
+    session_id = session["advisor_session_id"]
+    advisors = session["advisors"]
+    assert advisors
+    first_alias = (advisors[0].get("aliases") or [advisors[0]["name"].split(" ")[0]])[0]
+
+    msg_status, msg_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games/{game_id}/advisor/sessions/{session_id}/messages",
+        {
+            "thread_scope": "global",
+            "question": f"@{first_alias} quick hello before we discuss policy.",
+        },
+    )
+    assert msg_status == 200
+    advisor_rows = [
+        message
+        for message in msg_payload["session"]["global_thread"]
+        if message["role"] == "advisor"
+    ]
+    assert len(advisor_rows) == 1
+    assert advisor_rows[0]["speaker_advisor_id"] == advisors[0]["advisor_id"]
+    assert advisor_rows[0].get("structured", {}).get("addressed_via") == "mention"
+
+
+def test_v1_city_profile_sets_city_specific_advisor_rosters(api_server: str) -> None:
+    city_ids = ["new_delhi", "new_york", "london", "tokyo", "dubai"]
+    roster_sets: dict[str, tuple[str, ...]] = {}
+
+    for idx, city_id in enumerate(city_ids):
+        status, payload = _http_json(
+            "POST",
+            f"{api_server}/v1/games",
+            {"seed": 420 + idx, "turns": 5, "city_id": city_id, "agent_count": 12},
+        )
+        assert status == 201
+        game_id = payload["game_id"]
+        session_status, session_payload = _http_json(
+            "POST",
+            f"{api_server}/v1/games/{game_id}/advisor/sessions",
+            {},
+        )
+        assert session_status in {200, 201}
+        advisors = session_payload["session"]["advisors"]
+        assert advisors
+        roster_sets[city_id] = tuple(advisor["name"] for advisor in advisors)
+        assert all(advisor.get("tone") for advisor in advisors)
+
+    assert len(set(roster_sets.values())) == len(city_ids)
+
+
+def test_v1_advisor_message_marks_casual_interaction_mode(api_server: str) -> None:
+    create_status, game_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games",
+        {"seed": 421, "turns": 5, "city_id": "new_delhi", "agent_count": 12},
+    )
+    assert create_status == 201
+    game_id = game_payload["game_id"]
+
+    session_status, session_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games/{game_id}/advisor/sessions",
+        {},
+    )
+    assert session_status in {200, 201}
+    session_id = session_payload["session"]["advisor_session_id"]
+
+    msg_status, msg_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games/{game_id}/advisor/sessions/{session_id}/messages",
+        {
+            "thread_scope": "global",
+            "question": "hi everyone",
+        },
+    )
+    assert msg_status == 200
+    advisor_rows = [
+        message
+        for message in msg_payload["session"]["global_thread"]
+        if message["role"] == "advisor"
+    ]
+    assert advisor_rows
+    assert all(
+        row.get("structured", {}).get("interaction_mode") == "casual"
+        for row in advisor_rows
+    )
+
+
+def test_v1_advisor_session_builds_rolling_memory_summary(api_server: str) -> None:
+    create_status, game_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games",
+        {"seed": 422, "turns": 5, "city_id": "new_delhi", "agent_count": 12},
+    )
+    assert create_status == 201
+    game_id = game_payload["game_id"]
+
+    session_status, session_payload = _http_json(
+        "POST",
+        f"{api_server}/v1/games/{game_id}/advisor/sessions",
+        {},
+    )
+    assert session_status in {200, 201}
+    session_id = session_payload["session"]["advisor_session_id"]
+
+    for idx in range(4):
+        msg_status, _ = _http_json(
+            "POST",
+            f"{api_server}/v1/games/{game_id}/advisor/sessions/{session_id}/messages",
+            {
+                "thread_scope": "global",
+                "question": f"Round {idx + 1}: can you discuss trust and jobs tradeoffs briefly?",
+            },
+        )
+        assert msg_status == 200
+
+    get_status, get_payload = _http_json(
+        "GET",
+        f"{api_server}/v1/games/{game_id}/advisor/sessions/{session_id}",
+    )
+    assert get_status == 200
+    session = get_payload["session"]
+    assert isinstance(session.get("global_memory_summary"), str)
+    assert session.get("global_memory_summary")
+    assert isinstance(session.get("global_memory_anchor_message_id"), str)
 
 
 def test_v1_stale_advisor_session_rejected_for_message_and_revise(api_server: str) -> None:

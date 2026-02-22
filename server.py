@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 import random
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -14,7 +15,12 @@ from urllib.parse import parse_qs, urlparse
 
 from agents.agent_engine import AgentEngine
 from agents.identity_group import IdentityGroup
-from core.advisor_session import AdvisorSession, new_advisor_session
+from core.advisor_session import (
+    DEFAULT_ADVISORS,
+    AdvisorPersona,
+    AdvisorSession,
+    new_advisor_session,
+)
 from core.city_profile import (
     CityProfileError,
     city_profile_status,
@@ -48,6 +54,9 @@ MAX_BUFFERED_EVENTS = 3000
 MAX_BUFFERED_ACTION_RESULTS = 1000
 ADVISOR_OPTIONS_CACHE_TTL_SECONDS = 90.0
 ALLOWED_PARTICIPANT_ROLES = {"mayor", "opposition", "spectator"}
+MAX_ACTIVE_ADVISORS: int | None = None
+ADVISOR_CONTEXT_RECENT_WINDOW = 12
+ADVISOR_MEMORY_REFRESH_THRESHOLD = 14
 
 CITY_OPTIONS = [
     {"id": "new_delhi", "name": "New Delhi"},
@@ -539,6 +548,324 @@ def _parse_bool(value: Any, default: bool = False) -> bool:
     return default
 
 
+def _normalize_mention_alias(value: Any) -> str:
+    text = str(value).strip().lower()
+    if text.startswith("@"):
+        text = text[1:]
+    return re.sub(r"[^a-z0-9]+", "", text)
+
+
+def _extract_mentions(question: str) -> list[str]:
+    seen: set[str] = set()
+    tokens: list[str] = []
+    for raw in re.findall(r"@([A-Za-z0-9_.-]+)", str(question)):
+        normalized = _normalize_mention_alias(raw)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        tokens.append(normalized)
+    return tokens
+
+
+def _resolve_city_advisors(session: GameSession) -> list[AdvisorPersona]:
+    city_id = _normalize_city_id(session.setup.get("city_id", SETUP_DEFAULTS["city_id"]))
+    try:
+        bundle = load_city_profile(city_id)
+    except Exception as exc:
+        _advisor_debug_log(
+            "advisor_roster_resolve",
+            session.game_id,
+            0.0,
+            status="fallback",
+            city_id=city_id,
+            reason=f"city-profile-load-failed:{str(exc)[:80]}",
+        )
+        return list(DEFAULT_ADVISORS)
+
+    meta = bundle.payload.get("meta", {}) if isinstance(bundle.payload, dict) else {}
+    raw_advisors = meta.get("advisors") if isinstance(meta, dict) else None
+    if not isinstance(raw_advisors, list) or not raw_advisors:
+        reason = "missing-or-empty"
+        if isinstance(meta, dict) and str(meta.get("advisors_validation_error", "")).strip():
+            reason = str(meta.get("advisors_validation_error", "")).strip()[:100]
+        _advisor_debug_log(
+            "advisor_roster_resolve",
+            session.game_id,
+            0.0,
+            status="fallback",
+            city_id=city_id,
+            reason=reason,
+        )
+        return list(DEFAULT_ADVISORS)
+
+    advisors: list[AdvisorPersona] = []
+    for item in raw_advisors:
+        if not isinstance(item, dict):
+            continue
+        advisor_id = str(item.get("advisor_id", "")).strip()
+        name = str(item.get("name", "")).strip()
+        style = str(item.get("style", "")).strip()
+        portfolios = [str(value).strip().lower() for value in item.get("portfolios", []) if str(value).strip()]
+        aliases = [str(value).strip().lower() for value in item.get("aliases", []) if str(value).strip()]
+        tone = str(item.get("tone", "")).strip().lower()
+        voice_traits = [str(value).strip() for value in item.get("voice_traits", []) if str(value).strip()]
+        conversational_habits = [
+            str(value).strip() for value in item.get("conversational_habits", []) if str(value).strip()
+        ]
+        taboo_patterns = [str(value).strip().lower() for value in item.get("taboo_patterns", []) if str(value).strip()]
+        if not advisor_id or not name or not style or not portfolios or not aliases:
+            continue
+        advisors.append(
+            AdvisorPersona(
+                advisor_id=advisor_id,
+                name=name,
+                portfolios=portfolios,
+                style=style,
+                aliases=aliases,
+                tone=tone,
+                voice_traits=voice_traits,
+                conversational_habits=conversational_habits,
+                taboo_patterns=taboo_patterns,
+            )
+        )
+    if not advisors:
+        _advisor_debug_log(
+            "advisor_roster_resolve",
+            session.game_id,
+            0.0,
+            status="fallback",
+            city_id=city_id,
+            reason="normalized-roster-empty",
+        )
+        return list(DEFAULT_ADVISORS)
+    return advisors[:MAX_ACTIVE_ADVISORS] if isinstance(MAX_ACTIVE_ADVISORS, int) and MAX_ACTIVE_ADVISORS > 0 else advisors
+
+
+def _resolve_addressed_advisors(question: str, advisors: list[AdvisorPersona]) -> tuple[list[AdvisorPersona], str]:
+    if not advisors:
+        return [], "auto"
+    mentions = _extract_mentions(question)
+    if not mentions:
+        return list(advisors), "auto"
+
+    broadcast = {"all", "everyone", "everybody"}
+    if any(token in broadcast for token in mentions):
+        return list(advisors), "all"
+
+    alias_map: dict[str, AdvisorPersona] = {}
+    for advisor in advisors:
+        for alias in advisor.aliases:
+            normalized = _normalize_mention_alias(alias)
+            if normalized and normalized not in alias_map:
+                alias_map[normalized] = advisor
+
+    selected: list[AdvisorPersona] = []
+    seen_ids: set[str] = set()
+    for token in mentions:
+        advisor = alias_map.get(token)
+        if advisor is None or advisor.advisor_id in seen_ids:
+            continue
+        seen_ids.add(advisor.advisor_id)
+        selected.append(advisor)
+
+    if not selected:
+        return list(advisors), "auto"
+    return selected, "mention"
+
+
+def _detect_interaction_intent(question: str) -> str:
+    text = " ".join(str(question).strip().lower().split())
+    if not text:
+        return "strategy"
+    stripped = re.sub(r"@[a-z0-9_.-]+", "", text).strip()
+    words = [token for token in re.findall(r"[a-z]+", stripped)]
+    if not words:
+        return "strategy"
+
+    clarification_markers = (
+        "did you understand",
+        "did you get",
+        "are you understanding",
+        "are you following",
+        "that is not what i asked",
+        "thats not what i asked",
+        "i asked you",
+        "understand what i said",
+    )
+    if any(marker in stripped for marker in clarification_markers):
+        return "clarification"
+
+    greetings = {
+        "hi",
+        "hello",
+        "hey",
+        "yo",
+        "hola",
+        "namaste",
+        "thanks",
+        "thank",
+        "morning",
+        "evening",
+    }
+    if len(words) <= 8 and any(token in greetings for token in words):
+        return "greeting"
+
+    ideation_terms = {
+        "list",
+        "initiative",
+        "initiatives",
+        "ideas",
+        "options",
+        "suggest",
+        "recommend",
+        "proposal",
+        "proposals",
+    }
+    if any(token in ideation_terms for token in words):
+        return "ideation"
+
+    if stripped.endswith("?") or words[0] in {"will", "would", "can", "could", "does", "did", "is", "are"}:
+        return "direct_answer"
+
+    policy_terms = {
+        "policy",
+        "plan",
+        "budget",
+        "risk",
+        "jobs",
+        "trust",
+        "economy",
+        "corruption",
+        "services",
+        "election",
+        "implement",
+        "strategy",
+        "tradeoff",
+        "impact",
+    }
+    if any(token in policy_terms for token in words):
+        return "strategy"
+    return "direct_answer"
+
+
+def _interaction_mode_for_intent(intent: str) -> str:
+    return "policy" if intent in {"strategy", "ideation"} else "casual"
+
+
+def _brief_message_payload(message: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(message.get("id", "")),
+        "role": str(message.get("role", "")),
+        "content": " ".join(str(message.get("content", "")).split())[:260],
+        "speaker_advisor_id": str(message.get("speaker_advisor_id", "")),
+    }
+
+
+def _memory_value_for_thread(
+    advisor_session: AdvisorSession,
+    thread_scope: str,
+    option_id: str | None,
+) -> tuple[str, str | None]:
+    if thread_scope == "option" and option_id:
+        return (
+            str(advisor_session.option_memory_summary.get(option_id, "")),
+            str(advisor_session.option_memory_anchor_message_id.get(option_id, "")).strip() or None,
+        )
+    return (
+        str(advisor_session.global_memory_summary),
+        advisor_session.global_memory_anchor_message_id,
+    )
+
+
+def _set_memory_value_for_thread(
+    advisor_session: AdvisorSession,
+    thread_scope: str,
+    option_id: str | None,
+    summary: str,
+    anchor_message_id: str | None,
+) -> None:
+    if thread_scope == "option" and option_id:
+        advisor_session.option_memory_summary[option_id] = summary
+        advisor_session.option_memory_anchor_message_id[option_id] = anchor_message_id or ""
+        return
+    advisor_session.global_memory_summary = summary
+    advisor_session.global_memory_anchor_message_id = anchor_message_id
+
+
+def _refresh_thread_memory_unlocked(
+    advisor_session: AdvisorSession,
+    *,
+    thread_scope: str,
+    option_id: str | None,
+    advisor_name_by_id: dict[str, str],
+) -> None:
+    thread = (
+        list(advisor_session.option_threads.get(option_id or "", []))
+        if thread_scope == "option"
+        else list(advisor_session.global_thread)
+    )
+    if len(thread) <= ADVISOR_CONTEXT_RECENT_WINDOW:
+        _set_memory_value_for_thread(advisor_session, thread_scope, option_id, "", None)
+        return
+
+    older = thread[:-ADVISOR_CONTEXT_RECENT_WINDOW]
+    if not older:
+        return
+
+    current_summary, current_anchor = _memory_value_for_thread(advisor_session, thread_scope, option_id)
+    next_anchor = older[-1].id
+    if current_anchor == next_anchor and current_summary:
+        return
+    if len(thread) < ADVISOR_MEMORY_REFRESH_THRESHOLD and not current_summary:
+        return
+
+    transcript: list[dict[str, Any]] = []
+    for message in older:
+        row = message.to_dict()
+        if row.get("role") == "advisor":
+            speaker_id = str(row.get("speaker_advisor_id", "")).strip()
+            if speaker_id:
+                row["advisor_name"] = advisor_name_by_id.get(speaker_id, "Advisor")
+        transcript.append(_brief_message_payload(row) | {"advisor_name": row.get("advisor_name", "")})
+
+    summary = _advisory_chamber.summarize_conversation_memory(
+        existing_summary=current_summary,
+        transcript=transcript,
+    )
+    _set_memory_value_for_thread(
+        advisor_session,
+        thread_scope,
+        option_id,
+        summary,
+        next_anchor,
+    )
+
+
+def _build_context_packet(
+    advisor_session: AdvisorSession,
+    *,
+    thread_scope: str,
+    option_id: str | None,
+    history: list[dict[str, Any]],
+    question: str,
+    addressed_via: str,
+    interaction_intent: str,
+    sequence_index: int,
+    sequence_total: int,
+) -> dict[str, Any]:
+    memory_summary, memory_anchor = _memory_value_for_thread(advisor_session, thread_scope, option_id)
+    recent_window = [_brief_message_payload(message) for message in history[-ADVISOR_CONTEXT_RECENT_WINDOW:]]
+    return {
+        "memory_summary": memory_summary,
+        "memory_anchor_message_id": memory_anchor,
+        "recent_window": recent_window,
+        "current_question": question,
+        "addressed_via": addressed_via,
+        "interaction_intent": interaction_intent,
+        "response_sequence": {"index": sequence_index, "total": sequence_total},
+    }
+
+
 def _advisor_options_cache_key(turn_number: int, guidance: str | None) -> str:
     marker = str(guidance or "").strip()
     guidance_hash = hashlib.sha1(marker.encode("utf-8")).hexdigest()[:16] if marker else "none"
@@ -661,7 +988,11 @@ def _ensure_advisor_session_unlocked(
             source = "live"
         _cache_advisor_options(session, cache_key, options, source)
 
-    advisor_session = new_advisor_session(turn_number=turn_number, options=options)
+    advisor_session = new_advisor_session(
+        turn_number=turn_number,
+        options=options,
+        advisors=_resolve_city_advisors(session),
+    )
     advisor_session.option_source = source
     advisor_session.session_status = "refining" if source == "fallback" else "ready"
     session.advisor_sessions[advisor_session.advisor_session_id] = advisor_session
@@ -1707,35 +2038,34 @@ class GameHandler(BaseHTTPRequestHandler):
                 else:
                     history = [message.to_dict() for message in advisor_session.global_thread]
                 options = list(advisor_session.options)
-                advisor_roster = list(advisor_session.advisors[:3])
-                advisor_session.append_message(
+                advisor_roster = list(advisor_session.advisors)
+                mayor_msg = advisor_session.append_message(
                     role="user",
                     content=question,
                     thread_scope=thread_scope,
                     option_id=option_id,
                 )
+                history.append(mayor_msg.to_dict())
                 payload = advisor_session.to_dict()
-            prior_advisor_messages = [
-                {
-                    "id": str(message.get("id", "")),
-                    "content": str(message.get("content", "")),
-                    "speaker_advisor_id": str(message.get("speaker_advisor_id", "")),
-                    "advisor_name": next(
-                        (
-                            advisor.name
-                            for advisor in advisor_roster
-                            if advisor.advisor_id == str(message.get("speaker_advisor_id", ""))
-                        ),
-                        "Advisor",
-                    ),
-                }
-                for message in history
-                if str(message.get("role", "")).strip() == "advisor"
-            ]
+            addressed_advisors, addressed_via = _resolve_addressed_advisors(question, advisor_roster)
+            interaction_intent = _detect_interaction_intent(question)
+            interaction_mode = _interaction_mode_for_intent(interaction_intent)
+            prior_advisor_messages: list[dict[str, str]] = []
 
             generated_summaries: list[str] = []
             structured_rows: list[dict[str, Any]] = []
-            for advisor in advisor_roster:
+            for idx, advisor in enumerate(addressed_advisors):
+                context_packet = _build_context_packet(
+                    advisor_session,
+                    thread_scope=thread_scope,
+                    option_id=option_id,
+                    history=history,
+                    question=question,
+                    addressed_via=addressed_via,
+                    interaction_intent=interaction_intent,
+                    sequence_index=idx + 1,
+                    sequence_total=len(addressed_advisors),
+                )
                 reply, similarity, attempts = self._build_advisor_stream_reply(
                     session=session,
                     advisor=advisor,
@@ -1745,9 +2075,15 @@ class GameHandler(BaseHTTPRequestHandler):
                     history=history,
                     options=options,
                     prior_advisor_messages=prior_advisor_messages,
+                    context_packet=context_packet,
+                    interaction_intent=interaction_intent,
+                    interaction_mode=interaction_mode,
                 )
                 summary = str(reply["summary"]).strip()
-                structured = reply["structured"] if isinstance(reply["structured"], dict) else {}
+                structured = dict(reply["structured"] if isinstance(reply["structured"], dict) else {})
+                structured["addressed_via"] = addressed_via
+                structured["interaction_mode"] = interaction_mode
+                structured["interaction_intent"] = interaction_intent
 
                 with session.action_lock:
                     active_advisor_session = _active_advisor_session_unlocked(session)
@@ -1791,14 +2127,46 @@ class GameHandler(BaseHTTPRequestHandler):
                     (time.time() - started) * 1000,
                     advisor_id=advisor.advisor_id,
                     stance=structured.get("stance", "unknown"),
+                    addressed_via=addressed_via,
+                    interaction_mode=interaction_mode,
+                    interaction_intent=interaction_intent,
                     similarity=f"{similarity:.3f}",
                     retries=max(0, attempts - 1),
                 )
 
+            with session.action_lock:
+                active_advisor_session = _active_advisor_session_unlocked(session)
+                if advisor_session_id != active_advisor_session.advisor_session_id:
+                    _json_response(
+                        self,
+                        {
+                            "api_version": "v1",
+                            "game_id": game_id,
+                            "error": "advisor session is stale for the current turn",
+                            "provided_advisor_session_id": advisor_session_id,
+                            "active_advisor_session_id": active_advisor_session.advisor_session_id,
+                            "active_turn_number": active_advisor_session.turn_number,
+                        },
+                        409,
+                    )
+                    return
+                advisor_name_by_id = {advisor.advisor_id: advisor.name for advisor in active_advisor_session.advisors}
+                _refresh_thread_memory_unlocked(
+                    active_advisor_session,
+                    thread_scope=thread_scope,
+                    option_id=option_id,
+                    advisor_name_by_id=advisor_name_by_id,
+                )
+                payload = active_advisor_session.to_dict()
+
             lead_structured = structured_rows[0] if structured_rows else {}
+            summary_text = ""
+            if generated_summaries:
+                summary_text = generated_summaries[0] if len(generated_summaries) == 1 else " | ".join(generated_summaries)
+            responder_count = len(generated_summaries)
             answer = {
                 "answer": {
-                    "summary": " | ".join(generated_summaries)[:360],
+                    "summary": summary_text[:360],
                     "drivers": lead_structured.get("drivers", []),
                     "assumptions": lead_structured.get("assumptions", []),
                     "tradeoffs": lead_structured.get("tradeoffs", []),
@@ -1847,6 +2215,10 @@ class GameHandler(BaseHTTPRequestHandler):
             status="ok",
             source=payload.get("option_source", "unknown"),
             session_status=payload.get("session_status", "unknown"),
+            responders_count=responder_count,
+            addressed_via=addressed_via,
+            interaction_mode=interaction_mode,
+            interaction_intent=interaction_intent,
         )
 
     @staticmethod
@@ -1876,6 +2248,9 @@ class GameHandler(BaseHTTPRequestHandler):
         history: list[dict[str, Any]],
         options: list[Any],
         prior_advisor_messages: list[dict[str, Any]],
+        context_packet: dict[str, Any] | None = None,
+        interaction_intent: str = "strategy",
+        interaction_mode: str = "policy",
     ) -> tuple[dict[str, Any], float, int]:
         reply, similarity, attempts = _advisory_chamber.build_reply_with_retry(
             game_state=session.turn_manager.game_state,
@@ -1884,6 +2259,9 @@ class GameHandler(BaseHTTPRequestHandler):
             history=history,
             options=options,
             prior_advisor_messages=prior_advisor_messages,
+            context_packet=context_packet,
+            interaction_intent=interaction_intent,
+            interaction_mode=interaction_mode,
         )
         structured = reply.structured if isinstance(reply.structured, dict) else {}
         summary = str(reply.summary or "").strip()
@@ -1988,13 +2366,17 @@ class GameHandler(BaseHTTPRequestHandler):
                 else [message.to_dict() for message in advisor_session.global_thread]
             )
             options = list(advisor_session.options)
-            advisors = list(advisor_session.advisors[:3])
+            advisors = list(advisor_session.advisors)
+            addressed_advisors, addressed_via = _resolve_addressed_advisors(question, advisors)
+            interaction_intent = _detect_interaction_intent(question)
+            interaction_mode = _interaction_mode_for_intent(interaction_intent)
             mayor_msg = advisor_session.append_message(
                 role="user",
                 content=question,
                 thread_scope=thread_scope,
                 option_id=option_id,
             )
+            history.append(mayor_msg.to_dict())
             snapshot = advisor_session.to_dict()
 
         self.send_response(200)
@@ -2025,24 +2407,19 @@ class GameHandler(BaseHTTPRequestHandler):
                 },
             )
 
-            prior_advisor_messages = [
-                {
-                    "id": str(message.get("id", "")),
-                    "content": str(message.get("content", "")),
-                    "speaker_advisor_id": str(message.get("speaker_advisor_id", "")),
-                    "advisor_name": next(
-                        (
-                            advisor.name
-                            for advisor in advisors
-                            if advisor.advisor_id == str(message.get("speaker_advisor_id", ""))
-                        ),
-                        "Advisor",
-                    ),
-                }
-                for message in history
-                if str(message.get("role", "")).strip() == "advisor"
-            ]
-            for advisor in advisors:
+            prior_advisor_messages: list[dict[str, str]] = []
+            for idx, advisor in enumerate(addressed_advisors):
+                context_packet = _build_context_packet(
+                    advisor_session,
+                    thread_scope=thread_scope,
+                    option_id=option_id,
+                    history=history,
+                    question=question,
+                    addressed_via=addressed_via,
+                    interaction_intent=interaction_intent,
+                    sequence_index=idx + 1,
+                    sequence_total=len(addressed_advisors),
+                )
                 provisional_id = str(uuid.uuid4())
                 self._emit_sse(
                     self,
@@ -2065,9 +2442,15 @@ class GameHandler(BaseHTTPRequestHandler):
                     history=history,
                     options=options,
                     prior_advisor_messages=prior_advisor_messages,
+                    context_packet=context_packet,
+                    interaction_intent=interaction_intent,
+                    interaction_mode=interaction_mode,
                 )
                 summary = str(reply["summary"])
-                structured = reply["structured"] if isinstance(reply["structured"], dict) else {}
+                structured = dict(reply["structured"] if isinstance(reply["structured"], dict) else {})
+                structured["addressed_via"] = addressed_via
+                structured["interaction_mode"] = interaction_mode
+                structured["interaction_intent"] = interaction_intent
                 for chunk in self._iter_word_chunks(summary, words_per_chunk=2):
                     self._emit_sse(
                         self,
@@ -2146,8 +2529,36 @@ class GameHandler(BaseHTTPRequestHandler):
                     (time.time() - started) * 1000,
                     advisor_id=advisor.advisor_id,
                     stance=structured.get("stance", "unknown"),
+                    addressed_via=addressed_via,
+                    interaction_mode=interaction_mode,
+                    interaction_intent=interaction_intent,
                     similarity=f"{similarity:.3f}",
                     retries=max(0, attempts - 1),
+                )
+
+            final_snapshot: dict[str, Any] | None = None
+            with session.action_lock:
+                active_advisor_session = _active_advisor_session_unlocked(session)
+                if active_advisor_session.advisor_session_id == advisor_session_id:
+                    advisor_name_by_id = {advisor.advisor_id: advisor.name for advisor in active_advisor_session.advisors}
+                    _refresh_thread_memory_unlocked(
+                        active_advisor_session,
+                        thread_scope=thread_scope,
+                        option_id=option_id,
+                        advisor_name_by_id=advisor_name_by_id,
+                    )
+                    final_snapshot = active_advisor_session.to_dict()
+
+            if final_snapshot is not None:
+                self._emit_sse(
+                    self,
+                    {
+                        "event_type": "session_snapshot",
+                        "game_id": game_id,
+                        "advisor_session_id": advisor_session_id,
+                        "session": final_snapshot,
+                        "timestamp": time.time(),
+                    },
                 )
 
             self._emit_sse(
@@ -2165,7 +2576,10 @@ class GameHandler(BaseHTTPRequestHandler):
                 game_id,
                 (time.time() - started) * 1000,
                 status="ok",
-                advisors=3,
+                responders_count=len(addressed_advisors),
+                addressed_via=addressed_via,
+                interaction_mode=interaction_mode,
+                interaction_intent=interaction_intent,
             )
         except Exception as exc:
             self._emit_sse(
@@ -2406,7 +2820,7 @@ class GameHandler(BaseHTTPRequestHandler):
                     for message in advisor_session.global_thread[-16:]
                     if message.role in {"user", "advisor"} and message.content.strip()
                 ]
-                advisors = list(advisor_session.advisors[:3])
+                advisors = list(advisor_session.advisors)
                 transcript = [message.to_dict() for message in transcript_messages]
                 generated_from_message_ids = [message.id for message in transcript_messages]
 

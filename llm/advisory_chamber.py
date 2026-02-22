@@ -100,6 +100,106 @@ class AdvisoryChamber:
         lowered = str(text).strip().lower()
         return lowered not in {"agree", "challenge", "extend"}
 
+    @staticmethod
+    def _tone_token(value: str) -> str:
+        return re.sub(r"[^a-z0-9_]+", "_", str(value).strip().lower()).strip("_")
+
+    @staticmethod
+    def _looks_like_list_request(text: str) -> bool:
+        lowered = str(text).lower()
+        return any(token in lowered for token in ("list", "initiative", "ideas", "options", "suggest"))
+
+    def _fallback_memory_summary(self, existing_summary: str, transcript: list[dict[str, Any]]) -> str:
+        mayor_points = [
+            self._safe_line(str(item.get("content", "")), 160)
+            for item in transcript
+            if str(item.get("role", "")).strip() == "user" and str(item.get("content", "")).strip()
+        ]
+        advisor_points = []
+        for item in transcript:
+            if str(item.get("role", "")).strip() != "advisor":
+                continue
+            content = self._safe_line(str(item.get("content", "")), 140)
+            if not content:
+                continue
+            advisor_name = str(item.get("advisor_name", "")).strip() or str(item.get("speaker_advisor_id", "advisor")).strip()
+            advisor_points.append(f"{advisor_name}: {content}")
+        open_questions = [
+            self._safe_line(str(item.get("content", "")), 140)
+            for item in transcript
+            if str(item.get("role", "")).strip() == "user" and "?" in str(item.get("content", ""))
+        ]
+        chunks: list[str] = []
+        if existing_summary:
+            chunks.append(self._safe_line(existing_summary, 220))
+        if mayor_points:
+            chunks.append(f"Mayor priorities: {' | '.join(mayor_points[-3:])}")
+        if advisor_points:
+            chunks.append(f"Council points: {' | '.join(advisor_points[-3:])}")
+        if open_questions:
+            chunks.append(f"Open questions: {' | '.join(open_questions[-2:])}")
+        if not chunks:
+            return ""
+        return self._safe_line(" ; ".join(chunks), 700)
+
+    def summarize_conversation_memory(
+        self,
+        *,
+        existing_summary: str,
+        transcript: list[dict[str, Any]],
+    ) -> str:
+        if not transcript:
+            return self._safe_line(existing_summary, 700)
+        fallback = self._fallback_memory_summary(existing_summary, transcript)
+        if not self.live_available():
+            return fallback
+        try:
+            system = (
+                "Summarize mayor-advisor discussion memory for future turns.\n"
+                "Return JSON with key: summary.\n"
+                "Capture mayor directives, advisor disagreements, decisions, open questions, and commitments.\n"
+                "Keep concise and factual (max 150 words)."
+            )
+            payload = self._client.chat(
+                system,
+                "\n".join(
+                    [
+                        f"Existing summary: {existing_summary or '(none)'}",
+                        "Transcript:",
+                        str(transcript[-24:]),
+                    ]
+                ),
+            )
+            if isinstance(payload, dict):
+                summary = self._safe_line(str(payload.get("summary", "")), 700)
+                if summary:
+                    return summary
+        except Exception:
+            pass
+        return fallback
+
+    def _tone_conflict(self, advisor: "AdvisorPersona", text: str, interaction_intent: str) -> bool:
+        normalized = str(text).strip()
+        lowered = normalized.lower()
+        taboo = [str(item).strip().lower() for item in getattr(advisor, "taboo_patterns", []) if str(item).strip()]
+        if any(pattern and pattern in lowered for pattern in taboo):
+            return True
+
+        tone = self._tone_token(getattr(advisor, "tone", ""))
+        if tone.startswith("skeptical") and interaction_intent in {"strategy", "ideation"}:
+            if "!" in normalized and not any(token in lowered for token in ("risk", "mitigation", "guardrail", "caution")):
+                return True
+        if tone.startswith("grounded_empathic") and interaction_intent in {"strategy", "direct_answer"}:
+            if "people" not in lowered and "community" not in lowered and "trust" not in lowered:
+                if len(normalized.split()) > 22 and "?" not in normalized:
+                    return True
+        return False
+
+    @staticmethod
+    def _first_phrase(text: str, words: int = 6) -> str:
+        tokens = [token for token in str(text).lower().split() if token]
+        return " ".join(tokens[:words])
+
     def _grounding_tokens(self, constraints: str, transcript: list[dict[str, Any]]) -> set[str]:
         blocked = {
             "this",
@@ -211,26 +311,93 @@ class AdvisoryChamber:
         advisor: "AdvisorPersona",
         question: str,
         prior_advisor_messages: list[dict[str, Any]],
+        context_packet: dict[str, Any] | None = None,
+        interaction_intent: str = "strategy",
+        interaction_mode: str = "policy",
     ) -> ChamberReply:
-        stance = "extend"
-        references: list[str] = []
-        prior_name = "previous advisor"
-        if prior_advisor_messages:
-            stance = "challenge" if advisor.advisor_id == "governance_risk" else "extend"
-            references = [str(prior_advisor_messages[-1].get("id", "")).strip()]
-            prior_name = str(prior_advisor_messages[-1].get("advisor_name", "previous advisor")).strip()
-
         portfolio_focus = advisor.portfolios[0] if advisor.portfolios else "public_trust"
-        if references and prior_name:
+        context_refs = [
+            str(item.get("id", "")).strip()
+            for item in (context_packet or {}).get("recent_window", [])
+            if str(item.get("id", "")).strip()
+        ]
+        if interaction_intent == "greeting":
+            summary = f"Hi Mayor, {advisor.name} here. Ready when you want to discuss {portfolio_focus.replace('_', ' ')}."
+            structured = {
+                "summary": AdvisoryChamber._safe_line(summary, 320),
+                "drivers": [AdvisoryChamber._safe_line(f"Mayor message: {question}", 180)],
+                "assumptions": ["Greeting exchange; no policy recommendation requested yet."],
+                "tradeoffs": [],
+                "risk": "No immediate policy risk identified in this quick exchange.",
+                "confidence": 0.58,
+                "stance": "extend",
+                "portfolio_focus": portfolio_focus,
+                "responds_to_message_ids": [],
+                "distinctive_risk": "No immediate portfolio risk raised yet.",
+                "context_refs": context_refs[-2:],
+            }
+            return ChamberReply(summary=structured["summary"], structured=structured)
+
+        if interaction_intent == "clarification":
             summary = (
-                f"I {stance} {prior_name}'s point, but from the {portfolio_focus} lens we need a measurable "
-                f"risk trigger and weekly checkpoint before committing to this direction."
+                f"Yes, I understood. You asked about {portfolio_focus.replace('_', ' ')} impact; "
+                "I’ll answer directly and keep it concise."
+            )
+        elif interaction_intent == "direct_answer":
+            summary = (
+                f"Yes, this can affect {portfolio_focus.replace('_', ' ')}. "
+                "If we publish weekly outcomes, trust impact is more likely to be positive."
+            )
+        elif interaction_intent == "ideation" and AdvisoryChamber._looks_like_list_request(question):
+            summary = (
+                f"Three quick initiatives from the {portfolio_focus.replace('_', ' ')} lens: "
+                "1) weekly dashboard, 2) pilot in high-friction wards, 3) public grievance SLA."
+            )
+        elif interaction_mode == "casual":
+            summary = (
+                f"Happy to help. From the {portfolio_focus.replace('_', ' ')} lens, "
+                "I can give a quick direct answer first and details only if you want."
             )
         else:
-            summary = (
-                f"From the {portfolio_focus} lens, start with a measurable pilot tied to the mayor's direction, "
-                f"and define one hard metric to evaluate delivery risk next turn."
-            )
+            stance = "extend"
+            references: list[str] = []
+            prior_name = "previous advisor"
+            if prior_advisor_messages:
+                stance = "challenge" if advisor.advisor_id == "governance_risk" else "extend"
+                references = [str(prior_advisor_messages[-1].get("id", "")).strip()]
+                prior_name = str(prior_advisor_messages[-1].get("advisor_name", "previous advisor")).strip()
+
+            if references and prior_name:
+                summary = (
+                    f"I {stance} {prior_name}'s point, but from the {portfolio_focus} lens we need a measurable "
+                    f"risk trigger and weekly checkpoint before committing to this direction."
+                )
+            else:
+                summary = (
+                    f"From the {portfolio_focus} lens, start with a measurable pilot tied to the mayor's direction, "
+                    f"and define one hard metric to evaluate delivery risk next turn."
+                )
+            structured = {
+                "summary": AdvisoryChamber._safe_line(summary, 320),
+                "drivers": [
+                    AdvisoryChamber._safe_line(f"Mayor question: {question}", 180),
+                    AdvisoryChamber._safe_line(f"Portfolio priority: {portfolio_focus}", 180),
+                ],
+                "assumptions": [
+                    "Implementation bandwidth is limited this turn.",
+                ],
+                "tradeoffs": [
+                    "Tighter controls can reduce short-term speed.",
+                ],
+                "risk": "Opposition can attack if delivery milestones are vague.",
+                "confidence": 0.61,
+                "stance": stance,
+                "portfolio_focus": portfolio_focus,
+                "responds_to_message_ids": [item for item in references if item],
+                "distinctive_risk": f"Primary {portfolio_focus} risk if execution slips.",
+                "context_refs": context_refs[-3:],
+            }
+            return ChamberReply(summary=structured["summary"], structured=structured)
 
         structured = {
             "summary": AdvisoryChamber._safe_line(summary, 320),
@@ -238,18 +405,15 @@ class AdvisoryChamber:
                 AdvisoryChamber._safe_line(f"Mayor question: {question}", 180),
                 AdvisoryChamber._safe_line(f"Portfolio priority: {portfolio_focus}", 180),
             ],
-            "assumptions": [
-                "Implementation bandwidth is limited this turn.",
-            ],
-            "tradeoffs": [
-                "Tighter controls can reduce short-term speed.",
-            ],
-            "risk": "Opposition can attack if delivery milestones are vague.",
-            "confidence": 0.61,
-            "stance": stance,
+            "assumptions": ["Direct conversational answer requested before deep policy detail."],
+            "tradeoffs": ["Short answers can omit implementation nuances."],
+            "risk": "Overly broad promises can backfire if next steps stay vague.",
+            "confidence": 0.59,
+            "stance": "extend",
             "portfolio_focus": portfolio_focus,
-            "responds_to_message_ids": [item for item in references if item],
-            "distinctive_risk": f"Primary {portfolio_focus} risk if execution slips.",
+            "responds_to_message_ids": [],
+            "distinctive_risk": f"Primary {portfolio_focus} risk if follow-through is unclear.",
+            "context_refs": context_refs[-2:],
         }
         return ChamberReply(summary=structured["summary"], structured=structured)
 
@@ -258,20 +422,32 @@ class AdvisoryChamber:
         payload: dict[str, Any],
         advisor: "AdvisorPersona",
         prior_ids: list[str],
+        allowed_context_ids: list[str] | None = None,
+        interaction_intent: str = "strategy",
+        interaction_mode: str = "policy",
     ) -> tuple[dict[str, Any], str]:
         stance = str(payload.get("stance", "")).strip().lower()
-        if stance not in {"agree", "challenge", "extend"}:
+        if interaction_mode == "policy" and stance not in {"agree", "challenge", "extend"}:
             raise ChamberReplyError("Missing or invalid stance")
+        if stance not in {"agree", "challenge", "extend"}:
+            stance = "extend"
 
         portfolio_focus = str(payload.get("portfolio_focus", "")).strip().lower()
         advisor_portfolios = [str(item).strip().lower() for item in advisor.portfolios]
-        if not portfolio_focus:
+        if interaction_mode == "policy" and not portfolio_focus:
             raise ChamberReplyError("Missing portfolio_focus")
-        if advisor_portfolios and portfolio_focus not in advisor_portfolios:
+        if not portfolio_focus and advisor_portfolios:
+            portfolio_focus = advisor_portfolios[0]
+        if interaction_mode == "policy" and advisor_portfolios and portfolio_focus not in advisor_portfolios:
             raise ChamberReplyError("portfolio_focus not aligned to advisor portfolios")
+        if advisor_portfolios and portfolio_focus not in advisor_portfolios:
+            portfolio_focus = advisor_portfolios[0]
+        if not portfolio_focus:
+            portfolio_focus = "public_trust"
 
         response_text = " ".join(str(payload.get("response_text", "")).split()).strip()
-        if len(response_text) < 24:
+        min_chars = 24 if interaction_mode == "policy" else 10
+        if len(response_text) < min_chars:
             raise ChamberReplyError("response_text too short")
 
         references_raw = payload.get("references_to_prior", [])
@@ -280,16 +456,27 @@ class AdvisoryChamber:
         references = [
             str(item).strip() for item in references_raw if str(item).strip()
         ]
-        if prior_ids and not references:
+        if interaction_mode == "policy" and prior_ids and not references:
             raise ChamberReplyError("references_to_prior required for non-first advisor")
 
         valid_refs = [message_id for message_id in references if message_id in set(prior_ids)]
-        if prior_ids and not valid_refs:
+        if interaction_mode == "policy" and prior_ids and not valid_refs:
             raise ChamberReplyError("references_to_prior did not match earlier advisor messages")
 
+        raw_context_refs = payload.get("context_refs", [])
+        if not isinstance(raw_context_refs, list):
+            raw_context_refs = []
+        context_candidates = [str(item).strip() for item in raw_context_refs if str(item).strip()]
+        allowed_set = set(allowed_context_ids or [])
+        context_refs = [item for item in context_candidates if not allowed_set or item in allowed_set]
+        if not context_refs and valid_refs:
+            context_refs = list(valid_refs)
+
         distinctive_risk = " ".join(str(payload.get("distinctive_risk", "")).split()).strip()
-        if not distinctive_risk:
+        if interaction_mode == "policy" and not distinctive_risk:
             raise ChamberReplyError("distinctive_risk is required")
+        if not distinctive_risk:
+            distinctive_risk = "No immediate portfolio risk raised."
 
         normalized = {
             "summary": response_text[:320],
@@ -302,6 +489,8 @@ class AdvisoryChamber:
             "portfolio_focus": portfolio_focus,
             "responds_to_message_ids": valid_refs,
             "distinctive_risk": distinctive_risk[:220],
+            "interaction_intent": interaction_intent,
+            "context_refs": context_refs[:4],
         }
         return normalized, normalized["summary"]
 
@@ -315,38 +504,122 @@ class AdvisoryChamber:
         options: list[DynamicPolicy],
         prior_advisor_messages: list[dict[str, Any]],
         contrast_mode: bool = False,
+        repair_hint: str | None = None,
+        context_packet: dict[str, Any] | None = None,
+        interaction_intent: str = "strategy",
+        interaction_mode: str = "policy",
     ) -> ChamberReply:
         if not self.live_available():
-            return self._fallback_reply(advisor, question, prior_advisor_messages)
+            return self._fallback_reply(
+                advisor,
+                question,
+                prior_advisor_messages,
+                context_packet=context_packet,
+                interaction_intent=interaction_intent,
+                interaction_mode=interaction_mode,
+            )
 
         prior_ids = [str(item.get("id", "")).strip() for item in prior_advisor_messages if str(item.get("id", "")).strip()]
         prior_texts = [str(item.get("content", "")).strip() for item in prior_advisor_messages if str(item.get("content", "")).strip()]
-
-        system = (
-            "You are one advisor in a multi-advisor mayoral chamber. "
-            "You must produce a differentiated response from your portfolio lens and explicitly react to earlier advisors.\n\n"
-            "Return JSON only with keys: stance, portfolio_focus, response_text, references_to_prior, distinctive_risk.\n"
-            "Rules:\n"
-            "- stance: one of agree|challenge|extend.\n"
-            "- portfolio_focus: must be one of your portfolios exactly.\n"
-            "- response_text: 35-70 words, concrete and policy-relevant.\n"
-            "- references_to_prior: list of prior advisor message IDs you respond to (required if any prior advisors exist).\n"
-            "- distinctive_risk: one concrete risk from your portfolio.\n"
-            "- Do not restate prior points verbatim.\n"
-            "- Add at least one portfolio-specific metric or risk threshold.\n"
+        recent_window = (
+            list(context_packet.get("recent_window", []))
+            if isinstance(context_packet, dict) and isinstance(context_packet.get("recent_window"), list)
+            else history[-10:]
         )
+        memory_summary = (
+            self._safe_line(str(context_packet.get("memory_summary", "")), 700)
+            if isinstance(context_packet, dict)
+            else ""
+        )
+        allowed_context_ids = [
+            str(item.get("id", "")).strip()
+            for item in recent_window
+            if isinstance(item, dict) and str(item.get("id", "")).strip()
+        ]
+        response_sequence = (
+            dict(context_packet.get("response_sequence", {}))
+            if isinstance(context_packet, dict) and isinstance(context_packet.get("response_sequence"), dict)
+            else {}
+        )
+        tone = str(getattr(advisor, "tone", "")).strip()
+        voice_traits = [str(item).strip() for item in getattr(advisor, "voice_traits", []) if str(item).strip()]
+        conversational_habits = [
+            str(item).strip() for item in getattr(advisor, "conversational_habits", []) if str(item).strip()
+        ]
+        taboo_patterns = [str(item).strip() for item in getattr(advisor, "taboo_patterns", []) if str(item).strip()]
+
+        if interaction_intent == "greeting":
+            intent_rules = [
+                "- response_text: 8-22 words, friendly and natural.",
+                "- No unsolicited policy suggestions.",
+            ]
+        elif interaction_intent == "clarification":
+            intent_rules = [
+                "- First sentence must acknowledge understanding and paraphrase briefly.",
+                "- Keep concise and avoid policy dump unless explicitly requested.",
+            ]
+        elif interaction_intent == "direct_answer":
+            intent_rules = [
+                "- First sentence must answer directly (yes/no/depends + why).",
+                "- Optional second sentence with one concrete follow-up.",
+            ]
+        elif interaction_intent == "ideation":
+            intent_rules = [
+                "- Provide concise ideas; keep each point concrete.",
+                "- Avoid repeating earlier advisor wording.",
+            ]
+        else:
+            intent_rules = [
+                "- Provide strategic reasoning with one concrete metric or threshold.",
+                "- Explicitly react to prior advisor points when available.",
+            ]
+
+        if interaction_mode == "casual":
+            system = (
+                "You are one advisor in a multi-advisor mayoral chamber. "
+                "This is a casual exchange, so respond naturally and briefly without unsolicited policy blabber.\n\n"
+                "Return JSON only with keys: stance, portfolio_focus, response_text, references_to_prior, distinctive_risk, context_refs.\n"
+                "Rules:\n"
+                "- response_text: 12-35 words, conversational and human.\n"
+                "- If the mayor did not ask for policy specifics, do not push detailed policy prescriptions.\n"
+                "- references_to_prior is optional.\n"
+                "- context_refs may include message IDs from recent context if you reference prior discussion.\n"
+            )
+        else:
+            system = (
+                "You are one advisor in a multi-advisor mayoral chamber. "
+                "You must produce a differentiated response from your portfolio lens and explicitly react to earlier advisors.\n\n"
+                "Return JSON only with keys: stance, portfolio_focus, response_text, references_to_prior, distinctive_risk, context_refs.\n"
+                "Rules:\n"
+                "- stance: one of agree|challenge|extend.\n"
+                "- portfolio_focus: must be one of your portfolios exactly.\n"
+                "- response_text: 35-70 words, concrete and policy-relevant.\n"
+                "- references_to_prior: list of prior advisor message IDs you respond to (required if any prior advisors exist).\n"
+                "- distinctive_risk: one concrete risk from your portfolio.\n"
+                "- context_refs: list of message IDs from recent context that you are using.\n"
+                "- Do not restate prior points verbatim.\n"
+                "- Add at least one portfolio-specific metric or risk threshold.\n"
+            )
 
         user_lines = [
             f"Advisor name: {advisor.name}",
             f"Advisor style: {advisor.style}",
             f"Advisor portfolios: {', '.join(advisor.portfolios)}",
+            f"Advisor tone: {tone or 'neutral'}",
+            f"Advisor voice traits: {voice_traits}",
+            f"Advisor conversational habits: {conversational_habits}",
+            f"Advisor taboo patterns: {taboo_patterns}",
             f"Mayor question: {question}",
+            f"Interaction intent: {interaction_intent}",
+            f"Intent-specific rules: {intent_rules}",
             "City context:",
             build_city_context(game_state),
             "Current option set:",
             str(self._option_rows(options)),
+            "Rolling memory summary (older dialogue):",
+            memory_summary or "(none yet)",
             "Recent chamber history:",
-            str(history[-10:]),
+            str(recent_window),
             "Prior advisor messages in this sequence:",
             str(
                 [
@@ -358,20 +631,39 @@ class AdvisoryChamber:
                     for item in prior_advisor_messages
                 ]
             ),
+            f"Response sequence metadata: {response_sequence}",
         ]
         if contrast_mode:
             user_lines.append(
                 "Contrast mode: your reply was too similar. Explicitly disagree or add a non-overlapping risk/metric."
             )
+        if repair_hint:
+            user_lines.append(
+                f"Correction directive from validator: {repair_hint}. Keep your advisor voice and fix only that issue."
+            )
 
         payload = self._client.chat(system, "\n".join(user_lines))
-        normalized, summary = self._validate_reply(payload if isinstance(payload, dict) else {}, advisor, prior_ids)
+        normalized, summary = self._validate_reply(
+            payload if isinstance(payload, dict) else {},
+            advisor,
+            prior_ids,
+            allowed_context_ids=allowed_context_ids,
+            interaction_intent=interaction_intent,
+            interaction_mode=interaction_mode,
+        )
 
-        if prior_texts and any(
-            self._lexical_similarity(summary, prev) >= self._similarity_threshold
+        similarity_threshold = self._similarity_threshold if interaction_mode == "policy" else 0.68
+        phrase_collision = any(
+            self._first_phrase(summary) == self._first_phrase(prev)
             for prev in prior_texts
+            if str(prev).strip()
+        )
+        if prior_texts and (
+            any(self._lexical_similarity(summary, prev) >= similarity_threshold for prev in prior_texts) or phrase_collision
         ):
             raise ChamberReplyError("advisor reply too similar to prior responses")
+        if self._tone_conflict(advisor, summary, interaction_intent):
+            raise ChamberReplyError("advisor tone drifted from persona profile")
 
         return ChamberReply(summary=summary, structured=normalized)
 
@@ -384,6 +676,9 @@ class AdvisoryChamber:
         history: list[dict[str, Any]],
         options: list[DynamicPolicy],
         prior_advisor_messages: list[dict[str, Any]],
+        context_packet: dict[str, Any] | None = None,
+        interaction_intent: str = "strategy",
+        interaction_mode: str = "policy",
     ) -> tuple[ChamberReply, float, int]:
         attempts = 0
         last_error: Exception | None = None
@@ -398,6 +693,10 @@ class AdvisoryChamber:
                     options=options,
                     prior_advisor_messages=prior_advisor_messages,
                     contrast_mode=contrast_mode,
+                    repair_hint=str(last_error) if (contrast_mode and last_error is not None) else None,
+                    context_packet=context_packet,
+                    interaction_intent=interaction_intent,
+                    interaction_mode=interaction_mode,
                 )
                 similarity = 0.0
                 if prior_advisor_messages:

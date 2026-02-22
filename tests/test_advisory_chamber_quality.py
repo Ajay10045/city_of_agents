@@ -6,7 +6,7 @@ import pytest
 
 import llm.advisory_chamber as advisory_chamber_module
 from core.advisor_session import DEFAULT_ADVISORS
-from llm.advisory_chamber import AdvisoryChamber, ChamberPolicyValidationError
+from llm.advisory_chamber import AdvisoryChamber, ChamberPolicyValidationError, ChamberReplyError
 from llm.dynamic_policy import DynamicPolicy
 
 
@@ -226,3 +226,75 @@ def test_ensure_policy_trace_enriches_advisor_name() -> None:
     )
     trace = policy.deliberation_trace
     assert trace["advisor_inputs_used"][0]["advisor_name"] == "Asha Menon"
+
+
+def test_validate_reply_requires_references_for_policy_mode() -> None:
+    chamber = AdvisoryChamber()
+    with pytest.raises(ChamberReplyError):
+        chamber._validate_reply(  # noqa: SLF001
+            {
+                "stance": "extend",
+                "portfolio_focus": "economy",
+                "response_text": "From the economy lens, we should sequence milestones and track delivery risk weekly.",
+                "references_to_prior": [],
+                "distinctive_risk": "Delivery credibility erosion if targets slip.",
+            },
+            DEFAULT_ADVISORS[0],
+            prior_ids=["a1"],
+            interaction_mode="policy",
+        )
+
+
+def test_validate_reply_relaxes_reference_requirement_for_casual_mode() -> None:
+    chamber = AdvisoryChamber()
+    normalized, summary = chamber._validate_reply(  # noqa: SLF001
+        {
+            "stance": "extend",
+            "portfolio_focus": "economy",
+            "response_text": "Hi Mayor, happy to help whenever you want to dive deeper.",
+            "references_to_prior": [],
+            "distinctive_risk": "",
+        },
+        DEFAULT_ADVISORS[0],
+        prior_ids=["a1"],
+        interaction_mode="casual",
+    )
+    assert summary
+    assert normalized["responds_to_message_ids"] == []
+    assert normalized["distinctive_risk"]
+
+
+def test_summarize_conversation_memory_fallback_keeps_key_context() -> None:
+    chamber = AdvisoryChamber()
+    chamber._client = None  # type: ignore[assignment]
+    chamber._disable_live = True
+    summary = chamber.summarize_conversation_memory(
+        existing_summary="Mayor wants balanced jobs and trust outcomes.",
+        transcript=[
+            {"id": "u1", "role": "user", "content": "Focus on trust first, then jobs."},
+            {"id": "a1", "role": "advisor", "advisor_name": "Mei Tanaka", "content": "Trust gains need clear service reliability metrics."},
+            {"id": "u2", "role": "user", "content": "Can we do both without backlash?"},
+        ],
+    )
+    assert "Mayor priorities" in summary
+    assert "Open questions" in summary
+
+
+def test_validate_reply_filters_context_refs() -> None:
+    chamber = AdvisoryChamber()
+    normalized, _ = chamber._validate_reply(  # noqa: SLF001
+        {
+            "stance": "extend",
+            "portfolio_focus": "economy",
+            "response_text": "Yes, and as we discussed earlier, weekly milestone updates can improve trust.",
+            "references_to_prior": ["a1"],
+            "context_refs": ["a1", "unknown"],
+            "distinctive_risk": "Credibility drops if milestones are missed repeatedly.",
+        },
+        DEFAULT_ADVISORS[0],
+        prior_ids=["a1"],
+        allowed_context_ids=["a1", "u1"],
+        interaction_intent="strategy",
+        interaction_mode="policy",
+    )
+    assert normalized["context_refs"] == ["a1"]

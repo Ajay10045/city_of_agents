@@ -172,6 +172,10 @@ export type AdvisorMessage = {
     portfolio_focus?: string
     responds_to_message_ids?: string[]
     distinctive_risk?: string
+    addressed_via?: 'mention' | 'all' | 'auto' | string
+    interaction_mode?: 'casual' | 'policy' | string
+    interaction_intent?: 'greeting' | 'clarification' | 'direct_answer' | 'ideation' | 'strategy' | string
+    context_refs?: string[]
   }
 }
 
@@ -180,6 +184,11 @@ export type AdvisorPersona = {
   name: string
   portfolios: string[]
   style: string
+  aliases?: string[]
+  tone?: string
+  voice_traits?: string[]
+  conversational_habits?: string[]
+  taboo_patterns?: string[]
 }
 
 export type AdvisorSession = {
@@ -189,6 +198,10 @@ export type AdvisorSession = {
   advisors: AdvisorPersona[]
   global_thread: AdvisorMessage[]
   option_threads: Record<string, AdvisorMessage[]>
+  global_memory_summary?: string
+  global_memory_anchor_message_id?: string | null
+  option_memory_summary?: Record<string, string>
+  option_memory_anchor_message_id?: Record<string, string>
   session_status?: 'ready' | 'refining' | 'error' | string
   option_source?: 'live' | 'fallback' | string
   created_at: number

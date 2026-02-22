@@ -43,7 +43,6 @@ export default function AdvisoryChamberPanel({
 }: Props) {
   const [session, setSession] = useState<AdvisorSession | null>(null)
   const [question, setQuestion] = useState('')
-  const [constraints, setConstraints] = useState('')
   const [loadingSession, setLoadingSession] = useState(false)
   const [streaming, setStreaming] = useState(false)
   const [generateBusy, setGenerateBusy] = useState(false)
@@ -318,7 +317,6 @@ export default function AdvisoryChamberPanel({
     try {
       const payload = await generateAdvisorPolicies(gameId, session.advisor_session_id, {
         count: 3,
-        constraints: constraints.trim(),
       })
       setSession(payload.session)
       onSessionUpdateRef.current(payload.session.advisor_session_id)
@@ -381,13 +379,19 @@ export default function AdvisoryChamberPanel({
                 ? advisorsById.get(message.speaker_advisor_id)?.name ?? 'Advisor'
                 : 'Council'
             const stance = message.structured?.stance
+            const interactionIntent = message.structured?.interaction_intent
+            const showPolicyMetadata =
+              interactionIntent === 'strategy' ||
+              interactionIntent === 'ideation' ||
+              (interactionIntent == null && message.structured?.interaction_mode === 'policy')
             const stanceLabel =
-              stance === 'agree' || stance === 'challenge' || stance === 'extend'
+              showPolicyMetadata && (stance === 'agree' || stance === 'challenge' || stance === 'extend')
                 ? stance
                 : null
             const respondingTo = (message.structured?.responds_to_message_ids ?? [])
               .map((messageId) => messageSpeakerById.get(messageId))
               .filter(Boolean) as string[]
+            const contextAware = (message.structured?.context_refs ?? []).length > 0
             return (
               <div
                 key={message.id}
@@ -406,6 +410,7 @@ export default function AdvisoryChamberPanel({
                       Responding to {Array.from(new Set(respondingTo)).join(', ')}
                     </div>
                   )}
+                  {contextAware && <div className="advisor-responding-label">Context-aware reply</div>}
                   <div className="advisor-message-text">{message.content || (message.is_streaming ? '…' : '')}</div>
                 </article>
               </div>
@@ -430,13 +435,6 @@ export default function AdvisoryChamberPanel({
       </div>
 
       <div className="advisor-generate">
-        <textarea
-          value={constraints}
-          onChange={(event) => setConstraints(event.target.value)}
-          rows={2}
-          disabled={generateBusy || disabled || !session || streaming}
-          placeholder="Optional constraints for generation (e.g. jobs + trust, low backlash risk)."
-        />
         <button onClick={onGeneratePolicies} disabled={generateBusy || disabled || !session || streaming}>
           {generateBusy ? 'Generating…' : 'Generate Policy'}
         </button>
