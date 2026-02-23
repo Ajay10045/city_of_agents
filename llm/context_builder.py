@@ -7,18 +7,21 @@ if TYPE_CHECKING:
 
 
 _STAT_LABELS = {
-    "economy": "Economy",
-    "employment": "Employment",
-    "law_and_order": "Law & Order",
-    "infrastructure": "Infrastructure",
-    "environment": "Environment",
-    "corruption": "Corruption",
-    "social_tension": "Social Tension",
-    "media_freedom": "Media Freedom",
-    "public_trust": "Public Trust",
+    "treasury_balance": "Treasury Balance",
+    "employment_rate": "Employment Rate",
+    "avg_wage": "Avg Wage",
+    "hospital_capacity": "Hospital Capacity",
+    "pollution_levels": "Pollution Levels",
+    "food_supply": "Food Supply",
+    "police_coverage": "Police Coverage",
+    "recidivism_rate": "Recidivism Rate",
+    "lighting_level": "Lighting Level",
+    "park_density": "Park Density",
+    "connectivity": "Connectivity",
+    "media_access": "Media Access",
 }
 
-_BAD_HIGH = {"corruption", "social_tension"}
+_BAD_HIGH = {"pollution_levels", "recidivism_rate"}
 
 
 def _level(key: str, value: float) -> str:
@@ -77,12 +80,12 @@ def build_city_context(game_state: "GameState") -> str:
     group_lines = []
     for gid, info in s.identity_groups.items():
         m = group_metrics.get(gid, {})
-        align = m.get("alignment", 0)
-        lean = "Mayor-leaning" if align > 10 else "Opposition-leaning" if align < -10 else "neutral"
+        satisfaction = (m.get("wealth", 50) + m.get("health", 50) + m.get("safety", 50) + m.get("social", 50)) / 4.0
+        lean = "Mayor-leaning" if satisfaction > 55 else "Opposition-leaning" if satisfaction < 40 else "neutral"
         group_lines.append(
             f"  {info.name} ({info.population_percent*100:.0f}%, {info.caste}, {info.religion}): "
-            f"Happiness {m.get('happiness', 50):.0f}, Radicalization {m.get('radicalization', 30):.0f}, "
-            f"Alignment {align:+.0f} ({lean})"
+            f"Wealth {m.get('wealth', 50):.0f}, Health {m.get('health', 50):.0f}, "
+            f"Safety {m.get('safety', 50):.0f}, Social {m.get('social', 50):.0f} ({lean})"
         )
     lines.append("Identity groups:\n" + "\n".join(group_lines))
 

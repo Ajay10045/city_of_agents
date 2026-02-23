@@ -88,9 +88,9 @@ export default function PoliciesPanel({
                 {p.group_effects.slice(0, 2).map((ge, idx) => {
                   const who = (ge.match && Object.values(ge.match)[0]) || 'All'
                   const tokens: string[] = []
-                  if ((ge.happiness ?? 0) > 0) tokens.push(`↑ ${who}`)
-                  if ((ge.happiness ?? 0) < 0) tokens.push(`↓ ${who}`)
-                  if ((ge.radicalization ?? 0) > 0) tokens.push(`rad↑ ${who}`)
+                  const netEffect = (ge.wealth ?? 0) + (ge.health ?? 0) + (ge.safety ?? 0) + (ge.social ?? 0)
+                  if (netEffect > 0) tokens.push(`↑ ${who}`)
+                  if (netEffect < 0) tokens.push(`↓ ${who}`)
 
                   return (
                     <span key={`${p.id}-group-${idx}`}>

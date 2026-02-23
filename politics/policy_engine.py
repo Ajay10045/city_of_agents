@@ -95,37 +95,36 @@ class PolicyEngine:
     @staticmethod
     def _policy_utility(actor: str, policy: PolicyDefinition, game_state: "GameState") -> float:
         effects = policy.effects
-        tension = game_state.city_stats.social_tension
-        trust = game_state.city_stats.public_trust
+        pillar_scores = game_state.city_stats.pillar_scores()
+        safety_score = pillar_scores.get("safety", 50.0)
+        social_score = pillar_scores.get("social", 50.0)
 
         if actor == "mayor":
             utility = (
-                effects.get("economy", 0.0) * 0.05
-                + effects.get("employment", 0.0) * 0.04
-                + effects.get("public_trust", 0.0) * 0.07
-                + effects.get("law_and_order", 0.0) * 0.04
-                - effects.get("corruption", 0.0) * 0.06
-                - effects.get("social_tension", 0.0) * 0.06
+                effects.get("treasury_balance", 0.0) * 0.04
+                + effects.get("employment_rate", 0.0) * 0.05
+                + effects.get("avg_wage", 0.0) * 0.03
+                + effects.get("police_coverage", 0.0) * 0.04
+                + effects.get("media_access", 0.0) * 0.05
+                - effects.get("pollution_levels", 0.0) * 0.04
+                - effects.get("recidivism_rate", 0.0) * 0.04
             )
-            if tension > 60.0:
-                utility -= max(0.0, effects.get("social_tension", 0.0)) * 0.05
-                utility += max(0.0, effects.get("law_and_order", 0.0)) * 0.03
-            if trust < 45.0:
-                utility += effects.get("public_trust", 0.0) * 0.05
+            if safety_score < 45.0:
+                utility += max(0.0, effects.get("police_coverage", 0.0)) * 0.04
+                utility -= max(0.0, effects.get("recidivism_rate", 0.0)) * 0.03
+            if social_score < 45.0:
+                utility += effects.get("media_access", 0.0) * 0.04
         else:
             utility = (
-                -effects.get("public_trust", 0.0) * 0.07
-                -effects.get("law_and_order", 0.0) * 0.03
-                + effects.get("media_freedom", 0.0) * 0.05
-                + effects.get("social_tension", 0.0) * 0.03
-                + effects.get("corruption", 0.0) * 0.04
+                -effects.get("media_access", 0.0) * 0.05
+                -effects.get("police_coverage", 0.0) * 0.03
+                + effects.get("recidivism_rate", 0.0) * 0.03
+                + effects.get("pollution_levels", 0.0) * 0.03
             )
-            if tension > 65.0:
-                utility -= max(0.0, effects.get("social_tension", 0.0)) * 0.08
-                utility += max(0.0, -effects.get("social_tension", 0.0)) * 0.04
-            if trust < 35.0:
-                utility -= max(0.0, -effects.get("public_trust", 0.0)) * 0.06
-                utility += max(0.0, effects.get("public_trust", 0.0)) * 0.05
+            if safety_score < 40.0:
+                utility -= max(0.0, effects.get("recidivism_rate", 0.0)) * 0.06
+            if social_score < 35.0:
+                utility -= max(0.0, -effects.get("media_access", 0.0)) * 0.05
 
         return _clamp(utility, -0.7, 0.7)
 

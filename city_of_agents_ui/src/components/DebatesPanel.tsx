@@ -21,10 +21,10 @@ export default function DebatesPanel({ debates, streetChatter, visible }: Props)
             {debates.map((d, idx) => {
               const avatar = avatars[idx % avatars.length]
               const deltas = [
-                { label: 'Align', val: d.alignment_delta },
-                { label: 'Morale', val: d.happiness_delta },
-                { label: 'Radical', val: d.radicalization_delta },
-                { label: 'Trust', val: d.trust_delta },
+                { label: 'Wealth', val: d.wealth_delta },
+                { label: 'Health', val: d.health_delta },
+                { label: 'Safety', val: d.safety_delta },
+                { label: 'Social', val: d.social_delta },
               ].filter((x) => Math.abs(x.val) >= 0.1)
 
               return (

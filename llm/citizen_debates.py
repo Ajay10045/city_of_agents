@@ -16,15 +16,17 @@ _SYSTEM = """You are simulating a street-level conversation among citizens of a 
 
 Given the group's profile, current mood, and what happened this turn, write a vivid, realistic 2-3 sentence summary of what people in this group are talking about — their frustrations, hopes, and reactions. Then output sentiment deltas reflecting how this turn's events shift their collective mood.
 
+Citizens have 4 metrics: Wealth, Health, Safety, Social (each 0-100).
+
 Return a JSON object with:
 - "debate_summary": 2-3 sentence narrative of the group's internal conversation this turn. Be specific to their identity (religion, occupation, concerns). Use vivid language — what are they saying in tea shops, workplaces, campuses?
 - "notable_quote": One short direct quote from a fictional member of this group (max 15 words). Make it feel authentic to their background.
-- "alignment_delta": float -5 to +5 (negative = shifts toward opposition, positive = toward mayor)
-- "happiness_delta": float -5 to +5
-- "radicalization_delta": float -5 to +5 (positive = more radicalized/angry)
-- "trust_delta": float -5 to +5 (trust in government)
+- "wealth_delta": float -5 to +5 (economic impact on this group)
+- "health_delta": float -5 to +5 (health/wellbeing impact)
+- "safety_delta": float -5 to +5 (security/safety impact)
+- "social_delta": float -5 to +5 (social cohesion/community impact)
 
-Base the deltas on: how much the mayor's action helped/hurt this group, whether the opposition's move resonated, any active crises affecting them, and their current radicalization level."""
+Base the deltas on: how much the mayor's action helped/hurt this group, whether the opposition's move resonated, any active crises affecting them, and their current satisfaction levels."""
 
 _STREET_SYSTEM = """You are generating realistic local street chatter for a city political simulation.
 
@@ -74,10 +76,10 @@ class DebateResult:
     group_name: str
     debate_summary: str
     notable_quote: str
-    alignment_delta: float
-    happiness_delta: float
-    radicalization_delta: float
-    trust_delta: float
+    wealth_delta: float
+    health_delta: float
+    safety_delta: float
+    social_delta: float
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -85,10 +87,10 @@ class DebateResult:
             "group_name": self.group_name,
             "debate_summary": self.debate_summary,
             "notable_quote": self.notable_quote,
-            "alignment_delta": self.alignment_delta,
-            "happiness_delta": self.happiness_delta,
-            "radicalization_delta": self.radicalization_delta,
-            "trust_delta": self.trust_delta,
+            "wealth_delta": self.wealth_delta,
+            "health_delta": self.health_delta,
+            "safety_delta": self.safety_delta,
+            "social_delta": self.social_delta,
         }
 
 
@@ -209,10 +211,10 @@ class CitizenDebates:
         scored = sorted(
             panel_agents,
             key=lambda agent: (
-                agent.influence * 0.35
-                + abs(agent.alignment) * 0.18
-                + agent.radicalization * 0.2
-                + agent.happiness * 0.08
+                agent.social * 0.3
+                + abs(agent.overall_satisfaction() - 50.0) * 0.25
+                + (100.0 - agent.safety) * 0.2
+                + agent.wealth * 0.08
                 + rng.uniform(-8.0, 8.0)
             ),
             reverse=True,
@@ -307,7 +309,7 @@ class CitizenDebates:
         }
         local_token = token_by_city.get(city_id, "honestly")
         stats = game_state.city_stats
-        pressure = "costs" if stats.economy < 45 else "jobs" if stats.employment < 45 else "services"
+        pressure = "costs" if stats.treasury_balance < 45 else "jobs" if stats.employment_rate < 45 else "services"
         event_focus = triggered_events[0] if triggered_events else "no new crisis"
         delivery_summary = str(getattr(mayor_action, "delivery_summary", "")).strip()
         implementation_gap = float(getattr(mayor_action, "implementation_gap", 0.0) or 0.0)
@@ -317,12 +319,13 @@ class CitizenDebates:
             group = game_state.identity_groups.get(agent.group_id)
             group_name = group.name if group else agent.group_id
             speaker = self._speaker_name(agent, game_state)
-            if agent.alignment >= 20 or (agent.happiness >= 58 and agent.trust_in_government >= 50):
+            satisfaction = agent.overall_satisfaction()
+            if satisfaction >= 55:
                 line = (
                     f"{local_token}, {mayor_action.name} finally looks practical; if they deliver on {pressure}, people here will back it."
                 )
                 sentiment = "hopeful"
-            elif agent.radicalization >= 65 or agent.alignment <= -35:
+            elif satisfaction <= 35:
                 line = (
                     f"{local_token}, {opp_action.name} is catching fire on my street because folks think City Hall keeps missing basic {pressure} fixes."
                 )
@@ -342,7 +345,7 @@ class CitizenDebates:
                     f"{line.rstrip('.')} People keep mentioning the delivery gap: "
                     f"{delivery_summary[:90]}."
                 )
-            heat = _clamp(0.45 + abs(agent.alignment) / 240.0 + agent.radicalization / 300.0, 0.15, 1.0)
+            heat = _clamp(0.45 + abs(satisfaction - 50.0) / 120.0 + (100.0 - agent.safety) / 300.0, 0.15, 1.0)
             chatter.append(
                 StreetChatterItem(
                     speaker=speaker,
@@ -365,12 +368,8 @@ class CitizenDebates:
             return chatter
 
         stats = game_state.city_stats
-        extreme_state = (
-            stats.social_tension >= 78
-            or stats.public_trust <= 26
-            or stats.economy <= 28
-            or stats.law_and_order <= 28
-        )
+        pillar_scores = stats.pillar_scores()
+        extreme_state = any(v <= 28 for v in pillar_scores.values())
         if extreme_state:
             return chatter
 
@@ -433,8 +432,8 @@ class CitizenDebates:
                 (
                     f"{index}. speaker={speaker_name}; role={agent.role}; group={group_name}; "
                     f"identity={agent.identity.caste}/{agent.identity.religion}/{agent.identity.language}; "
-                    f"happiness={agent.happiness:.0f}; radicalization={agent.radicalization:.0f}; "
-                    f"alignment={agent.alignment:+.0f}; trust={agent.trust_in_government:.0f}"
+                    f"wealth={agent.wealth:.0f}; health={agent.health:.0f}; "
+                    f"safety={agent.safety:.0f}; social={agent.social:.0f}"
                 )
             )
 
@@ -446,9 +445,9 @@ class CitizenDebates:
             f"Implementation summary: {getattr(mayor_action, 'delivery_summary', '') or 'No delivery summary yet.'}\n"
             f"Opposition action: {opp_action.name} — {opp_action.description}\n"
             f"Triggered events: {event_str}\n"
-            f"City stats snapshot: economy={stats.economy:.0f}, employment={stats.employment:.0f}, "
-            f"law_and_order={stats.law_and_order:.0f}, corruption={stats.corruption:.0f}, "
-            f"social_tension={stats.social_tension:.0f}, public_trust={stats.public_trust:.0f}\n"
+            f"City stats snapshot: treasury={stats.treasury_balance:.0f}, employment={stats.employment_rate:.0f}, "
+            f"police={stats.police_coverage:.0f}, pollution={stats.pollution_levels:.0f}, "
+            f"connectivity={stats.connectivity:.0f}, media_access={stats.media_access:.0f}\n"
             f"Generate exactly {len(speakers)} chatter lines for these sampled panel citizens:\n"
             + "\n".join(speaker_lines)
         )
@@ -534,26 +533,28 @@ class CitizenDebates:
         triggered_events: list[str],
         game_state: "GameState",
     ) -> DebateResult:
-        align = metrics.get("alignment", 0)
-        lean = "Mayor-leaning" if align > 10 else "Opposition-leaning" if align < -10 else "neutral"
         event_str = ", ".join(triggered_events) if triggered_events else "none"
+
+        satisfaction = (metrics.get("wealth", 50) + metrics.get("health", 50) + metrics.get("safety", 50) + metrics.get("social", 50)) / 4.0
+        lean = "Mayor-leaning" if satisfaction > 55 else "Opposition-leaning" if satisfaction < 40 else "neutral"
 
         user = (
             f"Group: {info.name}\n"
             f"Identity: {info.caste} ({info.religion}, speaks {info.language})\n"
             f"Population: {info.population_percent*100:.0f}% of city\n"
-            f"Current mood: Happiness {metrics.get('happiness', 50):.0f}/100, "
-            f"Radicalization {metrics.get('radicalization', 30):.0f}/100, "
-            f"Alignment {align:+.0f} ({lean})\n"
+            f"Current mood: Wealth {metrics.get('wealth', 50):.0f}/100, "
+            f"Health {metrics.get('health', 50):.0f}/100, "
+            f"Safety {metrics.get('safety', 50):.0f}/100, "
+            f"Social {metrics.get('social', 50):.0f}/100 ({lean})\n"
             f"Grievance score: {info.grievance_score:.2f}/1.0\n\n"
             f"This turn:\n"
             f"  Mayor played: '{mayor_action.name}' — {mayor_action.description}\n"
             f"  Delivery summary: {getattr(mayor_action, 'delivery_summary', '') or 'No implementation gap recorded.'}\n"
             f"  Opposition played: '{opp_action.name}' — {opp_action.description}\n"
             f"  Events triggered: {event_str}\n"
-            f"  City corruption: {game_state.city_stats.corruption:.0f}, "
-            f"Social tension: {game_state.city_stats.social_tension:.0f}, "
-            f"Economy: {game_state.city_stats.economy:.0f}\n\n"
+            f"  City: treasury={game_state.city_stats.treasury_balance:.0f}, "
+            f"police={game_state.city_stats.police_coverage:.0f}, "
+            f"employment={game_state.city_stats.employment_rate:.0f}\n\n"
             f"Simulate this group's conversation and sentiment shift."
         )
 
@@ -565,18 +566,19 @@ class CitizenDebates:
                     group_name=info.name,
                     debate_summary=str(data.get("debate_summary", ""))[:500],
                     notable_quote=str(data.get("notable_quote", ""))[:120],
-                    alignment_delta=_clamp(_to_float(data.get("alignment_delta"), 0.0) or 0.0, -5, 5),
-                    happiness_delta=_clamp(_to_float(data.get("happiness_delta"), 0.0) or 0.0, -5, 5),
-                    radicalization_delta=_clamp(_to_float(data.get("radicalization_delta"), 0.0) or 0.0, -5, 5),
-                    trust_delta=_clamp(_to_float(data.get("trust_delta"), 0.0) or 0.0, -5, 5),
+                    wealth_delta=_clamp(_to_float(data.get("wealth_delta"), 0.0) or 0.0, -5, 5),
+                    health_delta=_clamp(_to_float(data.get("health_delta"), 0.0) or 0.0, -5, 5),
+                    safety_delta=_clamp(_to_float(data.get("safety_delta"), 0.0) or 0.0, -5, 5),
+                    social_delta=_clamp(_to_float(data.get("social_delta"), 0.0) or 0.0, -5, 5),
                 )
             except Exception:
                 pass
 
-        align_delta = -0.4 if opp_action.campaign_strength >= mayor_action.campaign_strength else 0.3
-        happiness_delta = 0.2 if metrics.get("happiness", 50) < 45 else -0.1
-        radical_delta = 0.35 if metrics.get("radicalization", 30) > 50 else -0.15
-        trust_delta = -0.25 if game_state.city_stats.corruption > 55 else 0.15
+        avg_satisfaction = (metrics.get("wealth", 50) + metrics.get("health", 50) + metrics.get("safety", 50) + metrics.get("social", 50)) / 4.0
+        wealth_d = 0.2 if metrics.get("wealth", 50) < 45 else -0.1
+        health_d = 0.15 if metrics.get("health", 50) < 45 else -0.05
+        safety_d = -0.3 if avg_satisfaction < 40 else 0.1
+        social_d = -0.25 if opp_action.campaign_strength >= mayor_action.campaign_strength else 0.2
 
         delivery_summary = str(getattr(mayor_action, "delivery_summary", "")).strip()
         summary = (
@@ -592,8 +594,8 @@ class CitizenDebates:
             group_name=info.name,
             debate_summary=summary[:500],
             notable_quote=quote,
-            alignment_delta=_clamp(align_delta, -5, 5),
-            happiness_delta=_clamp(happiness_delta, -5, 5),
-            radicalization_delta=_clamp(radical_delta, -5, 5),
-            trust_delta=_clamp(trust_delta, -5, 5),
+            wealth_delta=_clamp(wealth_d, -5, 5),
+            health_delta=_clamp(health_d, -5, 5),
+            safety_delta=_clamp(safety_d, -5, 5),
+            social_delta=_clamp(social_d, -5, 5),
         )

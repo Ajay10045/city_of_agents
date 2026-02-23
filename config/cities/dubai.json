@@ -48,7 +48,7 @@
       {
         "advisor_id": "fiscal_growth",
         "name": "Rashid Al Mansoori",
-        "portfolios": ["economy", "employment", "infrastructure"],
+        "portfolios": ["treasury_balance", "employment_rate", "avg_wage", "connectivity"],
         "style": "Growth advisor focused on project execution velocity and investment confidence.",
         "aliases": ["rashid", "mansoori", "growth", "fiscal"],
         "tone": "calm_analytical",
@@ -59,7 +59,7 @@
       {
         "advisor_id": "social_cohesion",
         "name": "Lina Haddad",
-        "portfolios": ["social_cohesion", "public_trust", "services"],
+        "portfolios": ["park_density", "media_access", "hospital_capacity", "food_supply"],
         "style": "Community trust advisor focused on service equity across diverse resident groups.",
         "aliases": ["lina", "haddad", "social", "trust"],
         "tone": "grounded_empathic",
@@ -70,7 +70,7 @@
       {
         "advisor_id": "governance_risk",
         "name": "Yousef Kareem",
-        "portfolios": ["corruption", "law_and_order", "media"],
+        "portfolios": ["police_coverage", "recidivism_rate", "lighting_level", "media_access"],
         "style": "Governance risk advisor focused on compliance credibility and narrative stability.",
         "aliases": ["yousef", "kareem", "risk", "governance"],
         "tone": "skeptical_guardrail",
@@ -93,11 +93,11 @@
       "grievance_score": 0.60,
       "radicalization_base_rate": 0.09,
       "issue_sensitivity": {
-        "employment": 1.34,
-        "services": 1.15,
-        "public_trust": 1.10,
-        "social_tension": 1.18,
-        "law_and_order": 0.98
+        "employment_rate": 1.34,
+        "hospital_capacity": 1.15,
+        "media_access": 1.10,
+        "park_density": 1.18,
+        "police_coverage": 0.98
       }
     },
     {
@@ -112,11 +112,11 @@
       "grievance_score": 0.28,
       "radicalization_base_rate": 0.04,
       "issue_sensitivity": {
-        "public_trust": 1.28,
-        "law_and_order": 1.12,
-        "services": 1.06,
-        "corruption": 0.96,
-        "social_tension": 0.90
+        "media_access": 1.28,
+        "police_coverage": 1.12,
+        "hospital_capacity": 1.06,
+        "recidivism_rate": 0.96,
+        "park_density": 0.90
       }
     },
     {
@@ -131,11 +131,10 @@
       "grievance_score": 0.33,
       "radicalization_base_rate": 0.05,
       "issue_sensitivity": {
-        "economy": 1.36,
-        "infrastructure": 1.16,
-        "public_trust": 0.98,
-        "corruption": 0.92,
-        "media_freedom": 0.72
+        "treasury_balance": 1.36,
+        "connectivity": 1.16,
+        "media_access": 0.98,
+        "recidivism_rate": 0.92
       }
     },
     {
@@ -150,11 +149,11 @@
       "grievance_score": 0.37,
       "radicalization_base_rate": 0.06,
       "issue_sensitivity": {
-        "environment": 1.18,
-        "services": 1.12,
-        "public_trust": 1.08,
-        "social_tension": 1.02,
-        "employment": 1.00
+        "pollution_levels": 1.18,
+        "hospital_capacity": 1.12,
+        "media_access": 1.08,
+        "park_density": 1.02,
+        "employment_rate": 1.00
       }
     }
   ],
@@ -166,15 +165,18 @@
     "Student": 0.30
   },
   "initial_city_stats": {
-    "economy": 72,
-    "employment": 64,
-    "law_and_order": 67,
-    "infrastructure": 74,
-    "environment": 52,
-    "corruption": 36,
-    "social_tension": 48,
-    "media_freedom": 46,
-    "public_trust": 58
+    "treasury_balance": 72,
+    "employment_rate": 64,
+    "avg_wage": 70,
+    "hospital_capacity": 62,
+    "pollution_levels": 48,
+    "food_supply": 71,
+    "police_coverage": 67,
+    "recidivism_rate": 33,
+    "lighting_level": 72,
+    "park_density": 46,
+    "connectivity": 76,
+    "media_access": 46
   },
   "issue_front_baseline": {
     "economy": 62,

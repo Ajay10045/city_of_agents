@@ -77,7 +77,7 @@ def _install_stubbed_turn_flow(game_id: str) -> None:
             id="p1",
             name="Stub Policy",
             description="Deterministic policy for API contract tests.",
-            effects={"economy": 1.0},
+            effects={"treasury_balance": 1.0},
             group_effects=[],
             campaign_strength=1.0,
             media_effects={},
@@ -133,7 +133,7 @@ def _install_stubbed_turn_flow(game_id: str) -> None:
             "type": "street_chatter_synthesized",
             "turn": turn,
             "summary": ["Stub street chatter"],
-            "dominant_fronts": ["economy"],
+            "dominant_fronts": ["treasury_balance"],
             "triggered_events": [],
         }
         yield {
@@ -153,7 +153,7 @@ def _install_stubbed_turn_flow(game_id: str) -> None:
         yield {
             "type": "simulation_stats_applied",
             "turn": turn,
-            "stat_deltas": {"economy": 1.0},
+            "stat_deltas": {"treasury_balance": 1.0},
             "triggered_events": [],
             "escalated_events": [],
             "event_chances": {},
@@ -171,10 +171,10 @@ def _install_stubbed_turn_flow(game_id: str) -> None:
             "turn_summary": {
                 "mayor_action": policy.name,
                 "opposition_action": policy.name,
-                "dominant_fronts": ["economy"],
+                "dominant_fronts": ["treasury_balance"],
                 "events_triggered": [],
             },
-            "stat_deltas": {"economy": 1.0},
+            "stat_deltas": {"treasury_balance": 1.0},
             "popularity_delta": {"mayor": 50.0, "opposition": 50.0},
             "key_events": [],
             "state": self._build_state_snapshot(),
@@ -593,14 +593,14 @@ def test_v1_advisor_generate_policies_contract(api_server: str) -> None:
                             "description": "Launch ward-level jobs contracts with weekly progress publication.",
                             "rationale": "Combines visible employment support with delivery transparency.",
                             "why_now": "Jobs pressure is acute and delivery credibility must be protected simultaneously.",
-                            "effects": {"employment": 2.9, "public_trust": 1.1},
+                            "effects": {"employment_rate": 2.9, "media_access": 1.1},
                             "group_effects": [],
                             "campaign_strength": 1.08,
                             "media_effects": {"trust": 0.6},
                             "target_groups": ["Workers", "Youth"],
-                            "expected_stat_delta": {"employment": 2.6, "public_trust": 1.0},
+                            "expected_stat_delta": {"employment_rate": 2.6, "media_access": 1.0},
                             "opposition_counter_risk": 0.51,
-                            "narrative_fronts_impacted": {"economy": 2.4, "public_trust": 1.2},
+                            "narrative_fronts_impacted": {"treasury_balance": 2.4, "media_access": 1.2},
                             "confidence": 0.67,
                             "assumptions": ["Contract disbursal remains on schedule."],
                             "tradeoffs": ["Requires tight milestone monitoring."],
@@ -610,12 +610,12 @@ def test_v1_advisor_generate_policies_contract(api_server: str) -> None:
                                 "advisor_inputs_used": [
                                     {
                                         "advisor_id": "fiscal_growth",
-                                        "portfolio": "economy",
+                                        "portfolio": "treasury_balance",
                                         "point": "Tie employment push to auditable milestones.",
                                     },
                                     {
                                         "advisor_id": "social_cohesion",
-                                        "portfolio": "public_trust",
+                                        "portfolio": "media_access",
                                         "point": "Include visible service reliability safeguards.",
                                     },
                                 ],
@@ -626,14 +626,14 @@ def test_v1_advisor_generate_policies_contract(api_server: str) -> None:
                             "description": "Commit to service uptime SLAs in high-friction wards with public dashboards.",
                             "rationale": "Stabilizes trust while preserving room for growth initiatives.",
                             "why_now": "Trust risk is rising and predictable services are the fastest confidence signal.",
-                            "effects": {"public_trust": 2.0, "services": 1.3},
+                            "effects": {"media_access": 2.0, "hospital_capacity": 1.3},
                             "group_effects": [],
                             "campaign_strength": 1.05,
                             "media_effects": {"trust": 0.8},
                             "target_groups": ["Undecided Voters"],
-                            "expected_stat_delta": {"public_trust": 1.7},
+                            "expected_stat_delta": {"media_access": 1.7},
                             "opposition_counter_risk": 0.46,
-                            "narrative_fronts_impacted": {"public_trust": 2.3},
+                            "narrative_fronts_impacted": {"media_access": 2.3},
                             "confidence": 0.64,
                             "assumptions": ["Departments can meet weekly SLAs."],
                             "tradeoffs": ["Narrows execution bandwidth for new pilots."],
@@ -643,7 +643,7 @@ def test_v1_advisor_generate_policies_contract(api_server: str) -> None:
                                 "advisor_inputs_used": [
                                     {
                                         "advisor_id": "social_cohesion",
-                                        "portfolio": "services",
+                                        "portfolio": "hospital_capacity",
                                         "point": "Use grievance closure metrics as trust proof.",
                                     }
                                 ],
@@ -655,14 +655,14 @@ def test_v1_advisor_generate_policies_contract(api_server: str) -> None:
                             "description": "Publish contract milestones and anti-leak controls for job-linked spending.",
                             "rationale": "Protects the jobs narrative from corruption attacks.",
                             "why_now": "Delivery spending will be questioned unless procurement transparency is visible.",
-                            "effects": {"corruption": -2.1, "public_trust": 1.3},
+                            "effects": {"recidivism_rate": -2.1, "media_access": 1.3},
                             "group_effects": [],
                             "campaign_strength": 1.04,
                             "media_effects": {"bias": -0.4, "trust": 0.7},
                             "target_groups": ["Middle Class", "Civic Networks"],
-                            "expected_stat_delta": {"corruption": -1.9, "public_trust": 1.1},
+                            "expected_stat_delta": {"recidivism_rate": -1.9, "media_access": 1.1},
                             "opposition_counter_risk": 0.43,
-                            "narrative_fronts_impacted": {"corruption": 2.0, "public_trust": 1.5},
+                            "narrative_fronts_impacted": {"recidivism_rate": 2.0, "media_access": 1.5},
                             "confidence": 0.66,
                             "assumptions": ["Audit teams are fully staffed."],
                             "tradeoffs": ["Can delay contract award speed."],
@@ -672,7 +672,7 @@ def test_v1_advisor_generate_policies_contract(api_server: str) -> None:
                                 "advisor_inputs_used": [
                                     {
                                         "advisor_id": "governance_risk",
-                                        "portfolio": "corruption",
+                                        "portfolio": "recidivism_rate",
                                         "point": "Prevent leakage narrative through proactive disclosures.",
                                     }
                                 ],
@@ -681,7 +681,7 @@ def test_v1_advisor_generate_policies_contract(api_server: str) -> None:
                     ],
                 }
             match = re.search(r"Advisor portfolios:\s*(.+)", user)
-            portfolio = (match.group(1).split(",")[0].strip() if match else "public_trust")
+            portfolio = (match.group(1).split(",")[0].strip() if match else "media_access")
             return {
                 "stance": "extend",
                 "portfolio_focus": portfolio,
@@ -805,7 +805,7 @@ def test_v1_advisor_generate_policies_returns_422_and_preserves_options(api_serv
                         "description": "Targeted intervention to stabilize key city pressures this turn.",
                         "rationale": "Chosen for near-term impact under current city pressures.",
                         "why_now": "extend",
-                        "effects": {"economy": 1.0},
+                        "effects": {"treasury_balance": 1.0},
                         "group_effects": [],
                         "campaign_strength": 1.0,
                         "media_effects": {},
@@ -815,7 +815,7 @@ def test_v1_advisor_generate_policies_returns_422_and_preserves_options(api_serv
                             "advisor_inputs_used": [
                                 {
                                     "advisor_id": "fiscal_growth",
-                                    "portfolio": "economy",
+                                    "portfolio": "treasury_balance",
                                     "point": "short",
                                 }
                             ],

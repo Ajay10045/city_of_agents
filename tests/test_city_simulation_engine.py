@@ -19,7 +19,7 @@ def test_dynamic_policy_infers_implementation_targets_when_missing() -> None:
             "description": "Launch neighborhood employment contracts and service upgrades.",
             "rationale": "Visible employment gains can lower anti-incumbent pressure.",
             "why_now": "Jobs pressure is the immediate city concern.",
-            "effects": {"employment": 2.4, "public_trust": 1.1},
+            "effects": {"employment_rate": 2.4, "media_access": 1.1},
             "group_effects": [],
             "campaign_strength": 1.05,
             "media_effects": {},
@@ -45,8 +45,8 @@ def test_delivery_simulation_penalizes_high_corruption() -> None:
     )
     policy = session_low.turn_manager.get_mayor_options()[0]
 
-    session_low.turn_manager.game_state.city_stats.corruption = 25.0
-    session_high.turn_manager.game_state.city_stats.corruption = 82.0
+    session_low.turn_manager.game_state.city_stats.recidivism_rate = 25.0
+    session_high.turn_manager.game_state.city_stats.recidivism_rate = 82.0
 
     engine = CitySimulationEngine()
     low_report = engine.simulate_delivery(session_low.turn_manager.game_state, policy).to_dict()
@@ -75,10 +75,10 @@ def test_v1_step_returns_delivery_report_and_updates_state() -> None:
                 "agent_count_evaluated": 0,
                 "llm_panel_count": 0,
                 "llm_panel_coverage_ratio": 0.0,
-                "avg_happiness_delta": 0.0,
-                "avg_radicalization_delta": 0.0,
-                "avg_alignment_delta": 0.0,
-                "avg_trust_delta": 0.0,
+                "avg_wealth_delta": 0.0,
+                "avg_health_delta": 0.0,
+                "avg_safety_delta": 0.0,
+                "avg_social_delta": 0.0,
                 "dominant_fronts": [],
                 "top_cohorts": [],
             }

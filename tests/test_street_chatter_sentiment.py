@@ -29,8 +29,8 @@ def test_street_chatter_balanced_state_contains_sentiment_mix() -> None:
 def test_sentiment_mix_postprocess_skips_extreme_city_states() -> None:
     session = _create_session(seed=405, turns=5, election_turn=5)
     game_state = session.turn_manager.game_state
-    game_state.city_stats.social_tension = 85.0
-    game_state.city_stats.public_trust = 20.0
+    game_state.city_stats.park_density = 15.0
+    game_state.city_stats.media_access = 20.0
 
     raw = [
         StreetChatterItem(

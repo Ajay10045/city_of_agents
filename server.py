@@ -217,8 +217,6 @@ def _build_game(
     profile["evidence_sources"] = list(meta.get("evidence_sources", []))
     profile["media_outlets"] = [item.name for item in media_outlets]
     profile["actual_agent_count"] = len(agents)
-    profile["mayor_competence"] = float(profile.get("mayor_competence", 0.58))
-    profile["council_competence"] = float(profile.get("council_competence", 0.62))
     profile["implementation_variance"] = float(profile.get("implementation_variance", 0.08))
 
     game_state = GameState(
@@ -743,8 +741,10 @@ def _detect_interaction_intent(question: str) -> str:
         "risk",
         "jobs",
         "trust",
-        "economy",
-        "corruption",
+        "treasury",
+        "employment",
+        "safety",
+        "health",
         "services",
         "election",
         "implement",

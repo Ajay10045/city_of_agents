@@ -17,13 +17,17 @@ def _to_float(value: Any, default: float | None = None) -> float | None:
 
 
 VALID_STATS = {
-    "economy", "employment", "law_and_order", "infrastructure",
-    "environment", "corruption", "social_tension", "media_freedom", "public_trust",
+    "treasury_balance", "employment_rate", "avg_wage",
+    "hospital_capacity", "pollution_levels", "food_supply",
+    "police_coverage", "recidivism_rate", "lighting_level",
+    "park_density", "connectivity", "media_access",
 }
 
 VALID_MEDIA = {"bias", "sensationalism", "trust"}
 
-VALID_GROUP_FIELDS = {"happiness", "alignment", "radicalization", "trust_in_government"}
+VALID_GROUP_FIELDS = {"wealth", "health", "safety", "social"}
+
+VALID_BUREAUCRACY_FIELDS = {"competency", "integrity", "skill"}
 
 VALID_MATCH_KEYS = {"religion", "caste", "language"}
 
@@ -55,6 +59,7 @@ class DynamicPolicy:
     delivered_outcomes: list[dict[str, Any]] = field(default_factory=list)
     implementation_gap: float = 0.0
     delivery_summary: str = ""
+    bureaucracy_effects: dict[str, float] = field(default_factory=dict)
 
     @staticmethod
     def _infer_implementation_targets(
@@ -64,34 +69,44 @@ class DynamicPolicy:
     ) -> list[dict[str, Any]]:
         lowered = f"{name} {description}".lower()
         targets: list[dict[str, Any]] = []
-        if "job" in lowered or "employment" in lowered or "employment" in effects:
+        if "job" in lowered or "employment" in lowered or "employment_rate" in effects:
             targets.append(
                 {
                     "key": "jobs_supported",
                     "label": "Jobs Supported",
                     "unit": "jobs",
-                    "proposed": max(150.0, abs(float(effects.get("employment", 1.5))) * 320.0),
+                    "proposed": max(150.0, abs(float(effects.get("employment_rate", 1.5))) * 320.0),
                     "difficulty": 0.20,
                 }
             )
-        if "road" in lowered or "infrastructure" in lowered or "transit" in lowered or "infrastructure" in effects:
+        if "road" in lowered or "infrastructure" in lowered or "transit" in lowered or "connectivity" in effects:
             targets.append(
                 {
                     "key": "infrastructure_km",
                     "label": "Transport/Infrastructure Build",
                     "unit": "km",
-                    "proposed": max(2.0, abs(float(effects.get("infrastructure", 1.2))) * 2.4),
+                    "proposed": max(2.0, abs(float(effects.get("connectivity", 1.2))) * 2.4),
                     "difficulty": 0.30,
                 }
             )
-        if "corruption" in lowered or "audit" in lowered or "corruption" in effects:
+        if "hospital" in lowered or "health" in lowered or "hospital_capacity" in effects:
             targets.append(
                 {
-                    "key": "audit_cycles",
-                    "label": "Procurement Audits Completed",
-                    "unit": "audits",
-                    "proposed": max(1.0, abs(float(effects.get("corruption", 1.0))) * 2.0),
-                    "difficulty": 0.18,
+                    "key": "hospital_beds",
+                    "label": "Hospital Beds Added",
+                    "unit": "beds",
+                    "proposed": max(50.0, abs(float(effects.get("hospital_capacity", 1.0))) * 100.0),
+                    "difficulty": 0.25,
+                }
+            )
+        if "safety" in lowered or "police" in lowered or "police_coverage" in effects:
+            targets.append(
+                {
+                    "key": "patrol_units",
+                    "label": "Safety Patrol Units Deployed",
+                    "unit": "patrols",
+                    "proposed": max(2.0, abs(float(effects.get("police_coverage", 1.0))) * 3.0),
+                    "difficulty": 0.22,
                 }
             )
         if not targets:
@@ -246,6 +261,16 @@ class DynamicPolicy:
                     }
                 )
 
+        bureaucracy_effects: dict[str, float] = {}
+        raw_be = data.get("bureaucracy_effects", {})
+        if isinstance(raw_be, dict):
+            for k, v in raw_be.items():
+                if k not in VALID_BUREAUCRACY_FIELDS:
+                    continue
+                numeric = _to_float(v)
+                if numeric is not None:
+                    bureaucracy_effects[k] = _clamp(numeric, -0.1, 0.1)
+
         name = str(data.get("name", "Unknown Policy"))[:80]
         description = str(data.get("description", ""))[:300]
         if not implementation_targets:
@@ -277,6 +302,7 @@ class DynamicPolicy:
             delivered_outcomes=[],
             implementation_gap=_clamp(_to_float(data.get("implementation_gap"), 0.0) or 0.0, 0.0, 1.0),
             delivery_summary=str(data.get("delivery_summary", "")).strip()[:260],
+            bureaucracy_effects=bureaucracy_effects,
         )
 
     def to_dict(self) -> dict:
@@ -306,4 +332,5 @@ class DynamicPolicy:
             "delivered_outcomes": [dict(item) for item in self.delivered_outcomes],
             "implementation_gap": self.implementation_gap,
             "delivery_summary": self.delivery_summary,
+            "bureaucracy_effects": dict(self.bureaucracy_effects),
         }

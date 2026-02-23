@@ -312,7 +312,7 @@ export default function AdvisorConsole({
               </button>
             </div>
             <div className="advisor-composer-hint">
-              Tip: use natural language. Examples: "why this now?", "revise this for commuters", "regenerate all focusing corruption + jobs".
+              Tip: use natural language. Examples: "why this now?", "revise this for commuters", "regenerate all focusing safety + wealth".
             </div>
           </div>
         </>

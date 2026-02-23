@@ -62,20 +62,20 @@ export type StateSnapshot = {
     agent_count_evaluated: number
     llm_panel_count: number
     llm_panel_coverage_ratio: number
-    avg_happiness_delta: number
-    avg_radicalization_delta: number
-    avg_alignment_delta: number
-    avg_trust_delta: number
+    avg_wealth_delta: number
+    avg_health_delta: number
+    avg_safety_delta: number
+    avg_social_delta: number
     dominant_fronts: string[]
   }
   cohort_metrics?: Record<string, {
     group_id: string
     role: string
     population: number
-    happiness_delta: number
-    radicalization_delta: number
-    alignment_delta: number
-    trust_delta: number
+    wealth_delta: number
+    health_delta: number
+    safety_delta: number
+    social_delta: number
     narrative_shift_delta: number
   }>
   active_events: Array<{
@@ -88,10 +88,10 @@ export type StateSnapshot = {
   }>
   group_metrics: Record<string, {
     population: number
-    happiness: number
-    radicalization: number
-    alignment: number
-    trust: number
+    wealth: number
+    health: number
+    safety: number
+    social: number
   }>
   policy_history: string[]
   identity_groups: Record<string, {
@@ -148,8 +148,10 @@ export type DynamicPolicy = {
   delivery_summary?: string
   group_effects?: Array<{
     match?: Record<string, string>
-    happiness?: number
-    radicalization?: number
+    wealth?: number
+    health?: number
+    safety?: number
+    social?: number
   }>
   deliberation_trace?: {
     mayor_direction_used?: string
@@ -317,10 +319,16 @@ export type DebateResult = {
   group_name: string
   debate_summary: string
   notable_quote?: string
-  alignment_delta: number
-  happiness_delta: number
-  radicalization_delta: number
-  trust_delta: number
+  wealth_delta: number
+  health_delta: number
+  safety_delta: number
+  social_delta: number
+}
+
+export type BureaucracyTraits = {
+  competency: number
+  integrity: number
+  skill: number
 }
 
 export type StreetChatterItem = {
@@ -466,20 +474,20 @@ export type StreamMessage =
         agent_count_evaluated: number
         llm_panel_count: number
         llm_panel_coverage_ratio: number
-        avg_happiness_delta: number
-        avg_radicalization_delta: number
-        avg_alignment_delta: number
-        avg_trust_delta: number
+        avg_wealth_delta: number
+        avg_health_delta: number
+        avg_safety_delta: number
+        avg_social_delta: number
         dominant_fronts: string[]
         top_cohorts?: Array<{
           cohort_id: string
           group_id: string
           role: string
           population: number
-          happiness_delta: number
-          radicalization_delta: number
-          alignment_delta: number
-          trust_delta: number
+          wealth_delta: number
+          health_delta: number
+          safety_delta: number
+          social_delta: number
           narrative_shift_delta: number
         }>
       }
@@ -496,10 +504,10 @@ export type StreamMessage =
         group_id: string
         role: string
         population: number
-        happiness_delta: number
-        radicalization_delta: number
-        alignment_delta: number
-        trust_delta: number
+        wealth_delta: number
+        health_delta: number
+        safety_delta: number
+        social_delta: number
         narrative_shift_delta: number
       }>
     }

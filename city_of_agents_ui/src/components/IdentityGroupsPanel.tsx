@@ -8,11 +8,6 @@ type Props = {
   debates?: DebateResult[]
 }
 
-function alignmentPercent(value: number): number {
-  const clamped = Math.max(-100, Math.min(100, value))
-  return ((clamped + 100) / 200) * 100
-}
-
 export default function IdentityGroupsPanel({ state, compact = false, debates = [] }: Props) {
   const [expandedGroupId, setExpandedGroupId] = useState<string | null>(null)
 
@@ -48,30 +43,20 @@ export default function IdentityGroupsPanel({ state, compact = false, debates = 
             <div className="group-sub">{g.caste} • {g.religion} • {g.language}</div>
             <div className="group-metrics">
               <div className="group-metric">
-                <span className="group-metric-label">Happiness</span>
-                <span className="group-metric-value">{Math.round(state.group_metrics[gid]?.happiness ?? 0)}</span>
+                <span className="group-metric-label">Wealth</span>
+                <span className="group-metric-value">{Math.round(state.group_metrics[gid]?.wealth ?? 0)}</span>
               </div>
               <div className="group-metric">
-                <span className="group-metric-label">Radical</span>
-                <span className="group-metric-value">{Math.round(state.group_metrics[gid]?.radicalization ?? 0)}</span>
+                <span className="group-metric-label">Health</span>
+                <span className="group-metric-value">{Math.round(state.group_metrics[gid]?.health ?? 0)}</span>
               </div>
               <div className="group-metric">
-                <span className="group-metric-label">Align</span>
-                <span className="group-metric-value">
-                  <span className="align-bar-wrap">
-                    <span className="align-bar-track">
-                      <span className="align-bar-center" />
-                      <span
-                        className="align-bar-marker"
-                        style={{ left: `${alignmentPercent(state.group_metrics[gid]?.alignment ?? 0)}%` }}
-                      />
-                    </span>
-                    <span className="align-bar-labels">
-                      <span className="align-mayor">Mayor</span>
-                      <span className="align-opp">Opp</span>
-                    </span>
-                  </span>
-                </span>
+                <span className="group-metric-label">Safety</span>
+                <span className="group-metric-value">{Math.round(state.group_metrics[gid]?.safety ?? 0)}</span>
+              </div>
+              <div className="group-metric">
+                <span className="group-metric-label">Social</span>
+                <span className="group-metric-value">{Math.round(state.group_metrics[gid]?.social ?? 0)}</span>
               </div>
             </div>
 

@@ -38,7 +38,7 @@ DEFAULT_ADVISORS: list[AdvisorPersona] = [
     AdvisorPersona(
         advisor_id="fiscal_growth",
         name="Asha Menon",
-        portfolios=["economy", "employment", "infrastructure"],
+        portfolios=["treasury_balance", "employment_rate", "avg_wage", "connectivity"],
         style="Data-first growth strategist focused on delivery milestones.",
         aliases=["asha", "menon", "fiscal", "growth"],
         tone="calm_analytical",
@@ -49,7 +49,7 @@ DEFAULT_ADVISORS: list[AdvisorPersona] = [
     AdvisorPersona(
         advisor_id="social_cohesion",
         name="Rehan Qureshi",
-        portfolios=["social_cohesion", "public_trust", "services"],
+        portfolios=["park_density", "media_access", "hospital_capacity", "food_supply"],
         style="Community negotiator focused on trust and conflict de-escalation.",
         aliases=["rehan", "qureshi", "social", "cohesion"],
         tone="grounded_empathic",
@@ -60,7 +60,7 @@ DEFAULT_ADVISORS: list[AdvisorPersona] = [
     AdvisorPersona(
         advisor_id="governance_risk",
         name="Mira Rao",
-        portfolios=["corruption", "law_and_order", "media"],
+        portfolios=["police_coverage", "recidivism_rate", "lighting_level", "media_access"],
         style="Risk hawk focused on integrity, enforcement, and narrative threats.",
         aliases=["mira", "rao", "governance", "risk"],
         tone="skeptical_guardrail",

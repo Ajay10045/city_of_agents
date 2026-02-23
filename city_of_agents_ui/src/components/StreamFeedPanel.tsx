@@ -18,10 +18,10 @@ export type StreamCardItem = {
     group_id: string
     role: string
     population: number
-    happiness_delta: number
-    radicalization_delta: number
-    alignment_delta: number
-    trust_delta: number
+    wealth_delta: number
+    health_delta: number
+    safety_delta: number
+    social_delta: number
     narrative_shift_delta: number
   }>
   turnSummary?: {

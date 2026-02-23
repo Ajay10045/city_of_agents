@@ -48,7 +48,7 @@
       {
         "advisor_id": "fiscal_growth",
         "name": "Harriet Cole",
-        "portfolios": ["economy", "employment", "infrastructure"],
+        "portfolios": ["treasury_balance", "employment_rate", "avg_wage", "connectivity"],
         "style": "Growth and delivery advisor focused on practical milestones and fiscal discipline.",
         "aliases": ["harriet", "cole", "growth", "fiscal"],
         "tone": "calm_analytical",
@@ -59,7 +59,7 @@
       {
         "advisor_id": "social_cohesion",
         "name": "Omar Whitfield",
-        "portfolios": ["social_cohesion", "public_trust", "services"],
+        "portfolios": ["park_density", "media_access", "hospital_capacity", "food_supply"],
         "style": "Community-facing advisor focused on cohesion, grievance handling, and service trust.",
         "aliases": ["omar", "whitfield", "social", "trust"],
         "tone": "grounded_empathic",
@@ -70,7 +70,7 @@
       {
         "advisor_id": "governance_risk",
         "name": "Priya Das",
-        "portfolios": ["corruption", "law_and_order", "media"],
+        "portfolios": ["police_coverage", "recidivism_rate", "lighting_level", "media_access"],
         "style": "Governance risk specialist focused on compliance, accountability, and narrative resilience.",
         "aliases": ["priya", "das", "risk", "governance"],
         "tone": "skeptical_guardrail",
@@ -93,11 +93,11 @@
       "grievance_score": 0.55,
       "radicalization_base_rate": 0.08,
       "issue_sensitivity": {
-        "employment": 1.22,
-        "services": 1.14,
-        "law_and_order": 1.04,
-        "public_trust": 1.16,
-        "social_tension": 1.08
+        "employment_rate": 1.22,
+        "hospital_capacity": 1.14,
+        "police_coverage": 1.04,
+        "media_access": 1.16,
+        "park_density": 1.08
       }
     },
     {
@@ -112,11 +112,10 @@
       "grievance_score": 0.34,
       "radicalization_base_rate": 0.05,
       "issue_sensitivity": {
-        "infrastructure": 1.18,
-        "environment": 1.12,
-        "public_trust": 1.18,
-        "corruption": 1.05,
-        "media_freedom": 0.86
+        "connectivity": 1.18,
+        "pollution_levels": 1.12,
+        "media_access": 1.18,
+        "recidivism_rate": 1.05
       }
     },
     {
@@ -131,11 +130,11 @@
       "grievance_score": 0.41,
       "radicalization_base_rate": 0.06,
       "issue_sensitivity": {
-        "economy": 1.28,
-        "law_and_order": 1.12,
-        "corruption": 1.02,
-        "public_trust": 0.98,
-        "social_tension": 0.95
+        "treasury_balance": 1.28,
+        "police_coverage": 1.12,
+        "recidivism_rate": 1.02,
+        "media_access": 0.98,
+        "park_density": 0.95
       }
     },
     {
@@ -150,11 +149,10 @@
       "grievance_score": 0.49,
       "radicalization_base_rate": 0.08,
       "issue_sensitivity": {
-        "employment": 1.00,
-        "environment": 1.24,
-        "social_tension": 1.20,
-        "media_freedom": 1.14,
-        "public_trust": 1.10
+        "employment_rate": 1.00,
+        "pollution_levels": 1.24,
+        "park_density": 1.20,
+        "media_access": 1.14
       }
     }
   ],
@@ -166,15 +164,18 @@
     "Student": 0.33
   },
   "initial_city_stats": {
-    "economy": 62,
-    "employment": 56,
-    "law_and_order": 55,
-    "infrastructure": 63,
-    "environment": 58,
-    "corruption": 43,
-    "social_tension": 50,
-    "media_freedom": 65,
-    "public_trust": 52
+    "treasury_balance": 62,
+    "employment_rate": 56,
+    "avg_wage": 60,
+    "hospital_capacity": 65,
+    "pollution_levels": 42,
+    "food_supply": 63,
+    "police_coverage": 55,
+    "recidivism_rate": 45,
+    "lighting_level": 61,
+    "park_density": 51,
+    "connectivity": 65,
+    "media_access": 65
   },
   "issue_front_baseline": {
     "economy": 58,

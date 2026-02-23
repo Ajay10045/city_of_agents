@@ -18,6 +18,15 @@ _SYSTEM = """You are a political advisor generating policy options for the Mayor
 Given the current city state, generate exactly 5 distinct, creative policy options the Mayor could take this turn.
 Each policy must reflect the real political situation — some should address urgent problems, some opportunistic, some risky.
 
+The city tracks 12 sub-metrics organized under 4 citizen pillars:
+  WEALTH: treasury_balance, employment_rate, avg_wage
+  HEALTH: hospital_capacity, pollution_levels (lower=better), food_supply
+  SAFETY: police_coverage, recidivism_rate (lower=better), lighting_level
+  SOCIAL: park_density, connectivity, media_access
+
+Citizens have 4 main metrics (wealth, health, safety, social) driven by the city sub-metrics above.
+The advisory council (bureaucracy) has traits: competency, integrity, skill — policies can affect these.
+
 Return a JSON object with key "policies" containing a list of 5 policy objects. Each policy object must have:
 - "name": short policy name (max 6 words)
 - "description": 1 sentence explaining what the policy does in city terms
@@ -28,23 +37,24 @@ Return a JSON object with key "policies" containing a list of 5 policy objects. 
 - "implementation_targets": array of 1-4 objects with:
   - "key": snake_case target id
   - "label": readable target name
-  - "unit": jobs|km|sites|audits|patrols|zones|units
+  - "unit": jobs|km|sites|beds|patrols|zones|units
   - "proposed": positive number of promised units
   - "difficulty": 0.05 to 0.6 implementation difficulty
-- "effects": object with city stat changes. Keys from: economy, employment, law_and_order, infrastructure, environment, corruption, social_tension, media_freedom, public_trust. Values: floats -10 to +10. Only include stats actually affected. Use realistic magnitudes — most effects ±1 to ±5.
-- "group_effects": list of group impact objects. Each has "match" (object with one key: "religion", "caste", or "language" and the group's value), and some of: "happiness" (-8 to 8), "alignment" (-8 to 8), "radicalization" (-8 to 8). Only include groups actually affected.
+- "effects": object with city sub-metric changes. Keys from: treasury_balance, employment_rate, avg_wage, hospital_capacity, pollution_levels, food_supply, police_coverage, recidivism_rate, lighting_level, park_density, connectivity, media_access. Values: floats -10 to +10. Only include stats actually affected. Use realistic magnitudes — most effects ±1 to ±5. For pollution_levels and recidivism_rate, negative values mean improvement.
+- "group_effects": list of group impact objects. Each has "match" (object with one key: "religion", "caste", or "language" and the group's value), and some of: "wealth" (-8 to 8), "health" (-8 to 8), "safety" (-8 to 8), "social" (-8 to 8). Only include groups actually affected.
+- "bureaucracy_effects": object with optional keys "competency", "integrity", "skill" — small deltas (-0.05 to 0.05). Include only if the policy directly affects council capability (e.g., anti-corruption measures improve integrity, training improves skill).
 - "campaign_strength": float 0.9 to 1.4 (how much this boosts mayor campaign)
 - "media_effects": object with some of: "bias" (-5 to 5), "sensationalism" (-5 to 5), "trust" (-5 to 5)
 - "target_groups": array of up to 3 group labels impacted most
-- "expected_stat_delta": object mirroring top expected stat movements
+- "expected_stat_delta": object mirroring top expected stat movements (use same sub-metric keys as effects)
 - "opposition_counter_risk": float 0.0 to 1.0
-- "narrative_fronts_impacted": object from fronts {economy, corruption, safety, services, social_cohesion, public_trust} with -5 to +5 intensity
+- "narrative_fronts_impacted": object from fronts {economy, corruption, safety, services, social_cohesion} with -5 to +5 intensity
 - "confidence": float 0.0 to 1.0
 - "assumptions": array of up to 3 short assumptions
 - "tradeoffs": array of up to 3 short tradeoffs
 - "counter_narrative_risk": one sentence on likely opposition attack line
 
-Make the 5 policies meaningfully different — cover different domains (economic, social, law enforcement, environmental, political). All effects must be internally consistent with the policy description."""
+Make the 5 policies meaningfully different — cover different domains (economic, health, safety, social, governance). All effects must be internally consistent with the policy description."""
 
 
 class MayorAdvisor:
@@ -186,17 +196,16 @@ class MayorAdvisor:
                 "rationale": "Fuel continuity lowers panic pricing and commuter anger while showing executive control over a visible crisis.",
                 "why_now": "Fuel shortage pressure is dominating daily life and commuters need immediate reliability.",
                 "effects": {
-                    "economy": 2.3,
-                    "infrastructure": 1.7,
-                    "social_tension": -2.6,
-                    "public_trust": 1.4,
-                    "environment": -0.6,
+                    "treasury_balance": -1.8,
+                    "connectivity": 1.7,
+                    "pollution_levels": -1.2,
+                    "avg_wage": 1.4,
                 },
                 "campaign_strength": 1.11,
                 "target_groups": ["Commuters", "Informal Workers", "Small Businesses"],
-                "expected_stat_delta": {"economy": 2.0, "social_tension": -2.4, "public_trust": 1.2},
+                "expected_stat_delta": {"connectivity": 1.5, "pollution_levels": -1.0, "avg_wage": 1.2},
                 "opposition_counter_risk": 0.56,
-                "narrative_fronts_impacted": {"services": 3.2, "economy": 2.4, "public_trust": 1.5},
+                "narrative_fronts_impacted": {"services": 3.2, "economy": 2.4},
                 "confidence": 0.66,
                 "assumptions": [
                     "Fuel procurement contracts can be executed quickly",
@@ -214,10 +223,10 @@ class MayorAdvisor:
                 "description": "Launch a 90-day ward jobs accelerator tied to local maintenance, logistics, and service-delivery contracts.",
                 "rationale": "Visible wage support calms anti-incumbent pressure faster than abstract macro messaging.",
                 "why_now": "Employment anxiety is central and immediate wage visibility can reset momentum.",
-                "effects": {"employment": 3.4, "economy": 1.6, "social_tension": -1.8, "public_trust": 1.1},
+                "effects": {"employment_rate": 3.4, "avg_wage": 1.6, "park_density": 0.5},
                 "campaign_strength": 1.1,
                 "target_groups": ["Workers", "Youth", "Peri-Urban Households"],
-                "expected_stat_delta": {"employment": 3.0, "social_tension": -1.7},
+                "expected_stat_delta": {"employment_rate": 3.0, "avg_wage": 1.4},
                 "opposition_counter_risk": 0.58,
                 "narrative_fronts_impacted": {"economy": 3.1, "social_cohesion": 1.6},
                 "confidence": 0.64,
@@ -231,10 +240,11 @@ class MayorAdvisor:
                 "description": "Open fast-track anti-corruption investigations with public milestone tracking for top-risk departments.",
                 "rationale": "Narrative control returns when enforcement is visible and time-bound.",
                 "why_now": "Corruption framing is overpowering governance credibility, and visible enforcement can reset trust.",
-                "effects": {"corruption": -4.1, "public_trust": 1.8, "law_and_order": 0.9},
+                "effects": {"police_coverage": 1.2, "media_access": 0.8},
+                "bureaucracy_effects": {"integrity": 0.05, "competency": 0.02},
                 "campaign_strength": 1.09,
                 "target_groups": ["Middle Class", "Civic Networks", "Small Traders"],
-                "expected_stat_delta": {"corruption": -3.8, "public_trust": 1.6},
+                "expected_stat_delta": {"police_coverage": 1.0, "media_access": 0.7},
                 "opposition_counter_risk": 0.49,
                 "narrative_fronts_impacted": {"corruption": 3.5, "public_trust": 1.7},
                 "confidence": 0.68,
@@ -248,10 +258,11 @@ class MayorAdvisor:
                 "description": "Publish weekly delivery scorecards, grievance closure SLAs, and third-party verification.",
                 "rationale": "Trust rebounds when promises become measurable and public.",
                 "why_now": "Confidence in governance is fragile and measurable accountability can rebuild trust quickly.",
-                "effects": {"public_trust": 2.8, "social_tension": -1.2, "media_freedom": 0.6, "corruption": -1.0},
+                "effects": {"media_access": 1.8, "connectivity": 0.6},
+                "bureaucracy_effects": {"integrity": 0.03, "competency": 0.02},
                 "campaign_strength": 1.07,
                 "target_groups": ["Undecided Voters", "Civic Groups", "Students"],
-                "expected_stat_delta": {"public_trust": 2.4, "social_tension": -1.0},
+                "expected_stat_delta": {"media_access": 1.5, "connectivity": 0.5},
                 "opposition_counter_risk": 0.52,
                 "narrative_fronts_impacted": {"public_trust": 3.0, "social_cohesion": 1.1},
                 "confidence": 0.62,
@@ -265,10 +276,10 @@ class MayorAdvisor:
                 "description": "Deploy hotspot patrols with community safety councils and rapid-response evidence triage teams.",
                 "rationale": "Visible safety gains can reset fear-driven narrative collapse.",
                 "why_now": "Public insecurity is the top concern and visible safety delivery is needed this turn.",
-                "effects": {"law_and_order": 3.1, "social_tension": -1.5, "public_trust": 0.9},
+                "effects": {"police_coverage": 3.1, "recidivism_rate": -1.5, "lighting_level": 1.2},
                 "campaign_strength": 1.08,
                 "target_groups": ["Women Commuters", "Peri-Urban Residents"],
-                "expected_stat_delta": {"law_and_order": 2.7, "social_tension": -1.3},
+                "expected_stat_delta": {"police_coverage": 2.7, "recidivism_rate": -1.3},
                 "opposition_counter_risk": 0.53,
                 "narrative_fronts_impacted": {"safety": 3.1, "social_cohesion": 1.0},
                 "confidence": 0.63,
@@ -278,15 +289,15 @@ class MayorAdvisor:
             }
         return {
             "name": "Targeted Stabilization Package",
-            "description": "Prioritize a focused recovery bundle tied to the city’s most urgent pressure fronts.",
+            "description": "Prioritize a focused recovery bundle tied to the city's most urgent pressure fronts.",
             "rationale": "Narrowing policy bandwidth improves execution under high narrative pressure.",
             "why_now": "Urgent pressure fronts are converging, so a focused stabilization bundle is timely now.",
-            "effects": {"economy": 1.5, "public_trust": 1.1, "social_tension": -1.2},
+            "effects": {"treasury_balance": 1.5, "employment_rate": 1.1, "park_density": 0.8},
             "campaign_strength": 1.05,
             "target_groups": ["Undecided Voters", "Working Households"],
-            "expected_stat_delta": {"economy": 1.3, "social_tension": -1.0},
+            "expected_stat_delta": {"treasury_balance": 1.3, "employment_rate": 1.0},
             "opposition_counter_risk": 0.57,
-            "narrative_fronts_impacted": {"services": 1.4, "public_trust": 1.3, "economy": 1.2},
+            "narrative_fronts_impacted": {"services": 1.4, "economy": 1.2},
             "confidence": 0.58,
             "assumptions": ["Execution bottlenecks are actively managed"],
             "tradeoffs": ["Less diversification across issue fronts this turn"],
@@ -302,10 +313,10 @@ class MayorAdvisor:
                 "description": "Launch a short-term public works program focused on high-unemployment wards.",
                 "rationale": "Stabilizes jobs pressure and signals visible action before discontent escalates.",
                 "why_now": "Employment stress is amplifying anti-incumbent sentiment; rapid hiring can reset momentum.",
-                "effects": {"employment": 3.2, "social_tension": -2.0, "public_trust": 1.0},
+                "effects": {"employment_rate": 3.2, "avg_wage": 1.4, "treasury_balance": -1.0},
                 "campaign_strength": 1.08,
                 "target_groups": ["Workers", "Youth"],
-                "expected_stat_delta": {"employment": 3.0, "social_tension": -2.0},
+                "expected_stat_delta": {"employment_rate": 3.0, "avg_wage": 1.2},
                 "opposition_counter_risk": 0.62,
                 "narrative_fronts_impacted": {"economy": 2.5, "social_cohesion": 1.4},
                 "confidence": 0.62,
@@ -318,10 +329,11 @@ class MayorAdvisor:
                 "description": "Publish all major contracts with milestone and payment tracking.",
                 "rationale": "Directly attacks corruption perception and protects credibility.",
                 "why_now": "Trust erosion is strongest around procurement opacity; transparency can blunt scandals.",
-                "effects": {"corruption": -3.5, "public_trust": 2.2, "media_freedom": 0.8},
+                "effects": {"media_access": 1.8, "connectivity": 0.8},
+                "bureaucracy_effects": {"integrity": 0.05, "competency": 0.02},
                 "campaign_strength": 1.06,
                 "target_groups": ["Middle Class", "Journalists"],
-                "expected_stat_delta": {"corruption": -3.0, "public_trust": 2.0},
+                "expected_stat_delta": {"media_access": 1.5, "connectivity": 0.7},
                 "opposition_counter_risk": 0.48,
                 "narrative_fronts_impacted": {"corruption": 3.0, "public_trust": 2.2},
                 "confidence": 0.69,
@@ -333,11 +345,11 @@ class MayorAdvisor:
                 "name": "Neighborhood Safety Pact",
                 "description": "Deploy community policing and rapid grievance hotlines in high-friction districts.",
                 "rationale": "Creates visible safety response without purely punitive optics.",
-                "why_now": "Social tension and local insecurity are feeding opposition framing on weak governance.",
-                "effects": {"law_and_order": 2.4, "social_tension": -1.7, "public_trust": 0.9},
+                "why_now": "Local insecurity is feeding opposition framing on weak governance.",
+                "effects": {"police_coverage": 2.4, "recidivism_rate": -1.7, "lighting_level": 1.2},
                 "campaign_strength": 1.04,
                 "target_groups": ["Peri-urban Residents"],
-                "expected_stat_delta": {"law_and_order": 2.0, "social_tension": -1.5},
+                "expected_stat_delta": {"police_coverage": 2.0, "recidivism_rate": -1.5},
                 "opposition_counter_risk": 0.54,
                 "narrative_fronts_impacted": {"safety": 2.6, "social_cohesion": 1.2},
                 "confidence": 0.58,
@@ -350,10 +362,10 @@ class MayorAdvisor:
                 "description": "Subsidize electric buses and prioritize pollution hotspots for route expansion.",
                 "rationale": "Combines service improvement with health and environment benefits.",
                 "why_now": "Environmental stress and commuting pain are converging into daily voter frustration.",
-                "effects": {"environment": 3.0, "infrastructure": 1.5, "economy": 0.8},
+                "effects": {"pollution_levels": -3.0, "connectivity": 1.5, "avg_wage": 0.8},
                 "campaign_strength": 1.03,
                 "target_groups": ["Students", "Commuters"],
-                "expected_stat_delta": {"environment": 2.8, "infrastructure": 1.4},
+                "expected_stat_delta": {"pollution_levels": -2.8, "connectivity": 1.4},
                 "opposition_counter_risk": 0.57,
                 "narrative_fronts_impacted": {"services": 2.0, "economy": 1.2},
                 "confidence": 0.55,
@@ -365,11 +377,12 @@ class MayorAdvisor:
                 "name": "Citizen Audit Councils",
                 "description": "Create ward-level councils that score service delivery and publish monthly audits.",
                 "rationale": "Invites participatory oversight and reframes legitimacy around accountability.",
-                "why_now": "Public trust is fragile; participatory oversight can rebalance narrative control.",
-                "effects": {"public_trust": 2.7, "corruption": -1.8, "social_tension": -0.8},
+                "why_now": "Governance credibility is fragile; participatory oversight can rebalance narrative control.",
+                "effects": {"media_access": 2.2, "park_density": 0.6},
+                "bureaucracy_effects": {"integrity": 0.04, "competency": 0.01},
                 "campaign_strength": 1.02,
                 "target_groups": ["Civic Groups", "Students"],
-                "expected_stat_delta": {"public_trust": 2.4, "corruption": -1.6},
+                "expected_stat_delta": {"media_access": 2.0, "park_density": 0.5},
                 "opposition_counter_risk": 0.51,
                 "narrative_fronts_impacted": {"public_trust": 2.8, "corruption": 1.3},
                 "confidence": 0.57,
@@ -386,19 +399,19 @@ class MayorAdvisor:
         for index in range(1, len(fallback)):
             item = fallback[index]
             if focus == "fuel":
-                item["effects"] = self._shift_effect(item.get("effects", {}), "infrastructure", 0.6)
-                item["effects"] = self._shift_effect(item.get("effects", {}), "social_tension", -0.5)
+                item["effects"] = self._shift_effect(item.get("effects", {}), "connectivity", 0.6)
+                item["effects"] = self._shift_effect(item.get("effects", {}), "pollution_levels", -0.5)
             elif focus == "jobs":
-                item["effects"] = self._shift_effect(item.get("effects", {}), "employment", 0.7)
-                item["effects"] = self._shift_effect(item.get("effects", {}), "economy", 0.4)
+                item["effects"] = self._shift_effect(item.get("effects", {}), "employment_rate", 0.7)
+                item["effects"] = self._shift_effect(item.get("effects", {}), "avg_wage", 0.4)
             elif focus == "corruption":
-                item["effects"] = self._shift_effect(item.get("effects", {}), "corruption", -0.9)
-                item["effects"] = self._shift_effect(item.get("effects", {}), "public_trust", 0.5)
+                item["effects"] = self._shift_effect(item.get("effects", {}), "media_access", 0.5)
+                item.setdefault("bureaucracy_effects", {})["integrity"] = 0.03
             elif focus == "trust":
-                item["effects"] = self._shift_effect(item.get("effects", {}), "public_trust", 0.8)
+                item["effects"] = self._shift_effect(item.get("effects", {}), "media_access", 0.8)
             elif focus == "safety":
-                item["effects"] = self._shift_effect(item.get("effects", {}), "law_and_order", 0.8)
-                item["effects"] = self._shift_effect(item.get("effects", {}), "social_tension", -0.4)
+                item["effects"] = self._shift_effect(item.get("effects", {}), "police_coverage", 0.8)
+                item["effects"] = self._shift_effect(item.get("effects", {}), "recidivism_rate", -0.4)
 
         return [self._attach_execution_blueprint(item, focus) for item in fallback]
 
@@ -505,16 +518,18 @@ class MayorAdvisor:
             return "Environment"
         if "cohesion" in text or "tension" in text:
             return "Cohesion"
-        if float(effects.get("employment", 0.0)) != 0 or float(effects.get("economy", 0.0)) != 0:
+        if float(effects.get("employment_rate", 0.0)) != 0 or float(effects.get("avg_wage", 0.0)) != 0:
             return "Jobs"
-        if float(effects.get("public_trust", 0.0)) != 0:
+        if float(effects.get("media_access", 0.0)) != 0:
             return "Trust"
-        if float(effects.get("corruption", 0.0)) != 0:
-            return "Integrity"
-        if float(effects.get("law_and_order", 0.0)) != 0:
+        if float(effects.get("police_coverage", 0.0)) != 0 or float(effects.get("recidivism_rate", 0.0)) != 0:
             return "Safety"
-        if float(effects.get("infrastructure", 0.0)) != 0:
+        if float(effects.get("connectivity", 0.0)) != 0 or float(effects.get("lighting_level", 0.0)) != 0:
             return "Infrastructure"
+        if float(effects.get("pollution_levels", 0.0)) != 0:
+            return "Environment"
+        if float(effects.get("hospital_capacity", 0.0)) != 0 or float(effects.get("food_supply", 0.0)) != 0:
+            return "Health"
         return "City"
 
     @classmethod

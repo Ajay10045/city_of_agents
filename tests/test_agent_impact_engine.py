@@ -28,21 +28,21 @@ def _build_seeded_state(seed: int = 77):
 
 def _example_policy_payloads():
     mayor_effects = {
-        "economy": 2.4,
-        "employment": 3.0,
-        "public_trust": 1.3,
-        "corruption": -1.2,
+        "treasury_balance": 2.4,
+        "employment_rate": 3.0,
+        "media_access": 1.3,
+        "recidivism_rate": -1.2,
     }
     opposition_effects = {
-        "social_tension": 1.4,
-        "public_trust": -1.0,
-        "media_freedom": 0.6,
+        "park_density": 1.4,
+        "media_access": -1.0,
+        "media_access": 0.6,
     }
     mayor_group_effects = [
-        {"match": {"religion": "River Faith"}, "happiness": 1.6, "trust_in_government": 1.2},
+        {"match": {"religion": "River Faith"}, "wealth": 1.6, "social": 1.2},
     ]
     opposition_group_effects = [
-        {"match": {"caste": "Merchant Network"}, "happiness": -1.1, "radicalization": 1.0},
+        {"match": {"caste": "Merchant Network"}, "wealth": -1.1, "safety": 1.0},
     ]
     return mayor_effects, opposition_effects, mayor_group_effects, opposition_group_effects
 

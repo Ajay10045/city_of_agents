@@ -9,6 +9,7 @@ from typing import Any
 from agents.agent import Agent
 from agents.identity_group import IdentityGroup
 from agents.relationship import Relationship
+from core.bureaucracy import BureaucracyTraits
 from core.city_stats import CityStats
 from events.event import ActiveEvent
 from media.media_engine import MediaState
@@ -58,6 +59,7 @@ class GameState:
     opposition_budget: float = 1_200_000.0
     last_delivery_report: dict[str, Any] = field(default_factory=dict)
     delivery_history: list[dict[str, Any]] = field(default_factory=list)
+    bureaucracy: BureaucracyTraits = field(default_factory=BureaucracyTraits)
 
     def average_agent_field(self, field_name: str) -> float:
         total_weight = sum(agent.population_weight for agent in self.agents)
@@ -107,6 +109,7 @@ class GameState:
             "opposition_budget": self.opposition_budget,
             "last_delivery_report": dict(self.last_delivery_report),
             "delivery_history": list(self.delivery_history),
+            "bureaucracy": self.bureaucracy.as_dict(),
         }
 
     def save_snapshot(self, path: str | Path) -> None:

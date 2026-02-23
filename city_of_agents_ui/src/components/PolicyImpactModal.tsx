@@ -11,17 +11,17 @@ function formatStat(key: string) {
 }
 
 function classifyEconomicSignal(policy: DynamicPolicy): string {
-  const economy = (policy.effects?.economy ?? 0) + (policy.effects?.employment ?? 0)
-  if (economy >= 2.0) return 'Broad economic uplift expected in near term.'
-  if (economy <= -2.0) return 'Economic stress risk is elevated for vulnerable households.'
+  const wealth = (policy.effects?.treasury_balance ?? 0) + (policy.effects?.employment_rate ?? 0) + (policy.effects?.avg_wage ?? 0)
+  if (wealth >= 2.0) return 'Broad economic uplift expected in near term.'
+  if (wealth <= -2.0) return 'Economic stress risk is elevated for vulnerable households.'
   return 'Economic impact is likely mixed and implementation-dependent.'
 }
 
 function classifyEmotionalSignal(policy: DynamicPolicy): string {
-  const trust = policy.effects?.public_trust ?? 0
-  const tension = policy.effects?.social_tension ?? 0
-  if (trust > 1 && tension < 0) return 'Likely to reduce anxiety and improve civic confidence.'
-  if (trust < -1 || tension > 1) return 'May intensify fear/anger in politically volatile groups.'
+  const safety = policy.effects?.police_coverage ?? 0
+  const social = (policy.effects?.park_density ?? 0) + (policy.effects?.connectivity ?? 0)
+  if (safety > 1 && social > 0) return 'Likely to reduce anxiety and improve civic confidence.'
+  if (safety < -1 || social < -1) return 'May intensify fear/anger in politically volatile groups.'
   return 'Emotional response likely fragmented across neighborhoods.'
 }
 
@@ -38,10 +38,10 @@ export default function PolicyImpactModal({ policy, visible, onClose }: Props) {
         .map(([key, value]) => `${key}: ${value}`)
         .join(', ')
       const deltas = [
-        typeof effect.happiness === 'number' ? `happiness ${effect.happiness >= 0 ? '+' : ''}${effect.happiness.toFixed(1)}` : null,
-        typeof effect.radicalization === 'number'
-          ? `radicalization ${effect.radicalization >= 0 ? '+' : ''}${effect.radicalization.toFixed(1)}`
-          : null,
+        typeof effect.wealth === 'number' ? `wealth ${effect.wealth >= 0 ? '+' : ''}${effect.wealth.toFixed(1)}` : null,
+        typeof effect.health === 'number' ? `health ${effect.health >= 0 ? '+' : ''}${effect.health.toFixed(1)}` : null,
+        typeof effect.safety === 'number' ? `safety ${effect.safety >= 0 ? '+' : ''}${effect.safety.toFixed(1)}` : null,
+        typeof effect.social === 'number' ? `social ${effect.social >= 0 ? '+' : ''}${effect.social.toFixed(1)}` : null,
       ]
         .filter(Boolean)
         .join(' · ')

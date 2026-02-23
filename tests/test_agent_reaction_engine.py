@@ -75,7 +75,7 @@ def test_apply_turn_reactions_preserves_agent_mapping_under_parallelism(monkeypa
     engine._client = object()
     engine._disable_live = False
 
-    baseline_happiness = {agent.id: agent.happiness for agent in game_state.agents}
+    baseline_wealth = {agent.id: agent.wealth for agent in game_state.agents}
 
     def fake_evaluate(
         agent,
@@ -96,8 +96,8 @@ def test_apply_turn_reactions_preserves_agent_mapping_under_parallelism(monkeypa
 
     monkeypatch.setattr(engine, "_evaluate_agent", fake_evaluate)
 
-    mayor_action = _policy("Mayor Plan", {"economy": 1.0, "employment": 0.6})
-    opposition_action = _policy("Opposition Plan", {"social_tension": 0.5, "public_trust": -0.4})
+    mayor_action = _policy("Mayor Plan", {"treasury_balance": 1.0, "employment_rate": 0.6})
+    opposition_action = _policy("Opposition Plan", {"park_density": 0.5, "media_access": -0.4})
 
     summary = engine.apply_turn_reactions(
         game_state=game_state,
@@ -113,7 +113,7 @@ def test_apply_turn_reactions_preserves_agent_mapping_under_parallelism(monkeypa
 
     for agent in game_state.agents:
         expected_delta = round(agent.id / 100.0, 4)
-        actual_delta = round(agent.happiness - baseline_happiness[agent.id], 4)
+        actual_delta = round(agent.wealth - baseline_wealth[agent.id], 4)
         assert actual_delta == expected_delta
 
 

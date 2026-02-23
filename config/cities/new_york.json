@@ -48,7 +48,7 @@
       {
         "advisor_id": "fiscal_growth",
         "name": "Marcus Levin",
-        "portfolios": ["economy", "employment", "infrastructure"],
+        "portfolios": ["treasury_balance", "employment_rate", "avg_wage", "connectivity"],
         "style": "Data-forward growth operator focused on jobs pipelines and infrastructure throughput.",
         "aliases": ["marcus", "levin", "growth", "fiscal"],
         "tone": "calm_analytical",
@@ -59,7 +59,7 @@
       {
         "advisor_id": "social_cohesion",
         "name": "Elena Rivera",
-        "portfolios": ["social_cohesion", "public_trust", "services"],
+        "portfolios": ["park_density", "media_access", "hospital_capacity", "food_supply"],
         "style": "Civic cohesion mediator balancing neighborhood trust with service reliability.",
         "aliases": ["elena", "rivera", "social", "trust"],
         "tone": "grounded_empathic",
@@ -70,7 +70,7 @@
       {
         "advisor_id": "governance_risk",
         "name": "Noah Bennett",
-        "portfolios": ["corruption", "law_and_order", "media"],
+        "portfolios": ["police_coverage", "recidivism_rate", "lighting_level", "media_access"],
         "style": "Institutional risk specialist focused on integrity controls and media pressure points.",
         "aliases": ["noah", "bennett", "risk", "governance"],
         "tone": "skeptical_guardrail",
@@ -93,11 +93,11 @@
       "grievance_score": 0.58,
       "radicalization_base_rate": 0.09,
       "issue_sensitivity": {
-        "employment": 1.28,
-        "services": 1.22,
-        "housing": 1.20,
-        "public_trust": 1.14,
-        "law_and_order": 1.02
+        "employment_rate": 1.28,
+        "hospital_capacity": 1.22,
+        "avg_wage": 1.20,
+        "media_access": 1.14,
+        "police_coverage": 1.02
       }
     },
     {
@@ -112,11 +112,11 @@
       "grievance_score": 0.35,
       "radicalization_base_rate": 0.05,
       "issue_sensitivity": {
-        "infrastructure": 1.20,
-        "public_trust": 1.22,
-        "corruption": 1.10,
-        "environment": 1.05,
-        "law_and_order": 0.95
+        "connectivity": 1.20,
+        "media_access": 1.22,
+        "recidivism_rate": 1.10,
+        "pollution_levels": 1.05,
+        "police_coverage": 0.95
       }
     },
     {
@@ -131,11 +131,10 @@
       "grievance_score": 0.42,
       "radicalization_base_rate": 0.06,
       "issue_sensitivity": {
-        "economy": 1.34,
-        "law_and_order": 1.16,
-        "corruption": 1.05,
-        "public_trust": 1.00,
-        "media_freedom": 0.82
+        "treasury_balance": 1.34,
+        "police_coverage": 1.16,
+        "recidivism_rate": 1.05,
+        "media_access": 1.00
       }
     },
     {
@@ -150,11 +149,10 @@
       "grievance_score": 0.46,
       "radicalization_base_rate": 0.08,
       "issue_sensitivity": {
-        "environment": 1.26,
-        "social_tension": 1.22,
-        "public_trust": 1.16,
-        "media_freedom": 1.15,
-        "employment": 1.02
+        "pollution_levels": 1.26,
+        "park_density": 1.22,
+        "media_access": 1.16,
+        "employment_rate": 1.02
       }
     }
   ],
@@ -166,15 +164,18 @@
     "Student": 0.32
   },
   "initial_city_stats": {
-    "economy": 64,
-    "employment": 57,
-    "law_and_order": 52,
-    "infrastructure": 61,
-    "environment": 55,
-    "corruption": 47,
-    "social_tension": 53,
-    "media_freedom": 67,
-    "public_trust": 49
+    "treasury_balance": 64,
+    "employment_rate": 57,
+    "avg_wage": 62,
+    "hospital_capacity": 63,
+    "pollution_levels": 45,
+    "food_supply": 64,
+    "police_coverage": 52,
+    "recidivism_rate": 48,
+    "lighting_level": 59,
+    "park_density": 49,
+    "connectivity": 63,
+    "media_access": 67
   },
   "issue_front_baseline": {
     "economy": 60,

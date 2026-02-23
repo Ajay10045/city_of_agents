@@ -71,7 +71,7 @@ class DeliverySimulationResult:
 
 
 class CitySimulationEngine:
-    """Probabilistic policy delivery model used by the v1 turn loop."""
+    """Probabilistic policy delivery model using the 4-pillar stat system."""
 
     def _infer_targets(self, policy: DynamicPolicy) -> list[dict[str, Any]]:
         targets = list(policy.implementation_targets)
@@ -82,8 +82,8 @@ class CitySimulationEngine:
         effects = dict(policy.effects)
         description = f"{policy.name} {policy.description}".lower()
 
-        if "job" in description or "employment" in description or "employment" in effects:
-            proposed_jobs = max(150.0, abs(float(effects.get("employment", 1.5))) * 320.0)
+        if "job" in description or "employment" in description or "employment_rate" in effects:
+            proposed_jobs = max(150.0, abs(float(effects.get("employment_rate", 1.5))) * 320.0)
             inferred.append(
                 {
                     "key": "jobs_supported",
@@ -93,8 +93,13 @@ class CitySimulationEngine:
                     "difficulty": 0.20,
                 }
             )
-        if "road" in description or "transit" in description or "infrastructure" in description or "infrastructure" in effects:
-            proposed_km = max(2.0, abs(float(effects.get("infrastructure", 1.2))) * 2.4)
+        if (
+            "road" in description
+            or "transit" in description
+            or "infrastructure" in description
+            or "connectivity" in effects
+        ):
+            proposed_km = max(2.0, abs(float(effects.get("connectivity", 1.2))) * 2.4)
             inferred.append(
                 {
                     "key": "infrastructure_km",
@@ -104,8 +109,8 @@ class CitySimulationEngine:
                     "difficulty": 0.30,
                 }
             )
-        if "corruption" in description or "audit" in description or "corruption" in effects:
-            proposed_audits = max(1.0, abs(float(effects.get("corruption", 1.0))) * 2.0)
+        if "audit" in description or "media_access" in effects or "bureaucracy" in description:
+            proposed_audits = max(1.0, abs(float(effects.get("media_access", 1.0))) * 2.0)
             inferred.append(
                 {
                     "key": "audit_cycles",
@@ -115,8 +120,8 @@ class CitySimulationEngine:
                     "difficulty": 0.18,
                 }
             )
-        if "safety" in description or "law and order" in description or "law_and_order" in effects:
-            patrols = max(2.0, abs(float(effects.get("law_and_order", 1.0))) * 1.8)
+        if "safety" in description or "police" in description or "police_coverage" in effects:
+            patrols = max(2.0, abs(float(effects.get("police_coverage", 1.0))) * 1.8)
             inferred.append(
                 {
                     "key": "safety_patrol_units",
@@ -126,8 +131,8 @@ class CitySimulationEngine:
                     "difficulty": 0.22,
                 }
             )
-        if "environment" in effects or "air" in description or "clean" in description:
-            interventions = max(1.0, abs(float(effects.get("environment", 1.0))) * 1.6)
+        if "pollution_levels" in effects or "air" in description or "clean" in description:
+            interventions = max(1.0, abs(float(effects.get("pollution_levels", 1.0))) * 1.6)
             inferred.append(
                 {
                     "key": "air_quality_interventions",
@@ -176,31 +181,31 @@ class CitySimulationEngine:
         profile = dict(game_state.simulation_profile or {})
         rng = game_state.rng
 
-        mayor_competence = _clamp(float(profile.get("mayor_competence", 0.58)), 0.2, 0.95)
-        council_competence = _clamp(float(profile.get("council_competence", 0.62)), 0.2, 0.95)
-        competence_factor = mayor_competence * 0.55 + council_competence * 0.45
+        # --- Competence from bureaucracy traits ---
+        bureaucracy = game_state.bureaucracy
+        competence_factor = bureaucracy.execution_factor()
 
-        corruption_drag = _clamp((float(stats.corruption) - 35.0) / 65.0, 0.0, 1.0) * 0.38
-        tension_drag = _clamp((float(stats.social_tension) - 45.0) / 55.0, 0.0, 1.0) * 0.16
-        infra_support = _clamp(float(stats.infrastructure) / 100.0, 0.0, 1.0) * 0.14
-        trust_support = _clamp(float(stats.public_trust) / 100.0, 0.0, 1.0) * 0.12
-        economy_support = _clamp(float(stats.economy) / 100.0, 0.0, 1.0) * 0.10
+        # --- City pillar support & drag ---
+        pillar_scores = stats.pillar_scores()
+        city_pillar_support = _clamp(sum(pillar_scores.values()) / 400.0, 0.0, 1.0) * 0.20
+        # Identify weak pillars as drag
+        weak_pillar_values = [v for v in pillar_scores.values() if v < 40.0]
+        city_drag = sum((40.0 - v) / 100.0 for v in weak_pillar_values) * 0.05
 
+        # --- Execution score (balanced to allow over-delivery) ---
         variance = _clamp(float(profile.get("implementation_variance", 0.08)), 0.0, 0.2)
         stochastic_noise = rng.uniform(-variance, variance)
         execution_score = _clamp(
-            0.48
-            + competence_factor * 0.45
-            + infra_support
-            + trust_support
-            + economy_support
-            - corruption_drag
-            - tension_drag
+            0.55
+            + competence_factor * 0.55
+            + city_pillar_support
+            - city_drag
             + stochastic_noise,
             0.12,
-            1.08,
+            1.15,
         )
 
+        # --- Per-target delivery simulation ---
         targets_raw = self._infer_targets(policy)
         budget_required = self._budget_required(policy, targets_raw)
         metrics: list[DeliveryMetric] = []
@@ -213,10 +218,12 @@ class CitySimulationEngine:
             proposed = max(0.0, float(row.get("proposed", 0.0) or 0.0))
             difficulty = _clamp(float(row.get("difficulty", 0.2) or 0.2), 0.05, 0.6)
 
+            # Skill reduces effective difficulty
+            effective_difficulty = max(0.02, difficulty - bureaucracy.skill * 0.15)
             completion_ratio = _clamp(
-                execution_score - difficulty + rng.uniform(-0.05, 0.07),
+                execution_score - effective_difficulty + rng.uniform(-0.05, 0.07),
                 0.05,
-                1.10,
+                1.15,
             )
             delivered = proposed * completion_ratio
             gap = max(0.0, proposed - delivered)
@@ -235,55 +242,60 @@ class CitySimulationEngine:
             total_proposed += proposed
             total_delivered += delivered
 
+        # --- Aggregate delivery metrics ---
         completion_ratio_avg = _clamp(total_delivered / max(total_proposed, 1e-9), 0.0, 1.15)
         implementation_gap = _clamp(1.0 - completion_ratio_avg, 0.0, 1.0)
         leakage_factor = _clamp(
-            (float(stats.corruption) / 100.0) * implementation_gap * 0.62,
+            (1.0 - bureaucracy.integrity) * implementation_gap * 0.62,
             0.0,
             0.7,
         )
         budget_spent = budget_required * _clamp(completion_ratio_avg + leakage_factor, 0.18, 1.22)
 
+        # --- Stat deltas from policy effects ---
         effect_scale = _clamp(completion_ratio_avg * 0.9 + execution_score * 0.35, 0.0, 1.1)
         stat_deltas: dict[str, float] = {}
         for key, value in policy.effects.items():
             stat_deltas[str(key)] = float(value) * effect_scale
 
-        gap_penalty = implementation_gap * 3.4
-        stat_deltas["public_trust"] = float(stat_deltas.get("public_trust", 0.0)) - (
-            gap_penalty * (0.62 + float(stats.corruption) / 210.0)
-        )
-        stat_deltas["social_tension"] = float(stat_deltas.get("social_tension", 0.0)) + gap_penalty * 0.56
-        stat_deltas["corruption"] = float(stat_deltas.get("corruption", 0.0)) + leakage_factor * 2.6
-        stat_deltas["infrastructure"] = float(stat_deltas.get("infrastructure", 0.0)) + (
-            (execution_score - 0.5) * 1.0
-        )
-        stat_deltas["employment"] = float(stat_deltas.get("employment", 0.0)) + (
-            (completion_ratio_avg - 0.5) * 1.5
-        )
+        # Good delivery boosts relevant sub-metrics slightly
+        if completion_ratio_avg > 0.6:
+            stat_deltas["media_access"] = stat_deltas.get("media_access", 0.0) + (completion_ratio_avg - 0.6) * 2.0
+        if completion_ratio_avg < 0.4:
+            stat_deltas["recidivism_rate"] = stat_deltas.get("recidivism_rate", 0.0) + (0.4 - completion_ratio_avg) * 1.5
 
+        # --- Sentiment effects using 4-pillar citizen fields ---
+        completion_avg = completion_ratio_avg
         sentiment_effects: list[dict[str, Any]] = [
             {
                 "match": {},
-                "happiness": _clamp((completion_ratio_avg - 0.55) * 3.0 - leakage_factor, -3.5, 3.5),
-                "alignment": _clamp((completion_ratio_avg - 0.52) * 4.4 - implementation_gap * 1.4, -4.5, 4.5),
-                "radicalization": _clamp(implementation_gap * 2.6 + leakage_factor * 1.5 - 0.8, -3.0, 3.8),
-                "trust_in_government": _clamp(
-                    (completion_ratio_avg - 0.5) * 3.8 - leakage_factor * 2.0,
-                    -4.0,
-                    4.0,
-                ),
+                "wealth": _clamp((completion_avg - 0.45) * 3.0 - leakage_factor, -3.5, 3.5),
+                "health": _clamp((completion_avg - 0.42) * 2.5, -3.0, 3.0),
+                "safety": _clamp((completion_avg - 0.40) * 2.0, -2.5, 2.5),
+                "social": _clamp((completion_avg - 0.45) * 2.8 - leakage_factor * 0.5, -3.5, 3.5),
             }
         ]
 
+        # --- Over-delivery bonuses ---
         summary = (
             f"{policy.name}: delivered {completion_ratio_avg*100:.1f}% of announced targets; "
             f"implementation gap {implementation_gap*100:.1f}%, leakage risk {leakage_factor*100:.1f}%."
         )
+        if completion_ratio_avg > 0.85:
+            over_delivery_bonus = (completion_ratio_avg - 0.85) * 1.5
+            for effect in sentiment_effects:
+                for pillar in ("wealth", "health", "safety", "social"):
+                    if pillar in effect:
+                        effect[pillar] = _clamp(effect[pillar] + over_delivery_bonus, -4.0, 5.0)
+            summary += " Exceeded expectations \u2014 citizen confidence boosted."
+
+        # --- Integrity drag from bureaucracy ---
+        integrity_drag = _clamp((1.0 - bureaucracy.integrity) * 0.3 + city_drag, 0.0, 1.0)
+
         return DeliverySimulationResult(
             execution_score=execution_score,
             competence_factor=competence_factor,
-            integrity_drag=corruption_drag + tension_drag,
+            integrity_drag=integrity_drag,
             implementation_gap=implementation_gap,
             budget_required=budget_required,
             budget_spent=budget_spent,

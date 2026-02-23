@@ -286,7 +286,7 @@ export default function App() {
                 turn: messageTurn,
                 phase: 'Initial Public Reception',
                 label: '👥 Agent Impact Assessed',
-                name: `${s.agent_count_evaluated} agents evaluated · avg happiness ${s.avg_happiness_delta >= 0 ? '+' : ''}${s.avg_happiness_delta.toFixed(2)}`,
+                name: `${s.agent_count_evaluated} agents evaluated · avg wealth ${s.avg_wealth_delta >= 0 ? '+' : ''}${s.avg_wealth_delta.toFixed(2)}`,
                 why: `LLM panels: ${s.llm_panel_count} (${(s.llm_panel_coverage_ratio * 100).toFixed(0)}% coverage)`,
                 meta: `Dominant fronts: ${(s.dominant_fronts ?? []).join(', ') || 'none'}`,
               },

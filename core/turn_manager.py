@@ -119,35 +119,36 @@ class TurnManager:
             or self._mayor_lost_election()
         )
 
-    def _apply_public_trust_feedback(self, triggered_events_count: int) -> float:
+    def _apply_citizen_satisfaction_feedback(self, triggered_events_count: int) -> float:
         stats = self.game_state.city_stats
-        service_signal = (
-            (stats.economy - 50.0)
-            + (stats.employment - 50.0)
-            + (stats.infrastructure - 50.0)
-        ) / 3.0
-        stability_signal = (
-            (stats.law_and_order - 50.0)
-            + (50.0 - stats.social_tension)
-        ) / 2.0
-        integrity_signal = 50.0 - stats.corruption
+        pillar_scores = stats.pillar_scores()
+
+        wealth_signal = (pillar_scores.get("wealth", 50) - 50.0) / 50.0
+        health_signal = (pillar_scores.get("health", 50) - 50.0) / 50.0
+        safety_signal = (pillar_scores.get("safety", 50) - 50.0) / 50.0
+        social_signal = (pillar_scores.get("social", 50) - 50.0) / 50.0
 
         feedback = (
-            service_signal * 0.03
-            + stability_signal * 0.035
-            + integrity_signal * 0.04
+            wealth_signal * 0.03
+            + health_signal * 0.025
+            + safety_signal * 0.035
+            + social_signal * 0.03
         )
 
         feedback -= triggered_events_count * 0.35
-        feedback -= max(0.0, stats.social_tension - 70.0) * 0.03
-        feedback -= max(0.0, stats.corruption - 70.0) * 0.03
 
-        if triggered_events_count == 0 and stats.social_tension < 55.0:
+        if triggered_events_count == 0 and all(v >= 45.0 for v in pillar_scores.values()):
             feedback += 0.4
 
         feedback = _clamp(feedback, -2.5, 2.5)
+        # Apply small feedback across sub-metrics based on citizen satisfaction
         if abs(feedback) >= 0.05:
-            self.game_state.city_stats.apply_delta({"public_trust": feedback})
+            deltas = {
+                "media_access": feedback * 0.5,
+                "park_density": feedback * 0.3,
+                "connectivity": feedback * 0.2,
+            }
+            self.game_state.city_stats.apply_delta(deltas)
         return feedback
 
     def _run_agent_impact_pass(
@@ -281,7 +282,7 @@ class TurnManager:
                 ),
                 "target_groups": target_groups,
                 "campaign_boost": 0.04,
-                "effects": {"public_trust": 1.2, "social_tension": -0.5},
+                "effects": {"media_access": 1.2, "connectivity": 0.5},
                 "risk": "Backfires if next-turn delivery misses posted milestones.",
                 "reacts_to": allegation,
                 "attack_front": primary_front,
@@ -295,7 +296,7 @@ class TurnManager:
                 ),
                 "target_groups": target_groups,
                 "campaign_boost": 0.03,
-                "effects": {"public_trust": 0.8, "social_tension": -1.0, "law_and_order": 0.4},
+                "effects": {"media_access": 0.8, "park_density": 0.5, "police_coverage": 0.4},
                 "risk": "Can be framed as rhetoric if relief is not visible quickly.",
                 "reacts_to": allegation,
                 "attack_front": primary_front,
@@ -309,7 +310,7 @@ class TurnManager:
                 ),
                 "target_groups": target_groups,
                 "campaign_boost": 0.02,
-                "effects": {"corruption": -1.0, "public_trust": 0.6, "social_tension": 0.2},
+                "effects": {"media_access": 0.6, "police_coverage": 0.4},
                 "risk": "Raises expectations and gives opposition a checklist to attack.",
                 "reacts_to": allegation,
                 "attack_front": primary_front,
@@ -367,25 +368,26 @@ class TurnManager:
     ) -> tuple[float, float]:
         previous_mayor = float(self.game_state.mayor_popularity)
         if self._uses_delivery_simulation() and self.game_state.agents:
-            alignment_avg = self.game_state.average_agent_field("alignment")
-            alignment_vote = (alignment_avg + 100.0) / 2.0
-            trust_vote = (
-                post_stats.get("public_trust", 50.0) * 0.55
-                + (100.0 - post_stats.get("corruption", 50.0)) * 0.45
-            )
-            mayor_target = _clamp(alignment_vote * 0.78 + trust_vote * 0.22, 0.0, 100.0)
+            avg_satisfaction = sum(
+                a.overall_satisfaction() * a.population_weight for a in self.game_state.agents
+            ) / max(sum(a.population_weight for a in self.game_state.agents), 1e-9)
+            satisfaction_vote = avg_satisfaction
+            mayor_target = _clamp(satisfaction_vote, 0.0, 100.0)
             mayor_target = _clamp(mayor_target, previous_mayor - 8.0, previous_mayor + 8.0)
             mayor_smooth = _clamp(previous_mayor * 0.55 + mayor_target * 0.45, 0.0, 100.0)
             return mayor_smooth, 100.0 - mayor_smooth
 
-        service_delta = (
-            (post_stats.get("employment", 50.0) - pre_stats.get("employment", 50.0))
-            + (post_stats.get("infrastructure", 50.0) - pre_stats.get("infrastructure", 50.0))
-            + (post_stats.get("economy", 50.0) - pre_stats.get("economy", 50.0))
+        wealth_delta = (
+            (post_stats.get("employment_rate", 50.0) - pre_stats.get("employment_rate", 50.0))
+            + (post_stats.get("avg_wage", 50.0) - pre_stats.get("avg_wage", 50.0))
+            + (post_stats.get("treasury_balance", 50.0) - pre_stats.get("treasury_balance", 50.0))
         ) / 3.0
-        trust_delta = post_stats.get("public_trust", 50.0) - pre_stats.get("public_trust", 50.0)
-        tension_relief = pre_stats.get("social_tension", 50.0) - post_stats.get("social_tension", 50.0)
-        delivery_bonus = _clamp(service_delta * 0.22 + trust_delta * 0.35 + tension_relief * 0.24, -3.2, 3.2)
+        safety_delta = (
+            (post_stats.get("police_coverage", 50.0) - pre_stats.get("police_coverage", 50.0))
+            + (pre_stats.get("recidivism_rate", 50.0) - post_stats.get("recidivism_rate", 50.0))
+        ) / 2.0
+        social_delta = post_stats.get("media_access", 50.0) - pre_stats.get("media_access", 50.0)
+        delivery_bonus = _clamp(wealth_delta * 0.22 + safety_delta * 0.35 + social_delta * 0.24, -3.2, 3.2)
 
         mayor_target = mayor_pop + delivery_bonus
         opposition_target = opposition_pop - delivery_bonus
@@ -468,8 +470,9 @@ class TurnManager:
         )
 
         # ── Agent updates ───────────────────────────────────────────────────
-        avg_rad = self.game_state.average_agent_field("radicalization")
-        rumor_chance = self.media_engine.rumor_spread_chance(self.game_state.media_state, avg_rad)
+        avg_satisfaction = self.game_state.average_agent_field("safety")
+        avg_discontent = max(0.0, 100.0 - avg_satisfaction)
+        rumor_chance = self.media_engine.rumor_spread_chance(self.game_state.media_state, avg_discontent)
         rumor_pressure = rumor_chance
         if self.game_state.rng.random() > rumor_chance:
             rumor_pressure *= 0.35
@@ -537,10 +540,10 @@ class TurnManager:
         for dr in debate_results:
             for agent in self.game_state.agents:
                 if agent.group_id == dr.group_id:
-                    agent.alignment += dr.alignment_delta
-                    agent.happiness += dr.happiness_delta
-                    agent.radicalization += dr.radicalization_delta
-                    agent.trust_in_government += dr.trust_delta
+                    agent.wealth += dr.wealth_delta
+                    agent.health += dr.health_delta
+                    agent.safety += dr.safety_delta
+                    agent.social += dr.social_delta
                     agent.clamp_state()
 
         street_chatter = self.citizen_debates.generate_street_chatter(
@@ -550,7 +553,7 @@ class TurnManager:
             all_triggered,
         )
 
-        self._apply_public_trust_feedback(len(all_triggered))
+        self._apply_citizen_satisfaction_feedback(len(all_triggered))
 
         media_cards = self.media_engine.build_narrative_cards(
             mayor_action=mayor_policy,
@@ -774,8 +777,9 @@ class TurnManager:
             opp_resolution.media_effects,
             {},
         )
-        avg_rad = self.game_state.average_agent_field("radicalization")
-        rumor_chance = self.media_engine.rumor_spread_chance(self.game_state.media_state, avg_rad)
+        avg_satisfaction = self.game_state.average_agent_field("safety")
+        avg_discontent = max(0.0, 100.0 - avg_satisfaction)
+        rumor_chance = self.media_engine.rumor_spread_chance(self.game_state.media_state, avg_discontent)
         rumor_pressure = rumor_chance
         if self.game_state.rng.random() > rumor_chance:
             rumor_pressure *= 0.35
@@ -801,6 +805,10 @@ class TurnManager:
             yield {"type": "error", "message": f"Turn aborted: {exc}"}
             return
         yield {"type": "agent_impact_assessed", "summary": agent_impact}
+
+        # ── Cascade step A: city pillars → citizen pillars ────────────────────
+        self.agent_engine.recalculate_citizen_pillars(self.game_state)
+
         if agent_impact.get("top_cohorts"):
             yield {
                 "type": "cohort_shift_aggregated",
@@ -884,15 +892,19 @@ class TurnManager:
             debate_results.append(dr)
             for agent in self.game_state.agents:
                 if agent.group_id == dr.group_id:
-                    agent.alignment += dr.alignment_delta
-                    agent.happiness += dr.happiness_delta
-                    agent.radicalization += dr.radicalization_delta
-                    agent.trust_in_government += dr.trust_delta
+                    agent.wealth += dr.wealth_delta
+                    agent.health += dr.health_delta
+                    agent.safety += dr.safety_delta
+                    agent.social += dr.social_delta
                     agent.clamp_state()
             chatter_lines.append(f"{dr.group_name}: {dr.debate_summary}")
             yield {"type": "debate", "debate": dr.to_dict()}
 
-        self._apply_public_trust_feedback(len(all_triggered))
+        self._apply_citizen_satisfaction_feedback(len(all_triggered))
+
+        # ── Cascade step B: citizen pillars → city sub-metrics ────────────────
+        self.agent_engine.apply_citizen_feedback(self.game_state)
+
         street_chatter = self.citizen_debates.generate_street_chatter(
             self.game_state,
             mayor_policy,
@@ -1154,10 +1166,11 @@ class TurnManager:
         print("  Major Stat Changes: " + (", ".join(stat_changes) if stat_changes else "none"))
         print(f"  Rumor Pressure: {rumor_pressure:.3f}")
         print(
-            "  Agent Impact: Δh {0:+.3f}, Δr {1:+.3f}, Δa {2:+.3f} | fronts: {3}".format(
-                float(agent_impact.get("avg_happiness_delta", 0.0)),
-                float(agent_impact.get("avg_radicalization_delta", 0.0)),
-                float(agent_impact.get("avg_alignment_delta", 0.0)),
+            "  Agent Impact: Δw {0:+.3f}, Δh {1:+.3f}, Δs {2:+.3f}, Δso {3:+.3f} | fronts: {4}".format(
+                float(agent_impact.get("avg_wealth_delta", 0.0)),
+                float(agent_impact.get("avg_health_delta", 0.0)),
+                float(agent_impact.get("avg_safety_delta", 0.0)),
+                float(agent_impact.get("avg_social_delta", 0.0)),
                 ", ".join(agent_impact.get("dominant_fronts", [])) or "none",
             )
         )
@@ -1184,9 +1197,10 @@ class TurnManager:
             )
         )
         print(
-            "  Final Averages: Happiness {0:.2f}, Radicalization {1:.2f}, Alignment {2:.2f}".format(
-                self.game_state.average_agent_field("happiness"),
-                self.game_state.average_agent_field("radicalization"),
-                self.game_state.average_agent_field("alignment"),
+            "  Final Averages: Wealth {0:.2f}, Health {1:.2f}, Safety {2:.2f}, Social {3:.2f}".format(
+                self.game_state.average_agent_field("wealth"),
+                self.game_state.average_agent_field("health"),
+                self.game_state.average_agent_field("safety"),
+                self.game_state.average_agent_field("social"),
             )
         )
