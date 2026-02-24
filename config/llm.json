@@ -1,8 +1,0 @@
-{
-  "provider": "anthropic",
-  "model": "claude-3-5-sonnet-latest",
-  "timeout_seconds": 20,
-  "max_retries": 2,
-  "temperature": 0.2,
-  "max_tokens": 600
-}
