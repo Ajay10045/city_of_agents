@@ -1,15 +1,26 @@
-import { useState, useEffect } from 'react'
-import { Users, ChevronRight, Loader2, Star, Shield, Briefcase, AlertTriangle, Check } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { Loader2, AlertTriangle, Check, ChevronRight, X, Briefcase, GripVertical } from 'lucide-react'
 import { getMinisterCandidates, assignCabinet } from '../api'
 import type { Citizen, GameState } from '../types'
 
+// ── Portfolios ─────────────────────────────────────────────────────────────────
+
 const PORTFOLIOS = [
-  'Infrastructure',
-  'Health & Education',
-  'Finance & Economy',
-  'Home Affairs',
-  'Housing & Community',
+  { id: 'Health',             color: '#22c55e', bg: 'rgba(34,197,94,0.18)',   border: '#14532d',  icon: '🏥' },
+  { id: 'Education',          color: '#a78bfa', bg: 'rgba(167,139,250,0.18)', border: '#4c1d95',  icon: '🎓' },
+  { id: 'Infrastructure',     color: '#38bdf8', bg: 'rgba(56,189,248,0.18)',  border: '#0c4a6e',  icon: '🏗' },
+  { id: 'Transport & Roads',  color: '#60a5fa', bg: 'rgba(96,165,250,0.18)',  border: '#1e3a8a',  icon: '🛣' },
+  { id: 'Security & Law',     color: '#f87171', bg: 'rgba(248,113,113,0.18)', border: '#7f1d1d',  icon: '⚖' },
+  { id: 'Environment',        color: '#4ade80', bg: 'rgba(74,222,128,0.18)',  border: '#14532d',  icon: '🌿' },
+  { id: 'Housing',            color: '#fb923c', bg: 'rgba(251,146,60,0.18)',  border: '#7c2d12',  icon: '🏘' },
+  { id: 'Water & Power',      color: '#22d3ee', bg: 'rgba(34,211,238,0.18)',  border: '#164e63',  icon: '⚡' },
+  { id: 'Commerce',           color: '#fbbf24', bg: 'rgba(251,191,36,0.18)',  border: '#78350f',  icon: '💼' },
+  { id: 'Labor & Employment', color: '#94a3b8', bg: 'rgba(148,163,184,0.18)', border: '#334155',  icon: '👷' },
 ]
+
+interface PortfolioInfo { id: string; color: string; bg: string; border: string; icon: string }
+
+// ── Props ──────────────────────────────────────────────────────────────────────
 
 interface Props {
   gameId: string
@@ -17,112 +28,70 @@ interface Props {
   onCabinetFormed: (state: GameState) => void
 }
 
-interface Assignment {
-  portfolio: string
-  citizen: Citizen | null
+interface MinisterSelection {
+  citizen: Citizen
+  portfolios: string[]   // primary + extras
 }
 
-function StatBar({ value, color = 'indigo' }: { value: number; color?: string }) {
-  const colors: Record<string, string> = {
-    green: 'bg-emerald-500',
-    amber: 'bg-amber-500',
-    red: 'bg-red-500',
-    indigo: 'bg-indigo-500',
-    purple: 'bg-purple-500',
-  }
-  const bar = colors[color] ?? colors.indigo
+// ── Avatar ─────────────────────────────────────────────────────────────────────
+
+function CandidateAvatar({ name, size = 64, borderColor = '#1c3652' }: { name: string; size?: number; borderColor?: string }) {
   return (
-    <div className="h-1 bg-[#0f1117] rounded-full overflow-hidden w-full">
-      <div className={`h-full rounded-full ${bar}`} style={{ width: `${value}%` }} />
+    <img
+      src={`https://api.dicebear.com/7.x/personas/svg?seed=${encodeURIComponent(name)}&backgroundColor=1e3a5f,0f2942,1a2f4a,0d2137`}
+      alt={name}
+      style={{ width: size, height: size, borderRadius: '50%', border: `2px solid ${borderColor}`,
+        background: '#0b1929', objectFit: 'cover', flexShrink: 0, display: 'block' }}
+    />
+  )
+}
+
+// ── StatBar ────────────────────────────────────────────────────────────────────
+
+function StatBar({ label, value }: { label: string; value: number }) {
+  const pct = Math.max(0, Math.min(100, value))
+  const color = pct >= 70 ? '#22c55e' : pct >= 45 ? '#e8a030' : '#f87171'
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+        <span style={{ fontSize: 9, color: '#64748b', fontFamily: "'Rajdhani', sans-serif",
+          letterSpacing: '0.06em', fontWeight: 600 }}>{label.toUpperCase()}</span>
+        <span style={{ fontSize: 10, fontFamily: "'Share Tech Mono', monospace", color, fontWeight: 700 }}>
+          {Math.round(pct)}
+        </span>
+      </div>
+      <div style={{ height: 3, background: 'rgba(10,26,48,0.8)', borderRadius: 2, overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: `${pct}%`, background: `linear-gradient(90deg, ${color}88, ${color})`,
+          borderRadius: 2, boxShadow: `0 0 6px ${color}66`, transition: 'width 0.4s ease' }} />
+      </div>
     </div>
   )
 }
 
-function CandidateCard({
-  citizen,
-  selected,
-  assignedTo,
-  onSelect,
-}: {
-  citizen: Citizen
-  selected: boolean
-  assignedTo: string | null
-  onSelect: () => void
-}) {
-  const cap = citizen.capability
-  const per = citizen.personality
-  const comp = cap.competence ?? 50
-  const loyalty = per.integrity ?? 50
-  const ambition = per.ambition ?? 50
+// ── CityParamRow ──────────────────────────────────────────────────────────────
 
+function CityParamRow({ label, value, accent }: { label: string; value: number; accent: string }) {
+  const pct = Math.max(0, Math.min(100, value))
+  const col = pct >= 65 ? '#22c55e' : pct >= 40 ? accent : '#f87171'
   return (
-    <button
-      onClick={onSelect}
-      className={`w-full text-left p-4 rounded-xl border transition-all ${
-        selected
-          ? 'border-indigo-500 bg-indigo-500/10'
-          : assignedTo
-          ? 'border-[#2a2d3a] bg-[#1a1d26]/50 opacity-50 cursor-not-allowed'
-          : 'border-[#2a2d3a] bg-[#1a1d26] hover:border-indigo-500/40 hover:bg-[#22263a]'
-      }`}
-      disabled={!!assignedTo && !selected}
-    >
-      <div className="flex items-start justify-between mb-2">
-        <div>
-          <p className="text-white font-semibold text-sm">{citizen.name}</p>
-          <p className="text-slate-400 text-xs mt-0.5">
-            {citizen.demographics.profession} · {citizen.demographics.location}
-          </p>
-        </div>
-        {assignedTo && (
-          <span className="text-xs bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded-full">
-            {assignedTo}
-          </span>
-        )}
-        {selected && (
-          <div className="w-5 h-5 bg-indigo-500 rounded-full flex items-center justify-center">
-            <Check className="w-3 h-3 text-white" />
-          </div>
-        )}
-      </div>
-
-      {/* Ideology tags */}
-      <div className="flex gap-1.5 mb-3">
-        <span className="text-xs px-1.5 py-0.5 rounded bg-slate-700/60 text-slate-300">
-          {citizen.demographics.ideology_economic}
-        </span>
-        <span className="text-xs px-1.5 py-0.5 rounded bg-slate-700/60 text-slate-300">
-          {citizen.demographics.ideology_social}
+    <div style={{ marginBottom: 5 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
+        <span style={{ fontSize: 9, color: '#64748b', fontFamily: "'Rajdhani', sans-serif",
+          letterSpacing: '0.04em' }}>{label}</span>
+        <span style={{ fontSize: 9, fontFamily: "'Share Tech Mono', monospace", color: col, fontWeight: 700 }}>
+          {Math.round(pct)}
         </span>
       </div>
-
-      {/* Stats */}
-      <div className="space-y-1.5">
-        <div>
-          <div className="flex justify-between text-xs mb-0.5">
-            <span className="text-slate-400 flex items-center gap-1"><Star className="w-3 h-3" />Competence</span>
-            <span className="text-slate-300">{Math.round(comp)}</span>
-          </div>
-          <StatBar value={comp} color={comp >= 65 ? 'green' : comp >= 45 ? 'amber' : 'red'} />
-        </div>
-        <div>
-          <div className="flex justify-between text-xs mb-0.5">
-            <span className="text-slate-400 flex items-center gap-1"><Shield className="w-3 h-3" />Integrity</span>
-            <span className="text-slate-300">{Math.round(loyalty)}</span>
-          </div>
-          <StatBar value={loyalty} color={loyalty >= 65 ? 'green' : loyalty >= 45 ? 'amber' : 'red'} />
-        </div>
-        <div>
-          <div className="flex justify-between text-xs mb-0.5">
-            <span className="text-slate-400 flex items-center gap-1"><Briefcase className="w-3 h-3" />Ambition</span>
-            <span className="text-slate-300">{Math.round(ambition)}</span>
-          </div>
-          <StatBar value={ambition} color="purple" />
-        </div>
+      <div style={{ height: 3, background: 'rgba(10,26,48,0.8)', borderRadius: 2, overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: `${pct}%`,
+          background: `linear-gradient(90deg, ${col}88, ${col})`,
+          borderRadius: 2, transition: 'width 0.4s ease' }} />
       </div>
-    </button>
+    </div>
   )
 }
+
+// ── Main Screen ───────────────────────────────────────────────────────────────
 
 export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props) {
   const [candidates, setCandidates] = useState<Citizen[]>([])
@@ -130,67 +99,118 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // assignments[portfolioIndex] = selected citizen | null
-  const [assignments, setAssignments] = useState<Assignment[]>(
-    PORTFOLIOS.map(p => ({ portfolio: p, citizen: null }))
-  )
-  const [activeSlot, setActiveSlot] = useState<number>(0)
+  // Candidate currently at the desk
+  const [interviewee, setInterviewee] = useState<Citizen | null>(null)
+  // Confirmed cabinet — each minister holds 1+ portfolios
+  const [cabinet, setCabinet] = useState<MinisterSelection[]>([])
+  // Portfolios selected in the desk grid (multi-select)
+  const [selectedPortfolios, setSelectedPortfolios] = useState<Set<string>>(new Set())
+
+  // Drag & drop state
+  const [draggingPortfolio, setDraggingPortfolio] = useState<string | null>(null)
+  const [dragOverMinisterId, setDragOverMinisterId] = useState<string | null>(null)
+  const dragPortfolioRef = useRef<string | null>(null)
 
   useEffect(() => {
     getMinisterCandidates(gameId)
-      .then(res => {
-        setCandidates(res.candidates)
-        setLoading(false)
-      })
-      .catch(e => {
-        setError(String(e))
-        setLoading(false)
-      })
+      .then(res => { setCandidates(res.candidates); setLoading(false) })
+      .catch(e => { setError(String(e)); setLoading(false) })
   }, [gameId])
 
-  function getAssignedPortfolio(citizenId: string): string | null {
-    const slot = assignments.find(a => a.citizen?.id === citizenId)
-    return slot?.portfolio ?? null
+  // Top 12 candidates, filter out those already in cabinet
+  const cabinetIds = new Set(cabinet.map(m => m.citizen.id))
+  const waitingCandidates = candidates
+    .filter(c => !cabinetIds.has(c.id))
+    .slice(0, 12)
+
+  const assignedPortfolios = new Set(cabinet.flatMap(m => m.portfolios))
+  const unassignedPortfolios = PORTFOLIOS.filter(p => !assignedPortfolios.has(p.id))
+  const allAssigned = unassignedPortfolios.length === 0 && cabinet.length > 0
+
+  function handleCallToDesk(c: Citizen) {
+    setInterviewee(c)
+    setSelectedPortfolios(new Set())
   }
 
-  function selectCandidate(citizen: Citizen) {
-    const alreadyAssigned = getAssignedPortfolio(citizen.id)
-    if (alreadyAssigned) return // can't pick someone already assigned elsewhere
+  function togglePortfolio(pid: string) {
+    setSelectedPortfolios(prev => {
+      const next = new Set(prev)
+      if (next.has(pid)) next.delete(pid)
+      else next.add(pid)
+      return next
+    })
+  }
 
-    setAssignments(prev => prev.map((a, i) =>
-      i === activeSlot ? { ...a, citizen } : a
+  function handleAppoint() {
+    if (!interviewee || selectedPortfolios.size === 0) return
+    const portfolioList = Array.from(selectedPortfolios)
+    setCabinet(prev => [...prev, { citizen: interviewee, portfolios: portfolioList }])
+    setInterviewee(null)
+    setSelectedPortfolios(new Set())
+  }
+
+  function handleDismissFromCabinet(citizenId: string) {
+    setCabinet(prev => prev.filter(m => m.citizen.id !== citizenId))
+    if (interviewee?.id === citizenId) {
+      setInterviewee(null)
+      setSelectedPortfolios(new Set())
+    }
+  }
+
+  // Drag portfolio badge onto minister chip
+  function handleDragStart(portfolioId: string) {
+    dragPortfolioRef.current = portfolioId
+    setDraggingPortfolio(portfolioId)
+  }
+
+  function handleDragEnd() {
+    setDraggingPortfolio(null)
+    setDragOverMinisterId(null)
+    dragPortfolioRef.current = null
+  }
+
+  function handleDropOnMinister(ministerId: string) {
+    const pid = dragPortfolioRef.current
+    if (!pid) return
+    setCabinet(prev => prev.map(m =>
+      m.citizen.id === ministerId && !m.portfolios.includes(pid)
+        ? { ...m, portfolios: [...m.portfolios, pid] }
+        : m
     ))
-    // Move to next empty slot
-    const nextEmpty = assignments.findIndex((a, i) => i !== activeSlot && !a.citizen)
-    if (nextEmpty !== -1) setActiveSlot(nextEmpty)
+    setDraggingPortfolio(null)
+    setDragOverMinisterId(null)
+    dragPortfolioRef.current = null
   }
 
-  function clearSlot(idx: number) {
-    setAssignments(prev => prev.map((a, i) => i === idx ? { ...a, citizen: null } : a))
-    setActiveSlot(idx)
+  function removePortfolioFromMinister(ministerId: string, portfolioId: string) {
+    setCabinet(prev => prev.map(m => {
+      if (m.citizen.id !== ministerId) return m
+      const next = m.portfolios.filter(p => p !== portfolioId)
+      // If removing last portfolio, remove the minister entirely
+      return next.length > 0 ? { ...m, portfolios: next } : m
+    }).filter(m => m.portfolios.length > 0))
   }
 
-  const allFilled = assignments.every(a => a.citizen !== null)
-
-  async function handleConfirm() {
-    if (!allFilled) return
+  async function handleBeginGovernance() {
+    if (!allAssigned || submitting) return
     setSubmitting(true)
     setError(null)
     try {
-      const assignmentPayload = assignments.map(a => ({
-        citizen_id: a.citizen!.id,
-        portfolio: a.portfolio,
-      }))
-      await assignCabinet(gameId, assignmentPayload)
-      // Get updated state
-      const updatedState = { ...state, ministers: assignments.map(a => ({
-        ...a.citizen!,
-        portfolio: a.portfolio,
-        extra_portfolios: [],
-        loyalty: 65,
-        scandal_exposure: 0,
-        political_capital: 50,
-      })) } as GameState
+      const payload = cabinet.flatMap(m =>
+        m.portfolios.map(p => ({ citizen_id: m.citizen.id, portfolio: p }))
+      )
+      await assignCabinet(gameId, payload)
+      const updatedState = {
+        ...state,
+        ministers: cabinet.map(m => ({
+          ...m.citizen,
+          portfolio: m.portfolios[0],
+          extra_portfolios: m.portfolios.slice(1),
+          loyalty: 65,
+          scandal_exposure: 0,
+          political_capital: 50,
+        })),
+      } as GameState
       onCabinetFormed(updatedState)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e))
@@ -200,114 +220,571 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#0f1117] flex items-center justify-center">
-        <div className="text-center">
-          <Loader2 className="w-8 h-8 animate-spin text-indigo-400 mx-auto mb-3" />
-          <p className="text-slate-400">Finding cabinet candidates…</p>
-        </div>
+      <div style={{ minHeight: '100vh', background: '#050d1b', display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center', gap: 16 }}>
+        <Loader2 style={{ width: 36, height: 36, color: '#e8a030' }} className="animate-spin" />
+        <div style={{ fontFamily: "'Rajdhani', sans-serif", fontSize: 13, color: '#4b6280',
+          letterSpacing: '0.2em' }}>SUMMONING CANDIDATES...</div>
       </div>
     )
   }
 
+  const p = interviewee?.personality as Record<string, number> | undefined
+  const cap = interviewee?.capability as Record<string, number> | undefined
+
   return (
-    <div className="min-h-screen bg-[#0f1117] flex flex-col">
-      {/* Header */}
-      <div className="border-b border-[#2a2d3a] bg-[#1a1d26] px-6 py-4">
-        <div className="max-w-6xl mx-auto flex items-center justify-between">
+    <div style={{
+      height: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column',
+      fontFamily: "'Inter', 'Segoe UI', sans-serif", color: '#fff',
+      background: 'radial-gradient(ellipse at 50% 0%, #0d1f36 0%, #071018 50%, #050d1b 100%)',
+      position: 'relative',
+    }}>
+
+
+      {/* ── TOP BAR ──────────────────────────────────────────────────────────── */}
+      <div style={{ position: 'relative', zIndex: 10, height: 52, display: 'flex', alignItems: 'center',
+        gap: 16, padding: '0 24px',
+        background: 'linear-gradient(90deg, #071320 0%, #0a1828 40%, #071320 100%)',
+        borderBottom: '1px solid #1c3652', boxShadow: '0 2px 20px rgba(0,0,0,0.5)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ width: 32, height: 32, borderRadius: '50%', display: 'flex', alignItems: 'center',
+            justifyContent: 'center', fontSize: 16, flexShrink: 0,
+            background: 'linear-gradient(135deg, #b45309 0%, #d97706 50%, #92400e 100%)',
+            boxShadow: '0 0 12px rgba(217,119,6,0.5)', border: '1.5px solid #f59e0b' }}>🏛</div>
           <div>
-            <div className="flex items-center gap-2 mb-0.5">
-              <Users className="w-4 h-4 text-indigo-400" />
-              <span className="text-indigo-300 text-sm font-medium">Cabinet Formation</span>
-            </div>
-            <h1 className="text-xl font-bold text-white">{state.city_name}</h1>
+            <div style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 14,
+              color: '#f0c040', letterSpacing: '0.06em' }}>City of {state.city_name}</div>
+            <div style={{ fontSize: 10, color: '#4b6280', fontFamily: "'Share Tech Mono', monospace",
+              letterSpacing: '0.1em' }}>CABINET FORMATION · MAYORAL OFFICE</div>
           </div>
-          <div className="text-right">
-            <p className="text-slate-400 text-xs">Slots filled</p>
-            <p className="text-white font-bold">{assignments.filter(a => a.citizen).length} / {PORTFOLIOS.length}</p>
+        </div>
+
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ width: 6, height: 6, borderRadius: '50%',
+              background: cabinet.length > 0 ? '#22c55e' : '#334155',
+              boxShadow: cabinet.length > 0 ? '0 0 6px #22c55e' : 'none' }} />
+            <span style={{ fontSize: 11, fontFamily: "'Share Tech Mono', monospace",
+              color: cabinet.length > 0 ? '#22c55e' : '#4b6280' }}>
+              {cabinet.length} APPOINTED
+            </span>
+          </div>
+          <div style={{ width: 1, height: 20, background: '#1c3652' }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ width: 6, height: 6, borderRadius: '50%',
+              background: unassignedPortfolios.length === 0 && cabinet.length > 0 ? '#22c55e' : '#e8a030',
+              boxShadow: unassignedPortfolios.length === 0 && cabinet.length > 0 ? '0 0 6px #22c55e' : '0 0 6px #e8a030' }} />
+            <span style={{ fontSize: 11, fontFamily: "'Share Tech Mono', monospace",
+              color: unassignedPortfolios.length === 0 && cabinet.length > 0 ? '#22c55e' : '#e8a030' }}>
+              {unassignedPortfolios.length} PORTFOLIOS LEFT
+            </span>
           </div>
         </div>
       </div>
 
-      <div className="flex-1 max-w-6xl mx-auto w-full p-6 flex gap-6">
-        {/* Left: Portfolio slots */}
-        <div className="w-72 shrink-0">
-          <p className="text-slate-400 text-xs font-medium uppercase tracking-wider mb-3">Portfolios</p>
-          <div className="space-y-2">
-            {assignments.map((a, idx) => (
-              <button
-                key={a.portfolio}
-                onClick={() => setActiveSlot(idx)}
-                className={`w-full text-left p-3 rounded-xl border transition-all ${
-                  activeSlot === idx
-                    ? 'border-indigo-500 bg-indigo-500/10'
-                    : 'border-[#2a2d3a] bg-[#1a1d26] hover:border-[#3a3d4a]'
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-white text-sm font-medium">{a.portfolio}</p>
-                    {a.citizen ? (
-                      <p className="text-indigo-300 text-xs mt-0.5">{a.citizen.name}</p>
-                    ) : (
-                      <p className="text-slate-500 text-xs mt-0.5 italic">Empty — select below</p>
-                    )}
-                  </div>
-                  {a.citizen && (
-                    <button
-                      onClick={e => { e.stopPropagation(); clearSlot(idx) }}
-                      className="text-slate-500 hover:text-red-400 text-xs transition-colors"
-                    >
-                      ✕
+      {/* ── CABINET STRIP ─────────────────────────────────────────────────────── */}
+      {(cabinet.length > 0 || unassignedPortfolios.length > 0) && (
+        <div style={{ position: 'relative', zIndex: 5, flexShrink: 0, padding: '8px 16px',
+          background: 'linear-gradient(90deg, rgba(7,19,32,0.98), rgba(10,24,40,0.98))',
+          borderBottom: '1px solid rgba(232,160,48,0.15)',
+          boxShadow: '0 4px 24px rgba(0,0,0,0.4)' }}>
+
+          {/* Minister chips row */}
+          {cabinet.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, overflowX: 'auto',
+              paddingBottom: 6, marginBottom: 6, borderBottom: '1px solid rgba(28,54,82,0.4)' }}>
+              <span style={{ fontFamily: "'Rajdhani', sans-serif", fontSize: 9, fontWeight: 700,
+                color: '#4b6280', letterSpacing: '0.2em', whiteSpace: 'nowrap', flexShrink: 0 }}>CABINET ·</span>
+              {cabinet.map(m => {
+                const isOver = dragOverMinisterId === m.citizen.id
+                return (
+                  <div key={m.citizen.id}
+                    onDragOver={e => { e.preventDefault(); setDragOverMinisterId(m.citizen.id) }}
+                    onDragLeave={() => setDragOverMinisterId(null)}
+                    onDrop={() => handleDropOnMinister(m.citizen.id)}
+                    style={{ display: 'flex', alignItems: 'center', gap: 6,
+                      padding: '4px 8px 4px 4px', borderRadius: 20, flexShrink: 0,
+                      background: isOver ? 'rgba(232,160,48,0.15)' : 'rgba(255,255,255,0.04)',
+                      border: isOver ? '1.5px dashed #e8a030' : '1px solid #1c3652',
+                      transition: 'all 0.15s' }}>
+                    <CandidateAvatar name={m.citizen.name} size={26}
+                      borderColor={PORTFOLIOS.find(p => p.id === m.portfolios[0])?.color ?? '#1c3652'} />
+                    <div style={{ lineHeight: 1.1 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap' }}>
+                        {m.citizen.name.split(' ')[0]}
+                      </div>
+                      {/* Portfolio pills */}
+                      <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', marginTop: 2 }}>
+                        {m.portfolios.map(pid => {
+                          const pInfo = PORTFOLIOS.find(p => p.id === pid)
+                          return (
+                            <span key={pid} style={{ fontSize: 8, padding: '0 5px', borderRadius: 8, whiteSpace: 'nowrap',
+                              background: pInfo?.bg ?? 'rgba(255,255,255,0.06)',
+                              border: `1px solid ${pInfo?.border ?? '#1c3652'}`,
+                              color: pInfo?.color ?? '#e8a030',
+                              fontFamily: "'Rajdhani', sans-serif", fontWeight: 700,
+                              display: 'flex', alignItems: 'center', gap: 2, cursor: 'pointer' }}
+                              onClick={() => removePortfolioFromMinister(m.citizen.id, pid)}
+                              title="Click to remove">
+                              {pInfo?.icon} {pid} <span style={{ opacity: 0.5, fontSize: 7 }}>✕</span>
+                            </span>
+                          )
+                        })}
+                      </div>
+                    </div>
+                    <button onClick={() => handleDismissFromCabinet(m.citizen.id)}
+                      style={{ marginLeft: 2, background: 'none', border: 'none', cursor: 'pointer',
+                        color: '#475569', padding: 2, display: 'flex', flexShrink: 0 }}
+                      onMouseEnter={e => (e.currentTarget.style.color = '#f87171')}
+                      onMouseLeave={e => (e.currentTarget.style.color = '#475569')}>
+                      <X size={11} />
                     </button>
-                  )}
+                  </div>
+                )
+              })}
+              {allAssigned && (
+                <button onClick={handleBeginGovernance} disabled={submitting}
+                  style={{ marginLeft: 'auto', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8,
+                    padding: '6px 18px', borderRadius: 20,
+                    background: submitting ? '#1a2a3a' : 'linear-gradient(135deg, #c47d10, #e8a030)',
+                    border: 'none', cursor: submitting ? 'not-allowed' : 'pointer',
+                    fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 12,
+                    letterSpacing: '0.1em', color: submitting ? '#4b6280' : '#040d1b',
+                    boxShadow: submitting ? 'none' : '0 0 20px rgba(232,160,48,0.5)',
+                    whiteSpace: 'nowrap' }}>
+                  {submitting ? <><Loader2 size={13} className="animate-spin" /> FORMING...</> : <>BEGIN GOVERNANCE <ChevronRight size={13} /></>}
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Unassigned portfolio badges (draggable) */}
+          {unassignedPortfolios.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <span style={{ fontFamily: "'Rajdhani', sans-serif", fontSize: 9, fontWeight: 700,
+                color: '#2a4a6a', letterSpacing: '0.15em', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                UNASSIGNED ·
+              </span>
+              {unassignedPortfolios.map(p => (
+                <div key={p.id}
+                  draggable
+                  onDragStart={() => handleDragStart(p.id)}
+                  onDragEnd={handleDragEnd}
+                  style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 9, padding: '3px 8px',
+                    borderRadius: 10, whiteSpace: 'nowrap', cursor: draggingPortfolio === p.id ? 'grabbing' : 'grab',
+                    background: p.bg, border: `1px solid ${p.border}`, color: p.color,
+                    fontFamily: "'Rajdhani', sans-serif", fontWeight: 700,
+                    opacity: draggingPortfolio === p.id ? 0.5 : 1,
+                    transition: 'opacity 0.15s', userSelect: 'none' }}>
+                  <GripVertical size={9} style={{ opacity: 0.5 }} />
+                  {p.icon} {p.id}
                 </div>
-              </button>
-            ))}
-          </div>
-
-          {error && <p className="text-red-400 text-xs mt-3">{error}</p>}
-
-          <button
-            onClick={handleConfirm}
-            disabled={!allFilled || submitting}
-            className="w-full mt-6 flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-600/30 disabled:cursor-not-allowed text-white font-semibold rounded-xl px-4 py-3 transition-colors text-sm"
-          >
-            {submitting ? (
-              <><Loader2 className="w-4 h-4 animate-spin" /> Forming Cabinet…</>
-            ) : (
-              <><ChevronRight className="w-4 h-4" /> Confirm Cabinet</>
-            )}
-          </button>
-
-          {!allFilled && (
-            <div className="mt-3 flex items-start gap-2 text-amber-400/80">
-              <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-              <p className="text-xs">All {PORTFOLIOS.length} portfolios must be filled before proceeding.</p>
+              ))}
+              {cabinet.length > 0 && (
+                <span style={{ fontSize: 9, color: '#2a4a6a', fontStyle: 'italic',
+                  fontFamily: "'Rajdhani', sans-serif', letterSpacing: '0.05em'" }}>
+                  ← drag onto a minister to assign
+                </span>
+              )}
             </div>
           )}
         </div>
+      )}
 
-        {/* Right: Candidates */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-slate-400 text-xs font-medium uppercase tracking-wider">
-              Candidates — selecting for: <span className="text-indigo-300">{assignments[activeSlot].portfolio}</span>
-            </p>
-            <p className="text-slate-500 text-xs">{candidates.length} candidates available</p>
+      {/* ── MAIN 3-COLUMN ────────────────────────────────────────────────────── */}
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative', zIndex: 1 }}>
+
+        {/* ── LEFT: Mayor's Desk ───────────────────────────────────────────── */}
+        <div style={{ width: 340, flexShrink: 0, display: 'flex', flexDirection: 'column',
+          borderRight: '1px solid #1c3652',
+          background: 'linear-gradient(180deg, #071320 0%, #050e1c 100%)' }}>
+
+          <div style={{ padding: '11px 16px 9px', borderBottom: '1px solid #1c3652', flexShrink: 0 }}>
+            <div style={{ fontFamily: "'Rajdhani', sans-serif", fontSize: 10, fontWeight: 700,
+              letterSpacing: '0.2em', color: '#4b6280' }}>CANDIDATE PROFILE</div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            {candidates.map(c => (
-              <CandidateCard
-                key={c.id}
-                citizen={c}
-                selected={assignments[activeSlot].citizen?.id === c.id}
-                assignedTo={getAssignedPortfolio(c.id)}
-                onSelect={() => selectCandidate(c)}
-              />
-            ))}
+
+          <div style={{ flex: 1, overflowY: 'auto' }}>
+            {!interviewee ? (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center',
+                justifyContent: 'center', height: '100%', gap: 12, padding: 32, textAlign: 'center' }}>
+                <div style={{ fontFamily: "'Rajdhani', sans-serif", fontSize: 12, color: '#1c3652',
+                  letterSpacing: '0.12em', lineHeight: 1.8 }}>
+                  SELECT A CANDIDATE<br />FROM THE MIDDLE TO REVIEW<br />THEIR PROFILE
+                </div>
+              </div>
+            ) : (
+              <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+                {/* Candidate identity */}
+                <div style={{ background: 'linear-gradient(180deg, rgba(232,160,48,0.07) 0%, rgba(7,16,28,0.8) 100%)',
+                  border: '1px solid rgba(232,160,48,0.25)', borderRadius: 8, padding: 14 }}>
+                  <div style={{ display: 'flex', gap: 11, alignItems: 'center', marginBottom: 12 }}>
+                    <CandidateAvatar name={interviewee.name} size={60} borderColor="#e8a030" />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 16,
+                        color: '#f0c040', lineHeight: 1.1 }}>{interviewee.name}</div>
+                      <div style={{ fontSize: 10, color: '#64748b', marginTop: 2, fontStyle: 'italic' }}>
+                        {interviewee.demographics.profession}
+                      </div>
+                      <div style={{ fontSize: 9, color: '#4b6280', marginTop: 1 }}>
+                        {interviewee.demographics.age_group}
+                        {interviewee.demographics.location ? ` · ${interviewee.demographics.location}` : ''}
+                      </div>
+                      <div style={{ display: 'flex', gap: 4, marginTop: 4, flexWrap: 'wrap' }}>
+                        {interviewee.demographics.ideology_economic && (
+                          <span style={{ fontSize: 8, padding: '1px 5px', borderRadius: 4,
+                            background: 'rgba(56,189,248,0.1)', border: '1px solid #0c4a6e',
+                            color: '#7dd3fc', fontFamily: "'Rajdhani', sans-serif", fontWeight: 700 }}>
+                            {interviewee.demographics.ideology_economic}
+                          </span>
+                        )}
+                        {interviewee.demographics.ideology_social && (
+                          <span style={{ fontSize: 8, padding: '1px 5px', borderRadius: 4,
+                            background: 'rgba(167,139,250,0.1)', border: '1px solid #4c1d95',
+                            color: '#c4b5fd', fontFamily: "'Rajdhani', sans-serif", fontWeight: 700 }}>
+                            {interviewee.demographics.ideology_social}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ marginBottom: 6, fontFamily: "'Rajdhani', sans-serif", fontSize: 9,
+                    letterSpacing: '0.15em', color: '#2a4a6a', fontWeight: 700 }}>CAPABILITY</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+                    <StatBar label="Competence" value={cap?.competence ?? 50} />
+                    <StatBar label="Managerial Skill" value={cap?.managerial_skill ?? 50} />
+                    <StatBar label="Strategic Thinking" value={cap?.strategic_thinking ?? 50} />
+                    <StatBar label="Crisis Handling" value={cap?.crisis_handling ?? 50} />
+                    <StatBar label="Bureaucratic Nav." value={cap?.bureaucratic_navigation ?? 50} />
+                  </div>
+
+                  <div style={{ marginBottom: 6, fontFamily: "'Rajdhani', sans-serif", fontSize: 9,
+                    letterSpacing: '0.15em', color: '#2a4a6a', fontWeight: 700 }}>PERSONALITY</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <StatBar label="Integrity" value={p?.integrity ?? 50} />
+                    <StatBar label="Ambition" value={p?.ambition ?? 50} />
+                    <StatBar label="Empathy" value={p?.empathy ?? 50} />
+                    <StatBar label="Risk Appetite" value={p?.risk_appetite ?? 50} />
+                  </div>
+                </div>
+
+                {/* Portfolio selection */}
+                <div>
+                  <div style={{ fontFamily: "'Rajdhani', sans-serif", fontSize: 10, fontWeight: 700,
+                    letterSpacing: '0.18em', color: '#4b6280', marginBottom: 7 }}>
+                    ASSIGN PORTFOLIOS
+                    {selectedPortfolios.size > 0 && (
+                      <span style={{ marginLeft: 8, color: '#e8a030' }}>· {selectedPortfolios.size} selected</span>
+                    )}
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+                    {PORTFOLIOS.map((pf: PortfolioInfo) => {
+                      const isAssigned = assignedPortfolios.has(pf.id)
+                      const isSelected = selectedPortfolios.has(pf.id)
+                      return (
+                        <button key={pf.id}
+                          disabled={isAssigned}
+                          onClick={() => togglePortfolio(pf.id)}
+                          style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 8px',
+                            borderRadius: 5, cursor: isAssigned ? 'not-allowed' : 'pointer',
+                            background: isSelected ? pf.bg : isAssigned ? 'rgba(255,255,255,0.02)' : 'rgba(255,255,255,0.03)',
+                            border: isSelected ? `1.5px solid ${pf.color}` : isAssigned ? '1px solid rgba(28,54,82,0.2)' : '1px solid #1a2f44',
+                            opacity: isAssigned ? 0.3 : 1, transition: 'all 0.15s',
+                            textAlign: 'left', outline: 'none',
+                            boxShadow: isSelected ? `0 0 8px ${pf.color}33` : 'none' }}
+                          onMouseEnter={e => { if (!isAssigned && !isSelected) e.currentTarget.style.borderColor = pf.color + '66' }}
+                          onMouseLeave={e => { if (!isAssigned && !isSelected) e.currentTarget.style.borderColor = '#1a2f44' }}>
+                          <span style={{ fontSize: 12, lineHeight: 1 }}>{pf.icon}</span>
+                          <span style={{ fontSize: 9, fontWeight: 600, lineHeight: 1.2,
+                            fontFamily: "'Rajdhani', sans-serif",
+                            color: isAssigned ? '#334155' : isSelected ? pf.color : '#94a3b8' }}>
+                            {pf.id}
+                          </span>
+                          {isAssigned && <Check size={9} color="#334155" style={{ marginLeft: 'auto' }} />}
+                          {isSelected && <div style={{ marginLeft: 'auto', width: 5, height: 5, borderRadius: '50%',
+                            background: pf.color, boxShadow: `0 0 4px ${pf.color}` }} />}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {/* Appoint + Dismiss */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <button onClick={handleAppoint}
+                    disabled={selectedPortfolios.size === 0}
+                    style={{ width: '100%', padding: '9px 0', borderRadius: 6,
+                      background: selectedPortfolios.size > 0 ? 'linear-gradient(135deg, #c47d10, #e8a030)' : '#0a1828',
+                      border: selectedPortfolios.size > 0 ? '1px solid rgba(255,200,60,0.4)' : '1px solid #1c3652',
+                      fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 11, letterSpacing: '0.1em',
+                      color: selectedPortfolios.size > 0 ? '#040d1b' : '#334155',
+                      cursor: selectedPortfolios.size > 0 ? 'pointer' : 'not-allowed',
+                      boxShadow: selectedPortfolios.size > 0 ? '0 0 14px rgba(232,160,48,0.25)' : 'none',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
+                      transition: 'all 0.2s' }}>
+                    <Briefcase size={12} />
+                    {selectedPortfolios.size > 0
+                      ? `APPOINT (${selectedPortfolios.size} PORTFOLIO${selectedPortfolios.size > 1 ? 'S' : ''})`
+                      : 'SELECT PORTFOLIOS FIRST'}
+                  </button>
+                  <button onClick={() => { setInterviewee(null); setSelectedPortfolios(new Set()) }}
+                    style={{ width: '100%', padding: '6px 0', borderRadius: 5, background: 'none',
+                      border: '1px solid #1c3652', color: '#4b6280', cursor: 'pointer',
+                      fontFamily: "'Rajdhani', sans-serif", fontSize: 10, letterSpacing: '0.1em',
+                      transition: 'all 0.15s' }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = '#f87171'; e.currentTarget.style.color = '#f87171' }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = '#1c3652'; e.currentTarget.style.color = '#4b6280' }}>
+                    CLOSE
+                  </button>
+                </div>
+
+              </div>
+            )}
           </div>
         </div>
+
+        {/* ── MIDDLE: Candidates ───────────────────────────────────────────── */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+
+          <div style={{ padding: '11px 16px 7px', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+            <div style={{ height: 1, flex: 1, background: 'linear-gradient(90deg, transparent, #1c3652)' }} />
+            <span style={{ fontFamily: "'Rajdhani', sans-serif", fontSize: 10, fontWeight: 700,
+              letterSpacing: '0.22em', color: '#2a4a6a', whiteSpace: 'nowrap' }}>
+              APPLICANTS — {waitingCandidates.length}
+            </span>
+            <div style={{ height: 1, flex: 1, background: 'linear-gradient(90deg, #1c3652, transparent)' }} />
+          </div>
+
+          <div style={{ flex: 1, overflowY: 'auto', padding: '4px 14px 16px',
+            display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 9,
+            alignContent: 'start' }}>
+            {waitingCandidates.map((c, idx) => {
+              const cap2 = c.capability as Record<string, number>
+              const p2 = c.personality as Record<string, number>
+              const comp = cap2.competence ?? 50
+              const integ = p2.integrity ?? 50
+              const amb = p2.ambition ?? 50
+              const isSelected = interviewee?.id === c.id
+
+              return (
+                <div key={c.id}
+                  onClick={() => handleCallToDesk(c)}
+                  style={{
+                    cursor: 'pointer', userSelect: 'none',
+                    background: isSelected
+                      ? 'linear-gradient(180deg, rgba(232,160,48,0.1) 0%, rgba(10,24,40,0.95) 100%)'
+                      : 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(7,16,28,0.9) 100%)',
+                    border: isSelected ? '1px solid rgba(232,160,48,0.5)' : '1px solid #1c3652',
+                    borderTop: isSelected ? '2px solid #e8a030' : '2px solid #1c3652',
+                    borderRadius: 8, padding: '12px 9px 9px',
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5,
+                    transition: 'all 0.18s ease',
+                  }}
+                  onMouseEnter={e => {
+                    if (!isSelected) {
+                      e.currentTarget.style.borderColor = '#2a4a6a'
+                      e.currentTarget.style.transform = 'translateY(-2px)'
+                    }
+                  }}
+                  onMouseLeave={e => {
+                    if (!isSelected) {
+                      e.currentTarget.style.borderColor = '#1c3652'
+                      e.currentTarget.style.transform = ''
+                    }
+                  }}>
+
+                  <div style={{ position: 'relative' }}>
+                    <CandidateAvatar name={c.name} size={48} borderColor={isSelected ? '#e8a030' : '#1c3652'} />
+                    <div style={{ position: 'absolute', bottom: -3, right: -3, width: 14, height: 14,
+                      borderRadius: '50%', background: '#0a1828', border: '1px solid #1c3652',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 7, fontFamily: "'Share Tech Mono', monospace", color: '#4b6280' }}>
+                      {idx + 1}
+                    </div>
+                  </div>
+
+                  <div style={{ textAlign: 'center', width: '100%' }}>
+                    <div style={{ fontWeight: 700, fontSize: 10, color: isSelected ? '#f0c040' : '#e2e8f0',
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {c.name}
+                    </div>
+                    <div style={{ fontSize: 9, color: '#4b6280', marginTop: 1, fontStyle: 'italic',
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {c.demographics.profession}
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: 2, width: '100%' }}>
+                    {[
+                      { label: 'C', val: comp },
+                      { label: 'I', val: integ },
+                      { label: 'A', val: amb },
+                    ].map(({ label, val }) => {
+                      const col = val >= 70 ? '#22c55e' : val >= 45 ? '#e8a030' : '#f87171'
+                      return (
+                        <div key={label} style={{ flex: 1, textAlign: 'center',
+                          background: 'rgba(0,0,0,0.3)', borderRadius: 3, padding: '1px 0' }}>
+                          <div style={{ fontSize: 7, color: '#334155', fontFamily: "'Rajdhani', sans-serif" }}>{label}</div>
+                          <div style={{ fontSize: 9, fontWeight: 700, fontFamily: "'Share Tech Mono', monospace",
+                            color: col }}>{Math.round(val)}</div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )
+            })}
+
+            {waitingCandidates.length === 0 && (
+              <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '40px 0',
+                color: '#1c3652', fontSize: 12 }}>
+                All candidates have been appointed.
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ── RIGHT: City Intel ────────────────────────────────────────────── */}
+        <div style={{ width: 280, flexShrink: 0, display: 'flex', flexDirection: 'column',
+          borderLeft: '1px solid #1c3652', overflow: 'hidden',
+          background: 'linear-gradient(180deg, #071320 0%, #050e1c 100%)' }}>
+
+          <div style={{ flex: 1, overflowY: 'auto' }}>
+
+            {/* Active Issues */}
+            <div style={{ padding: '11px 14px 0' }}>
+              <div style={{ fontFamily: "'Rajdhani', sans-serif", fontSize: 10, fontWeight: 700,
+                letterSpacing: '0.2em', color: '#f87171', marginBottom: 8 }}>
+                ACTIVE CITY ISSUES
+              </div>
+              {state.active_events.length === 0 ? (
+                <div style={{ fontSize: 11, color: '#1c3652', padding: '8px 0 12px', fontStyle: 'italic' }}>
+                  No active issues
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
+                  {state.active_events.slice(0, 5).map(ev => {
+                    const isCrisis = ev.type === 'crisis'
+                    const sevColor = ev.severity >= 70 ? '#f87171' : ev.severity >= 40 ? '#fb923c' : '#fbbf24'
+                    return (
+                      <div key={ev.id} style={{
+                        padding: '8px 10px', borderRadius: 6,
+                        background: isCrisis ? 'rgba(248,113,113,0.06)' : 'rgba(34,197,94,0.06)',
+                        border: `1px solid ${isCrisis ? '#7f1d1d' : '#14532d'}`,
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 6 }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 10, fontWeight: 700,
+                              color: isCrisis ? '#fca5a5' : '#86efac', lineHeight: 1.3 }}>{ev.name}</div>
+                            {ev.portfolio && (
+                              <div style={{ fontSize: 9, color: '#475569', marginTop: 2 }}>{ev.portfolio}</div>
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2, flexShrink: 0 }}>
+                            <span style={{ fontSize: 8, padding: '1px 5px', borderRadius: 3,
+                              fontFamily: "'Rajdhani', sans-serif", fontWeight: 700,
+                              color: sevColor,
+                              background: `${sevColor}18`, border: `1px solid ${sevColor}44` }}>
+                              {ev.severity >= 70 ? 'HIGH' : ev.severity >= 40 ? 'MED' : 'LOW'}
+                            </span>
+                            <span style={{ fontSize: 8, color: '#475569', fontFamily: "'Share Tech Mono', monospace" }}>
+                              {ev.turns_remaining}T left
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div style={{ height: 1, background: '#1c3652', margin: '0 14px' }} />
+
+            {/* City Parameters */}
+            <div style={{ padding: '12px 14px' }}>
+              <div style={{ fontFamily: "'Rajdhani', sans-serif", fontSize: 10, fontWeight: 700,
+                letterSpacing: '0.2em', color: '#4b6280', marginBottom: 10 }}>
+                CITY PARAMETERS
+              </div>
+
+              {/* Layer A */}
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 8, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.15em',
+                  color: '#38bdf8', fontWeight: 700, marginBottom: 5 }}>LAYER A · ECONOMIC & INFRASTRUCTURE</div>
+                {[
+                  { label: 'Jobs & Commerce', val: state.city_params.jobs_and_commerce },
+                  { label: 'Transit & Roads', val: state.city_params.transit_and_roads },
+                  { label: 'Water / Power / Sanitation', val: state.city_params.water_power_sanitation },
+                ].map(({ label, val }) => <CityParamRow key={label} label={label} value={val} accent="#38bdf8" />)}
+              </div>
+
+              {/* Layer B */}
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 8, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.15em',
+                  color: '#a78bfa', fontWeight: 700, marginBottom: 5 }}>LAYER B · HUMAN & SOCIAL</div>
+                {[
+                  { label: 'Hospitals & Clinics', val: state.city_params.hospitals_and_clinics },
+                  { label: 'Schools & Universities', val: state.city_params.schools_and_universities },
+                  { label: 'Affordable Housing', val: state.city_params.affordable_housing },
+                  { label: 'Community & Spaces', val: state.city_params.community_and_spaces },
+                ].map(({ label, val }) => <CityParamRow key={label} label={label} value={val} accent="#a78bfa" />)}
+              </div>
+
+              {/* Layer C */}
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 8, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.15em',
+                  color: '#4ade80', fontWeight: 700, marginBottom: 5 }}>LAYER C · SAFETY & ENVIRONMENT</div>
+                {[
+                  { label: 'Police & Emergency', val: state.city_params.police_and_emergency },
+                  { label: 'Courts & Legal', val: state.city_params.courts_and_legal },
+                  { label: 'Air Quality & Pollution', val: state.city_params.air_quality_and_pollution },
+                ].map(({ label, val }) => <CityParamRow key={label} label={label} value={val} accent="#4ade80" />)}
+              </div>
+
+              {/* Layer D — highlighted */}
+              <div style={{ background: 'rgba(232,160,48,0.05)', border: '1px solid rgba(232,160,48,0.2)',
+                borderRadius: 6, padding: '8px 10px' }}>
+                <div style={{ fontSize: 8, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.15em',
+                  color: '#e8a030', fontWeight: 700, marginBottom: 6 }}>LAYER D · GOVERNANCE (META)</div>
+                <div style={{ fontSize: 9, color: '#64748b', fontStyle: 'italic', marginBottom: 7, lineHeight: 1.4 }}>
+                  These determine how effectively your policies execute.
+                </div>
+                {[
+                  { label: 'Admin Efficiency', val: state.city_params.admin_efficiency,
+                    desc: 'The Filter — policy execution rate' },
+                  { label: 'Anti-Corruption', val: state.city_params.anti_corruption,
+                    desc: 'The Plug — budget leakage' },
+                  { label: 'Media Freedom', val: state.city_params.media_freedom,
+                    desc: 'The Spotlight — accountability' },
+                ].map(({ label, val, desc }) => (
+                  <div key={label} style={{ marginBottom: 7 }}>
+                    <CityParamRow label={label} value={val} accent="#e8a030" />
+                    <div style={{ fontSize: 8, color: '#334155', marginTop: 2, fontStyle: 'italic' }}>{desc}</div>
+                  </div>
+                ))}
+              </div>
+
+            </div>
+          </div>
+        </div>
+
       </div>
+
+      {/* Error toast */}
+      {error && (
+        <div style={{ position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)',
+          zIndex: 100, background: 'rgba(127,29,29,0.98)', border: '1px solid #f87171',
+          borderRadius: 8, padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 8,
+          boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
+          <AlertTriangle size={14} color="#f87171" />
+          <span style={{ fontSize: 12, color: '#f87171' }}>{error}</span>
+          <button onClick={() => setError(null)} style={{ background: 'none', border: 'none',
+            color: '#f87171', cursor: 'pointer', marginLeft: 8 }}>✕</button>
+        </div>
+      )}
     </div>
   )
 }
