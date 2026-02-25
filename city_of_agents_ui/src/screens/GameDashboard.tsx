@@ -1622,12 +1622,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
             </div>
 
             {/* Chat Messages */}
-            <div className="overflow-y-auto p-2 space-y-2.5" style={{ height: 280 }}>
-              {chatMessages.length === 0 && (
-                <div style={{ fontSize: 11, color: '#334155', textAlign: 'center', paddingTop: 16 }}>
-                  Type a message to consult the council
-                </div>
-              )}
+            <div className="overflow-y-auto space-y-2.5" style={{ maxHeight: 280, padding: chatMessages.length > 0 ? '8px' : 0 }}>
               {chatMessages.map((msg, i) => (
                 <div key={i} className="flex gap-2">
                   <div className="shrink-0 mt-0.5" style={{ width: 26, height: 26 }}>
