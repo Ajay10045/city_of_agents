@@ -1491,32 +1491,39 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
             </div>
 
             {/* Minister List */}
-            <div style={{ borderBottom: '1px solid #1c3652', position: 'relative' }}>
-              {gameState.ministers.map((m, idx) => {
-                const col = MINISTER_COLORS[idx % MINISTER_COLORS.length]
-                const isExpanded = expandedMinisterId === m.id
-                return (
-                  <div key={m.id}>
+            <div style={{ borderBottom: '1px solid #1c3652' }}>
+              {/* Horizontal avatar strip */}
+              <div className="flex flex-wrap" style={{ borderBottom: expandedMinisterId ? '1px solid rgba(28,54,82,0.5)' : 'none' }}>
+                {gameState.ministers.map((m, idx) => {
+                  const col = MINISTER_COLORS[idx % MINISTER_COLORS.length]
+                  const isExpanded = expandedMinisterId === m.id
+                  return (
                     <div
+                      key={m.id}
                       onClick={() => setExpandedMinisterId(isExpanded ? null : m.id)}
-                      className="flex items-center gap-2 px-3 py-1.5 cursor-pointer transition-colors"
+                      className="flex flex-col items-center gap-1 cursor-pointer transition-colors"
                       style={{
-                        borderBottom: isExpanded ? 'none' : '1px solid rgba(28,54,82,0.5)',
-                        background: isExpanded ? 'rgba(255,255,255,0.04)' : '',
+                        padding: '8px 10px 6px',
+                        background: isExpanded ? 'rgba(255,255,255,0.05)' : '',
+                        borderBottom: isExpanded ? `2px solid ${col}` : '2px solid transparent',
                       }}
                       onMouseEnter={e => { if (!isExpanded) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
                       onMouseLeave={e => { if (!isExpanded) e.currentTarget.style.background = '' }}
                     >
-                      <div className="shrink-0">
-                        {isExpanded
-                          ? <ChevronDown size={10} color="#4b6280" />
-                          : <ChevronRight size={10} color="#4b6280" />}
-                      </div>
-                      <Avatar seed={m.name} size={24} ring={col} />
-                      <span className="truncate" style={{ fontSize: 11, fontWeight: 600, color: '#fff' }}>
-                        {m.name}
+                      <Avatar seed={m.name} size={26} ring={col} />
+                      <span style={{ fontSize: 9, fontWeight: 600, color: isExpanded ? '#fff' : '#94a3b8', whiteSpace: 'nowrap' }}>
+                        {m.name.split(' ')[0]}
                       </span>
                     </div>
+                  )
+                })}
+              </div>
+              {/* Expanded detail — full width below the strip */}
+              {gameState.ministers.map((m, idx) => {
+                const col = MINISTER_COLORS[idx % MINISTER_COLORS.length]
+                const isExpanded = expandedMinisterId === m.id
+                return isExpanded ? (
+                  <div key={m.id}>
                     {/* Expanded inline detail */}
                     {isExpanded && (
                       <div style={{
@@ -1602,7 +1609,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                       </div>
                     )}
                   </div>
-                )
+                ) : null
               })}
             </div>
 
