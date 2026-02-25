@@ -122,14 +122,18 @@ function WelfareRing({ stat }: { stat: WelfareStat }) {
         </svg>
       </div>
       <div className="flex items-center gap-1">
-        <span style={{ fontSize: 11, fontWeight: 700, fontFamily: "'Share Tech Mono', monospace",
-          color: stat.delta >= 0 ? '#22c55e' : '#f87171' }}>
+        <span style={{
+          fontSize: 11, fontWeight: 700, fontFamily: "'Share Tech Mono', monospace",
+          color: stat.delta >= 0 ? '#22c55e' : '#f87171'
+        }}>
           {stat.delta >= 0 ? `▲ +${Math.round(stat.delta)}` : `▼ ${Math.round(stat.delta)}`}
         </span>
       </div>
       <span className="text-gray-400"
-        style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.1em',
-          fontFamily: "'Rajdhani', sans-serif", textTransform: 'uppercase' }}>
+        style={{
+          fontSize: 10, fontWeight: 600, letterSpacing: '0.1em',
+          fontFamily: "'Rajdhani', sans-serif", textTransform: 'uppercase'
+        }}>
         {stat.label}
       </span>
     </div>
@@ -141,8 +145,10 @@ function WelfareRing({ stat }: { stat: WelfareStat }) {
 function MiniBar({ value, color, width = 36 }: { value: number; color: string; width?: number }) {
   return (
     <div style={{ width, height: 4, background: 'rgba(10,26,48,0.8)', borderRadius: 2, overflow: 'hidden' }}>
-      <div style={{ height: '100%', width: `${Math.max(0, Math.min(100, value))}%`,
-        background: color, borderRadius: 2, boxShadow: `0 0 4px ${color}80` }} />
+      <div style={{
+        height: '100%', width: `${Math.max(0, Math.min(100, value))}%`,
+        background: color, borderRadius: 2, boxShadow: `0 0 4px ${color}80`
+      }} />
     </div>
   )
 }
@@ -165,14 +171,18 @@ function MinisterProfileCard({ minister, color }: { minister: Minister; color: s
       pointerEvents: 'none',
     }}>
       {/* Top strip */}
-      <div style={{ height: 2, background: `linear-gradient(90deg, ${color}, transparent)`,
-        borderRadius: 2, marginBottom: 12 }} />
+      <div style={{
+        height: 2, background: `linear-gradient(90deg, ${color}, transparent)`,
+        borderRadius: 2, marginBottom: 12
+      }} />
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 12 }}>
         <Avatar seed={minister.name} size={42} ring={color} />
         <div>
           <div style={{ fontWeight: 700, fontSize: 12, color: '#fff', lineHeight: 1.2 }}>{minister.name}</div>
-          <div style={{ fontSize: 10, color: color, marginTop: 2, fontFamily: "'Rajdhani', sans-serif",
-            letterSpacing: '0.05em', fontWeight: 600 }}>{minister.portfolio}</div>
+          <div style={{
+            fontSize: 10, color: color, marginTop: 2, fontFamily: "'Rajdhani', sans-serif",
+            letterSpacing: '0.05em', fontWeight: 600
+          }}>{minister.portfolio}</div>
         </div>
       </div>
 
@@ -184,13 +194,17 @@ function MinisterProfileCard({ minister, color }: { minister: Minister; color: s
       ].map(({ label, value, color: c }) => (
         <div key={label} style={{ marginBottom: 8 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-            <span style={{ fontSize: 9, color: '#64748b', fontFamily: "'Rajdhani', sans-serif",
-              letterSpacing: '0.08em', fontWeight: 600 }}>{label.toUpperCase()}</span>
+            <span style={{
+              fontSize: 9, color: '#64748b', fontFamily: "'Rajdhani', sans-serif",
+              letterSpacing: '0.08em', fontWeight: 600
+            }}>{label.toUpperCase()}</span>
             <span style={{ fontSize: 9, fontFamily: "'Share Tech Mono', monospace", color: c }}>{Math.round(value)}</span>
           </div>
           <div style={{ height: 3, background: '#071018', borderRadius: 2, overflow: 'hidden' }}>
-            <div style={{ height: '100%', width: `${value}%`, background: c, borderRadius: 2,
-              boxShadow: `0 0 4px ${c}80` }} />
+            <div style={{
+              height: '100%', width: `${value}%`, background: c, borderRadius: 2,
+              boxShadow: `0 0 4px ${c}80`
+            }} />
           </div>
         </div>
       ))}
@@ -198,24 +212,32 @@ function MinisterProfileCard({ minister, color }: { minister: Minister; color: s
       {/* Badges */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
         {loyaltyPct >= 70 && (
-          <span style={{ fontSize: 8, padding: '2px 6px', borderRadius: 3,
+          <span style={{
+            fontSize: 8, padding: '2px 6px', borderRadius: 3,
             background: 'rgba(34,197,94,0.12)', border: '1px solid #14532d', color: '#4ade80',
-            fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em', fontWeight: 700 }}>LOYAL</span>
+            fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em', fontWeight: 700
+          }}>LOYAL</span>
         )}
         {loyaltyPct < 40 && (
-          <span style={{ fontSize: 8, padding: '2px 6px', borderRadius: 3,
+          <span style={{
+            fontSize: 8, padding: '2px 6px', borderRadius: 3,
             background: 'rgba(248,113,113,0.12)', border: '1px solid #7f1d1d', color: '#f87171',
-            fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em', fontWeight: 700 }}>DISLOYAL</span>
+            fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em', fontWeight: 700
+          }}>DISLOYAL</span>
         )}
         {scandalPct > 60 && (
-          <span style={{ fontSize: 8, padding: '2px 6px', borderRadius: 3,
+          <span style={{
+            fontSize: 8, padding: '2px 6px', borderRadius: 3,
             background: 'rgba(249,115,22,0.12)', border: '1px solid #7c2d12', color: '#fb923c',
-            fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em', fontWeight: 700 }}>AT RISK</span>
+            fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em', fontWeight: 700
+          }}>AT RISK</span>
         )}
         {capPct >= 70 && (
-          <span style={{ fontSize: 8, padding: '2px 6px', borderRadius: 3,
+          <span style={{
+            fontSize: 8, padding: '2px 6px', borderRadius: 3,
             background: 'rgba(56,189,248,0.12)', border: '1px solid #0c4a6e', color: '#38bdf8',
-            fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em', fontWeight: 700 }}>HIGH INFLUENCE</span>
+            fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em', fontWeight: 700
+          }}>HIGH INFLUENCE</span>
         )}
       </div>
     </div>
@@ -240,8 +262,10 @@ function ScorecardOverlay({ sc }: { sc: GovernanceScorecard }) {
       <div style={{ ...PANEL, maxWidth: 480, width: '100%', padding: 32 }}>
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
           <div style={{ fontSize: 11, ...MONO('#e8a030'), letterSpacing: '0.2em', marginBottom: 4 }}>GAME OVER</div>
-          <div style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 28, color: '#f0c040',
-            letterSpacing: '0.06em', textShadow: '0 0 12px rgba(240,192,64,0.5)' }}>
+          <div style={{
+            fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 28, color: '#f0c040',
+            letterSpacing: '0.06em', textShadow: '0 0 12px rgba(240,192,64,0.5)'
+          }}>
             {sc.legacy_title}
           </div>
           <div style={{ fontSize: 36, fontWeight: 700, ...MONO('#22c55e'), marginTop: 8 }}>
@@ -254,8 +278,10 @@ function ScorecardOverlay({ sc }: { sc: GovernanceScorecard }) {
             <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ flex: 1, fontSize: 11, color: '#94a3b8' }}>{label}</span>
               <div style={{ width: 100, height: 4, background: '#0a1a30', borderRadius: 2, overflow: 'hidden' }}>
-                <div style={{ height: '100%', width: `${val}%`, background: '#e8a030',
-                  borderRadius: 2, boxShadow: '0 0 4px #e8a03080' }} />
+                <div style={{
+                  height: '100%', width: `${val}%`, background: '#e8a030',
+                  borderRadius: 2, boxShadow: '0 0 4px #e8a03080'
+                }} />
               </div>
               <span style={{ fontSize: 11, fontWeight: 700, ...MONO('#f0c040'), width: 28, textAlign: 'right' }}>
                 {Math.round(val)}
@@ -294,9 +320,11 @@ function PolicyModal({
             style={{ color: '#4b6280', fontSize: 18, background: 'none', border: 'none', cursor: 'pointer' }}>✕</button>
         </div>
         {error && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
             background: 'rgba(248,113,113,0.1)', border: '1px solid #7f1d1d', borderRadius: 4,
-            marginBottom: 16, fontSize: 11, color: '#f87171' }}>
+            marginBottom: 16, fontSize: 11, color: '#f87171'
+          }}>
             <AlertTriangle size={13} style={{ flexShrink: 0 }} />
             {error}
           </div>
@@ -306,12 +334,16 @@ function PolicyModal({
             const col = PORTFOLIO_COLORS[p.portfolio] ?? '#e8a030'
             const topEffects = Object.entries(p.target_effects).slice(0, 3)
             return (
-              <div key={i} style={{ background: 'rgba(255,255,255,0.03)', border: `1px solid #1c3652`,
-                borderRadius: 6, padding: 14, cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div key={i} style={{
+                background: 'rgba(255,255,255,0.03)', border: `1px solid #1c3652`,
+                borderRadius: 6, padding: 14, cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 10
+              }}>
                 <div>
-                  <span style={{ fontSize: 8, fontWeight: 700, color: col, background: `${col}22`,
+                  <span style={{
+                    fontSize: 8, fontWeight: 700, color: col, background: `${col}22`,
                     border: `1px solid ${col}44`, borderRadius: 3, padding: '1px 6px',
-                    fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em' }}>
+                    fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em'
+                  }}>
                     {p.portfolio}
                   </span>
                   <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', marginTop: 6, lineHeight: 1.3 }}>{p.name}</div>
@@ -322,11 +354,13 @@ function PolicyModal({
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                   {topEffects.map(([k, v]) => (
-                    <span key={k} style={{ fontSize: 9, fontFamily: "'Share Tech Mono', monospace",
+                    <span key={k} style={{
+                      fontSize: 9, fontFamily: "'Share Tech Mono', monospace",
                       color: (v as number) >= 0 ? '#4ade80' : '#f87171',
                       background: (v as number) >= 0 ? 'rgba(34,197,94,0.1)' : 'rgba(248,113,113,0.1)',
                       border: `1px solid ${(v as number) >= 0 ? '#14532d' : '#7f1d1d'}`,
-                      borderRadius: 3, padding: '1px 5px' }}>
+                      borderRadius: 3, padding: '1px 5px'
+                    }}>
                       {k.replace(/_/g, ' ')} {(v as number) >= 0 ? '+' : ''}{v as number}
                     </span>
                   ))}
@@ -334,12 +368,14 @@ function PolicyModal({
                 <button
                   onClick={() => onSelect(i)}
                   disabled={loading}
-                  style={{ marginTop: 'auto', background: loading ? '#1a2a3a' : 'linear-gradient(135deg, #c47d10, #e8a030)',
+                  style={{
+                    marginTop: 'auto', background: loading ? '#1a2a3a' : 'linear-gradient(135deg, #c47d10, #e8a030)',
                     border: 'none', borderRadius: 4, padding: '8px 0', color: loading ? '#4b6280' : '#040d1b',
                     fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 12,
                     letterSpacing: '0.08em', cursor: loading ? 'not-allowed' : 'pointer',
                     display: 'flex', alignItems: 'center',
-                    justifyContent: 'center', gap: 6 }}>
+                    justifyContent: 'center', gap: 6
+                  }}>
                   {loading ? <><Loader2 size={13} className="animate-spin" /> EXECUTING...</> : 'EXECUTE POLICY'}
                 </button>
               </div>
@@ -376,12 +412,19 @@ interface TurnEntry {
 
 const PORTFOLIO_IMG: Record<string, string> = {
   'Infrastructure': 'https://images.unsplash.com/photo-1544621531-97b77ab684cb?q=80&w=1200&auto=format&fit=crop',
+  'Health & Education': 'https://images.unsplash.com/photo-1551076805-e1869033e561?q=80&w=1200&auto=format&fit=crop',
+  'Finance & Economy': 'https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?q=80&w=1200&auto=format&fit=crop',
+  'Home Affairs': 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?q=80&w=1200&auto=format&fit=crop',
+  'Housing & Community': 'https://images.unsplash.com/photo-1580216643062-cf460548a66a?q=80&w=1200&auto=format&fit=crop',
+  'Environment': 'https://images.unsplash.com/photo-1441974231531-c6227db76b6e?q=80&w=1200&auto=format&fit=crop',
+  'Governance Reform': 'https://images.unsplash.com/photo-1580582932707-520aed937b7b?q=80&w=1200&auto=format&fit=crop',
+
+  // Fallbacks
   'Transport & Roads': 'https://images.unsplash.com/photo-1544621531-97b77ab684cb?q=80&w=1200&auto=format&fit=crop',
   'Health': 'https://images.unsplash.com/photo-1551076805-e1869033e561?q=80&w=1200&auto=format&fit=crop',
   'Education': 'https://images.unsplash.com/photo-1580582932707-520aed937b7b?q=80&w=1200&auto=format&fit=crop',
   'Housing': 'https://images.unsplash.com/photo-1580216643062-cf460548a66a?q=80&w=1200&auto=format&fit=crop',
   'Security & Law': 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?q=80&w=1200&auto=format&fit=crop',
-  'Environment': 'https://images.unsplash.com/photo-1441974231531-c6227db76b6e?q=80&w=1200&auto=format&fit=crop',
   'Water & Power': 'https://images.unsplash.com/photo-1509391366360-2e959784a276?q=80&w=1200&auto=format&fit=crop',
   'Commerce': 'https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?q=80&w=1200&auto=format&fit=crop',
   'Labor & Employment': 'https://images.unsplash.com/photo-1504307651254-35680f356dfd?q=80&w=1200&auto=format&fit=crop',
@@ -401,12 +444,12 @@ function deriveWelfare(cp: GameState['city_params']) {
 
 function welfareDelta(after: Record<string, number>, before: Record<string, number>) {
   const avgBefore = (keys: string[]) => avg(keys.map(k => before[k] ?? 50))
-  const avgAfter  = (keys: string[]) => avg(keys.map(k => after[k] ?? 50))
+  const avgAfter = (keys: string[]) => avg(keys.map(k => after[k] ?? 50))
   return {
-    health: avgAfter(['hospitals_and_clinics','air_quality_and_pollution']) - avgBefore(['hospitals_and_clinics','air_quality_and_pollution']),
-    wealth: avgAfter(['jobs_and_commerce','affordable_housing']) - avgBefore(['jobs_and_commerce','affordable_housing']),
-    safety: avgAfter(['police_and_emergency','courts_and_legal']) - avgBefore(['police_and_emergency','courts_and_legal']),
-    social: avgAfter(['community_and_spaces','schools_and_universities']) - avgBefore(['community_and_spaces','schools_and_universities']),
+    health: avgAfter(['hospitals_and_clinics', 'air_quality_and_pollution']) - avgBefore(['hospitals_and_clinics', 'air_quality_and_pollution']),
+    wealth: avgAfter(['jobs_and_commerce', 'affordable_housing']) - avgBefore(['jobs_and_commerce', 'affordable_housing']),
+    safety: avgAfter(['police_and_emergency', 'courts_and_legal']) - avgBefore(['police_and_emergency', 'courts_and_legal']),
+    social: avgAfter(['community_and_spaces', 'schools_and_universities']) - avgBefore(['community_and_spaces', 'schools_and_universities']),
   }
 }
 
@@ -475,6 +518,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
 
   // Turn execution
   const [isTurnExecuting, setIsTurnExecuting] = useState(false)
+  const [executingPolicyName, setExecutingPolicyName] = useState<string | null>(null)
   const [turnError, setTurnError] = useState<string | null>(null)
 
   // Game over
@@ -491,7 +535,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
   async function getMinisterReply(m: Minister, mayorMsg: string): Promise<string> {
     // Close any different minister that's currently open
     if (activeConsultRef.current && activeConsultRef.current !== m.id) {
-      await closeConsultation(gameId).catch(() => {})
+      await closeConsultation(gameId).catch(() => { })
       activeConsultRef.current = null
     }
     // Open this minister's consultation if not already open
@@ -569,7 +613,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
     try {
       // Close any open consultation so the transcript is sealed
       if (activeConsultRef.current) {
-        await closeConsultation(gameId).catch(() => {})
+        await closeConsultation(gameId).catch(() => { })
         activeConsultRef.current = null
       }
       const res = await getPolicies(gameId)
@@ -596,6 +640,11 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
     if (isTurnExecuting) return
     setIsTurnExecuting(true)
     setTurnError(null)
+
+    const selectedPolicy = policyOptions?.[index]
+    setExecutingPolicyName(selectedPolicy?.name || 'Policy Execution')
+    setShowPolicyModal(false)
+
     try {
       const res = await executeTurn(gameId, index, { type: 'governance_upkeep', budget: 0 }, 'Delivery Receipts')
       const tr = res.turn_result
@@ -607,15 +656,15 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
       // Build turn history entry from param deltas
       const deltas = tr.city_params_after && tr.city_params_before
         ? Object.entries(tr.city_params_after).map(([k, v]) => {
-            const diff = Math.round(v - (tr.city_params_before[k] ?? v))
-            if (Math.abs(diff) < 1) return null
-            return {
-              label: `${k.replace(/_/g, ' ')} ${diff > 0 ? '+' : ''}${diff}`,
-              bg: diff > 0 ? 'rgba(34,197,94,0.12)' : 'rgba(248,113,113,0.12)',
-              border: diff > 0 ? '#14532d' : '#7f1d1d',
-              color: diff > 0 ? '#86efac' : '#fca5a5',
-            }
-          }).filter((x): x is NonNullable<typeof x> => x !== null).slice(0, 4)
+          const diff = Math.round(v - (tr.city_params_before[k] ?? v))
+          if (Math.abs(diff) < 1) return null
+          return {
+            label: `${k.replace(/_/g, ' ')} ${diff > 0 ? '+' : ''}${diff}`,
+            bg: diff > 0 ? 'rgba(34,197,94,0.12)' : 'rgba(248,113,113,0.12)',
+            border: diff > 0 ? '#14532d' : '#7f1d1d',
+            color: diff > 0 ? '#86efac' : '#fca5a5',
+          }
+        }).filter((x): x is NonNullable<typeof x> => x !== null).slice(0, 4)
         : []
 
       const newEntry: TurnEntry = {
@@ -634,8 +683,8 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
         })
       }
       setTurnHistory(prev => [...entries, ...prev])
-      setShowPolicyModal(false)
       setPolicyOptions(null)
+      setExecutingPolicyName(null)
       setPolicyError(null)
 
       // Reset chat for next turn
@@ -663,22 +712,30 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
     : { health: 0, wealth: 0, safety: 0, social: 0 }
 
   const welfareStats: WelfareStat[] = [
-    { label: 'Health', score: wf.health, delta: wd.health,
+    {
+      label: 'Health', score: wf.health, delta: wd.health,
       stroke: '#22c55e', glow: '#16a34a', trackColor: '#0a2010',
       gradientId: 'healthG', gradientFrom: '#22c55e', gradientTo: '#86efac',
-      symbol: '♥', bg: 'rgba(34,197,94,0.08)' },
-    { label: 'Wealth', score: wf.wealth, delta: wd.wealth,
+      symbol: '♥', bg: 'rgba(34,197,94,0.08)'
+    },
+    {
+      label: 'Wealth', score: wf.wealth, delta: wd.wealth,
       stroke: '#38bdf8', glow: '#0284c7', trackColor: '#071a28',
       gradientId: 'wealthG', gradientFrom: '#38bdf8', gradientTo: '#7dd3fc',
-      symbol: '◈', bg: 'rgba(56,189,248,0.08)' },
-    { label: 'Safety', score: wf.safety, delta: wd.safety,
+      symbol: '◈', bg: 'rgba(56,189,248,0.08)'
+    },
+    {
+      label: 'Safety', score: wf.safety, delta: wd.safety,
       stroke: '#f59e0b', glow: '#d97706', trackColor: '#1a1000',
       gradientId: 'safetyG', gradientFrom: '#f59e0b', gradientTo: '#fcd34d',
-      symbol: '⬡', bg: 'rgba(245,158,11,0.08)' },
-    { label: 'Society', score: wf.social, delta: wd.social,
+      symbol: '⬡', bg: 'rgba(245,158,11,0.08)'
+    },
+    {
+      label: 'Society', score: wf.social, delta: wd.social,
       stroke: '#f87171', glow: '#dc2626', trackColor: '#200a0a',
       gradientId: 'socialG', gradientFrom: '#f87171', gradientTo: '#fca5a5',
-      symbol: '✦', bg: 'rgba(248,113,113,0.08)' },
+      symbol: '✦', bg: 'rgba(248,113,113,0.08)'
+    },
   ]
 
   const treasury = gameState.treasury
@@ -704,14 +761,14 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
 
   const streamEffects = lastTurn?.actual_deltas
     ? Object.entries(lastTurn.actual_deltas)
-        .filter(([, v]) => Math.abs(v as number) >= 1)
-        .sort((a, b) => Math.abs(b[1] as number) - Math.abs(a[1] as number))
-        .slice(0, 3)
-        .map(([k, v]) => ({
-          label: `${k.replace(/_/g, ' ')} ${(v as number) >= 0 ? '+' : ''}${Math.round(v as number)}`,
-          color: (v as number) >= 0 ? '#22c55e' : '#f87171',
-          up: (v as number) >= 0,
-        }))
+      .filter(([, v]) => Math.abs(v as number) >= 1)
+      .sort((a, b) => Math.abs(b[1] as number) - Math.abs(a[1] as number))
+      .slice(0, 3)
+      .map(([k, v]) => ({
+        label: `${k.replace(/_/g, ' ')} ${(v as number) >= 0 ? '+' : ''}${Math.round(v as number)}`,
+        color: (v as number) >= 0 ? '#22c55e' : '#f87171',
+        up: (v as number) >= 0,
+      }))
     : []
 
   const wardReport: WardReportEntry[] = lastTurn?.ward_report ?? []
@@ -745,8 +802,10 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
 
       {/* ── TOP BAR ────────────────────────────────────────────────────────── */}
       <div className="flex items-center gap-4 px-4 shrink-0"
-        style={{ height: 52, background: 'linear-gradient(90deg, #071320 0%, #0a1828 40%, #071320 100%)',
-          borderBottom: '1px solid #1c3652', boxShadow: '0 2px 20px rgba(0,0,0,0.5)', zIndex: 10 }}>
+        style={{
+          height: 52, background: 'linear-gradient(90deg, #071320 0%, #0a1828 40%, #071320 100%)',
+          borderBottom: '1px solid #1c3652', boxShadow: '0 2px 20px rgba(0,0,0,0.5)', zIndex: 10
+        }}>
 
         {/* Emblem + City */}
         <div className="flex items-center gap-3 shrink-0">
@@ -757,8 +816,10 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
             border: '1.5px solid #f59e0b', fontSize: 16,
           }}>🏛</div>
           <div>
-            <div style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 15,
-              color: '#f0c040', letterSpacing: '0.06em', textShadow: '0 0 12px rgba(240,192,64,0.5)' }}>
+            <div style={{
+              fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 15,
+              color: '#f0c040', letterSpacing: '0.06em', textShadow: '0 0 12px rgba(240,192,64,0.5)'
+            }}>
               City of {gameState.city_name}
             </div>
             <div className="flex items-center gap-1.5">
@@ -780,10 +841,14 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
         {/* Budget */}
         <div className="flex-1 max-w-md">
           <div className="flex items-center justify-between mb-1">
-            <span style={{ fontSize: 9, fontFamily: "'Rajdhani', sans-serif", fontWeight: 700,
-              letterSpacing: '0.2em', color: '#4b6280' }}>BUDGET</span>
-            <span style={{ fontSize: 9, fontFamily: "'Rajdhani', sans-serif", fontWeight: 700,
-              letterSpacing: '0.12em', color: '#4b6280' }}>FISCAL YEAR</span>
+            <span style={{
+              fontSize: 9, fontFamily: "'Rajdhani', sans-serif", fontWeight: 700,
+              letterSpacing: '0.2em', color: '#4b6280'
+            }}>BUDGET</span>
+            <span style={{
+              fontSize: 9, fontFamily: "'Rajdhani', sans-serif", fontWeight: 700,
+              letterSpacing: '0.12em', color: '#4b6280'
+            }}>FISCAL YEAR</span>
           </div>
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-1 shrink-0">
@@ -827,15 +892,19 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
             </span>
           </div>
           <div>
-            <div style={{ fontSize: 9, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.15em',
-              color: '#4b6280', fontWeight: 700 }}>MAYOR APPROVAL</div>
+            <div style={{
+              fontSize: 9, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.15em',
+              color: '#4b6280', fontWeight: 700
+            }}>MAYOR APPROVAL</div>
             <div className="flex items-center gap-1.5 mt-0.5">
               <span style={{ fontSize: 18, fontWeight: 700, ...MONO('#f0c040'), lineHeight: 1 }}>
                 {Math.round(approval)}%
               </span>
               {approvalDelta !== 0 && (
-                <span style={{ fontSize: 10, fontWeight: 700,
-                  color: approvalDelta >= 0 ? '#4ade80' : '#f87171' }}>
+                <span style={{
+                  fontSize: 10, fontWeight: 700,
+                  color: approvalDelta >= 0 ? '#4ade80' : '#f87171'
+                }}>
                   {approvalDelta >= 0 ? '▲' : '▼'} {approvalDelta >= 0 ? '+' : ''}{Math.round(approvalDelta)}%
                 </span>
               )}
@@ -851,8 +920,10 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
             .map(({ Icon, label }) => (
               <button key={label} title={label}
                 className="flex items-center justify-center rounded transition-all"
-                style={{ width: 30, height: 30, background: 'rgba(255,255,255,0.04)', border: '1px solid #1c3652',
-                  cursor: 'pointer' }}
+                style={{
+                  width: 30, height: 30, background: 'rgba(255,255,255,0.04)', border: '1px solid #1c3652',
+                  cursor: 'pointer'
+                }}
                 onMouseEnter={e => { e.currentTarget.style.borderColor = '#e8a030'; e.currentTarget.style.background = 'rgba(232,160,48,0.1)' }}
                 onMouseLeave={e => { e.currentTarget.style.borderColor = '#1c3652'; e.currentTarget.style.background = 'rgba(255,255,255,0.04)' }}>
                 <Icon size={13} color="#4b6280" />
@@ -882,12 +953,16 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
 
       {/* Policy error bar (outside modal, e.g. if modal closed before error) */}
       {policyError && !showPolicyModal && (
-        <div style={{ background: 'rgba(248,113,113,0.1)', borderBottom: '1px solid #7f1d1d',
-          padding: '6px 16px', fontSize: 11, color: '#f87171', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{
+          background: 'rgba(248,113,113,0.1)', borderBottom: '1px solid #7f1d1d',
+          padding: '6px 16px', fontSize: 11, color: '#f87171', display: 'flex', alignItems: 'center', gap: 8
+        }}>
           <AlertTriangle size={13} />
           {policyError}
-          <button onClick={() => setPolicyError(null)} style={{ marginLeft: 'auto', background: 'none',
-            border: 'none', color: '#f87171', cursor: 'pointer', fontSize: 14 }}>✕</button>
+          <button onClick={() => setPolicyError(null)} style={{
+            marginLeft: 'auto', background: 'none',
+            border: 'none', color: '#f87171', cursor: 'pointer', fontSize: 14
+          }}>✕</button>
         </div>
       )}
 
@@ -950,9 +1025,11 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
             </div>
 
             {/* Council hint */}
-            <div style={{ padding: '5px 12px', fontSize: 10, color: '#475569',
+            <div style={{
+              padding: '5px 12px', fontSize: 10, color: '#475569',
               background: 'rgba(232,160,48,0.03)', borderBottom: '1px solid rgba(28,54,82,0.4)',
-              fontStyle: 'italic', lineHeight: 1.4 }}>
+              fontStyle: 'italic', lineHeight: 1.4
+            }}>
               Hover a minister for their profile. Use @name to address someone directly.
             </div>
 
@@ -968,9 +1045,11 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                   <div className="shrink-0 mt-0.5" style={{ width: 26, height: 26 }}>
                     {msg.isMayor ? (
                       <div className="rounded-full flex items-center justify-center text-white"
-                        style={{ width: 26, height: 26,
+                        style={{
+                          width: 26, height: 26,
                           background: `linear-gradient(135deg, ${msg.ringColor}, ${msg.ringColor}88)`,
-                          fontSize: 9, fontWeight: 700, border: `1.5px solid ${msg.ringColor}` }}>M</div>
+                          fontSize: 9, fontWeight: 700, border: `1.5px solid ${msg.ringColor}`
+                        }}>M</div>
                     ) : (
                       <Avatar seed={msg.seed} size={26} ring={msg.ringColor} />
                     )}
@@ -1000,9 +1079,11 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                 </div>
               )}
               {chatError && (
-                <div style={{ fontSize: 11, color: '#f87171', display: 'flex', alignItems: 'center', gap: 6,
+                <div style={{
+                  fontSize: 11, color: '#f87171', display: 'flex', alignItems: 'center', gap: 6,
                   padding: '6px 8px', background: 'rgba(248,113,113,0.08)', border: '1px solid #7f1d1d',
-                  borderRadius: 4 }}>
+                  borderRadius: 4
+                }}>
                   <AlertTriangle size={11} />
                   {chatError}
                 </div>
@@ -1019,27 +1100,33 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                 placeholder="Message the council... (@name to address directly)"
                 disabled={consultLoading}
                 className="flex-1 text-white placeholder-gray-600 focus:outline-none"
-                style={{ background: '#071018', border: '1px solid #1c3652', borderRadius: 4,
-                  padding: '5px 8px', fontSize: 11 }}
+                style={{
+                  background: '#071018', border: '1px solid #1c3652', borderRadius: 4,
+                  padding: '5px 8px', fontSize: 11
+                }}
                 onFocus={e => (e.target.style.borderColor = '#e8a030')}
                 onBlur={e => (e.target.style.borderColor = '#1c3652')}
               />
               <button onClick={handleSendMessage}
                 disabled={!chatInput.trim() || consultLoading}
                 className="shrink-0 flex items-center justify-center transition-all"
-                style={{ background: 'linear-gradient(135deg, #c47d10, #e8a030)', borderRadius: 4,
+                style={{
+                  background: 'linear-gradient(135deg, #c47d10, #e8a030)', borderRadius: 4,
                   width: 30, height: 30, boxShadow: '0 0 8px rgba(232,160,48,0.4)',
                   opacity: (!chatInput.trim() || consultLoading) ? 0.4 : 1,
                   cursor: (!chatInput.trim() || consultLoading) ? 'not-allowed' : 'pointer',
-                  border: 'none' }}>
+                  border: 'none'
+                }}>
                 {consultLoading ? <Loader2 size={13} color="white" className="animate-spin" /> : <Send size={13} color="white" />}
               </button>
               <button onClick={handleDraftPolicy} disabled={fetchingPolicies}
                 className="shrink-0 text-xs px-2 transition-all"
-                style={{ background: 'rgba(59,130,246,0.15)', border: '1px solid #1e40af', borderRadius: 4,
+                style={{
+                  background: 'rgba(59,130,246,0.15)', border: '1px solid #1e40af', borderRadius: 4,
                   color: '#60a5fa', fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap',
                   fontFamily: "'Rajdhani', sans-serif",
-                  opacity: fetchingPolicies ? 0.5 : 1, cursor: fetchingPolicies ? 'not-allowed' : 'pointer' }}
+                  opacity: fetchingPolicies ? 0.5 : 1, cursor: fetchingPolicies ? 'not-allowed' : 'pointer'
+                }}
                 onMouseEnter={e => { if (!fetchingPolicies) e.currentTarget.style.background = 'rgba(59,130,246,0.25)' }}
                 onMouseLeave={e => (e.currentTarget.style.background = 'rgba(59,130,246,0.15)')}>
                 {fetchingPolicies ? <Loader2 size={10} className="animate-spin" /> : 'Draft Policy'}
@@ -1099,8 +1186,10 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                 <span style={HDR_LABEL}>WELFARE INDICATORS</span>
               </div>
               <button className="flex items-center gap-1.5 px-2 py-1 rounded transition-all"
-                style={{ border: '1px solid #1c3652', fontSize: 10, color: '#4b6280',
-                  fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.05em', background: 'none', cursor: 'pointer' }}>
+                style={{
+                  border: '1px solid #1c3652', fontSize: 10, color: '#4b6280',
+                  fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.05em', background: 'none', cursor: 'pointer'
+                }}>
                 View All Parameters <ChevronRight size={10} />
               </button>
             </div>
@@ -1122,52 +1211,79 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
               <div className="flex items-center gap-1.5 px-2 py-0.5 rounded"
                 style={{ background: 'rgba(239,68,68,0.2)', border: '1px solid #991b1b' }}>
                 <div className="w-1.5 h-1.5 rounded-full bg-red-400" style={{ boxShadow: '0 0 4px #f87171' }} />
-                <span style={{ color: '#f87171', fontSize: 9, fontWeight: 700,
-                  fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.1em' }}>LIVE</span>
+                <span style={{
+                  color: '#f87171', fontSize: 9, fontWeight: 700,
+                  fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.1em'
+                }}>LIVE</span>
               </div>
             </div>
 
             {/* Stream Image Banner */}
-            <div className="relative shrink-0" style={{ height: 185 }}>
-              <img src={streamImg} alt={streamTitle} className="w-full h-full object-cover" />
-              <div className="absolute inset-0"
-                style={{ background: 'linear-gradient(to top, rgba(5,13,27,0.97) 0%, rgba(5,13,27,0.3) 55%, transparent 100%)' }} />
-              <div className="absolute top-2 left-2 px-2 py-0.5 rounded"
-                style={{ background: 'rgba(5,13,27,0.7)', border: '1px solid rgba(232,160,48,0.3)', backdropFilter: 'blur(4px)' }}>
-                <span style={{ color: '#e8a030', fontSize: 9, fontFamily: "'Rajdhani', sans-serif",
-                  letterSpacing: '0.12em', fontWeight: 700 }}>
-                  TURN {gameState.current_turn} · {lastTurn ? 'LAST ACTION' : 'OVERVIEW'}
-                </span>
-              </div>
-              <div className="absolute bottom-0 left-0 right-0 p-3">
-                <div className="text-white uppercase tracking-wide"
-                  style={{ fontSize: 15, fontWeight: 700, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em' }}>
-                  {streamTitle}
+            <div className="relative shrink-0 overflow-hidden" style={{ height: 185, background: '#050d1b' }}>
+              {isTurnExecuting ? (
+                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                  <div className="absolute inset-0 z-0 bg-cover bg-center opacity-30 saturate-50" style={{
+                    backgroundImage: 'url("https://images.unsplash.com/photo-1451187580459-43490279c0fa?q=80&w=1200&auto=format&fit=crop")',
+                  }} />
+                  <div className="z-10 flex flex-col items-center gap-3">
+                    <Loader2 className="animate-spin" size={32} color="#4ade80" />
+                    <div style={{ fontFamily: "'Rajdhani', sans-serif", fontSize: 16, fontWeight: 700, letterSpacing: '0.15em', color: '#4ade80' }}>
+                      IMPLEMENTING POLICY...
+                    </div>
+                    <div style={{ fontSize: 13, ...MONO('#fff') }}>
+                      {executingPolicyName}
+                    </div>
+                  </div>
                 </div>
-                {streamLocation && (
-                  <div className="flex items-center gap-1.5 mt-0.5">
-                    <MapPin size={10} color="#94a3b8" />
-                    <span style={{ fontSize: 10, color: '#94a3b8' }}>{streamLocation}</span>
+              ) : (
+                <>
+                  <img src={streamImg} alt={streamTitle} className="absolute inset-0 w-full h-full object-cover" />
+                  <div className="absolute inset-0"
+                    style={{ background: 'linear-gradient(to top, rgba(5,13,27,0.97) 0%, rgba(5,13,27,0.3) 55%, transparent 100%)' }} />
+                  <div className="absolute top-2 left-2 px-2 py-0.5 rounded"
+                    style={{ background: 'rgba(5,13,27,0.7)', border: '1px solid rgba(232,160,48,0.3)', backdropFilter: 'blur(4px)' }}>
+                    <span style={{
+                      color: '#e8a030', fontSize: 9, fontFamily: "'Rajdhani', sans-serif",
+                      letterSpacing: '0.12em', fontWeight: 700
+                    }}>
+                      TURN {gameState.current_turn} · {lastTurn ? 'LAST ACTION' : 'OVERVIEW'}
+                    </span>
                   </div>
-                )}
-                {streamEffects.length > 0 && (
-                  <div className="flex items-center gap-4 mt-2 flex-wrap">
-                    {streamEffects.map((effect, i) => (
-                      <span key={i} className="flex items-center gap-1"
-                        style={{ fontSize: 10, fontWeight: 700, color: effect.color,
-                          fontFamily: "'Share Tech Mono', monospace" }}>
-                        <span style={{ fontSize: 8 }}>{effect.up ? '▲' : '▼'}</span>
-                        {effect.label}
-                      </span>
-                    ))}
-                    <button className="ml-auto flex items-center justify-center rounded transition-all"
-                      style={{ width: 20, height: 20, background: 'rgba(255,255,255,0.1)',
-                        border: '1px solid rgba(255,255,255,0.2)', cursor: 'pointer' }}>
-                      <Info size={11} color="#94a3b8" />
-                    </button>
+                  <div className="absolute bottom-0 left-0 right-0 p-3">
+                    <div className="text-white uppercase tracking-wide"
+                      style={{ fontSize: 15, fontWeight: 700, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em' }}>
+                      {streamTitle}
+                    </div>
+                    {streamLocation && (
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <MapPin size={10} color="#94a3b8" />
+                        <span style={{ fontSize: 10, color: '#94a3b8' }}>{streamLocation}</span>
+                      </div>
+                    )}
+                    {streamEffects.length > 0 && (
+                      <div className="flex items-center gap-4 mt-2 flex-wrap">
+                        {streamEffects.map((effect, i) => (
+                          <span key={i} className="flex items-center gap-1"
+                            style={{
+                              fontSize: 10, fontWeight: 700, color: effect.color,
+                              fontFamily: "'Share Tech Mono', monospace"
+                            }}>
+                            <span style={{ fontSize: 8 }}>{effect.up ? '▲' : '▼'}</span>
+                            {effect.label}
+                          </span>
+                        ))}
+                        <button className="ml-auto flex items-center justify-center rounded transition-all"
+                          style={{
+                            width: 20, height: 20, background: 'rgba(255,255,255,0.1)',
+                            border: '1px solid rgba(255,255,255,0.2)', cursor: 'pointer'
+                          }}>
+                          <Info size={11} color="#94a3b8" />
+                        </button>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
+                </>
+              )}
             </div>
 
             {/* Turn History */}
@@ -1184,9 +1300,11 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                   onMouseLeave={e => (e.currentTarget.style.background = '')}>
                   <div className="flex items-start gap-2">
                     <div className="shrink-0 mt-0.5 px-2 py-0.5 rounded"
-                      style={{ background: 'rgba(232,160,48,0.12)', border: '1px solid rgba(232,160,48,0.3)',
+                      style={{
+                        background: 'rgba(232,160,48,0.12)', border: '1px solid rgba(232,160,48,0.3)',
                         fontSize: 9, fontWeight: 700, color: '#e8a030',
-                        fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em', whiteSpace: 'nowrap' }}>
+                        fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em', whiteSpace: 'nowrap'
+                      }}>
                       TURN {entry.turn}
                     </div>
                     <div className="flex-1 min-w-0">
@@ -1207,9 +1325,11 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                         <div className="flex gap-1.5 mt-1.5 flex-wrap">
                           {entry.tags.map((tag, ti) => (
                             <span key={ti} className="px-1.5 py-0.5 rounded"
-                              style={{ fontSize: 9, color: tag.color, background: tag.bg,
+                              style={{
+                                fontSize: 9, color: tag.color, background: tag.bg,
                                 border: `1px solid ${tag.border}`,
-                                fontFamily: "'Share Tech Mono', monospace" }}>
+                                fontFamily: "'Share Tech Mono', monospace"
+                              }}>
                               {tag.label}
                             </span>
                           ))}
@@ -1299,10 +1419,12 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                     onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.05)')}
                     onMouseLeave={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.02)')}>
                     <div className="shrink-0 rounded flex items-center justify-center"
-                      style={{ width: 32, height: 32, background: bg,
+                      style={{
+                        width: 32, height: 32, background: bg,
                         border: `1px solid ${col}44`, fontSize: 9, fontWeight: 700, color: col,
                         fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.05em',
-                        boxShadow: `0 0 8px ${bg}88` }}>
+                        boxShadow: `0 0 8px ${bg}88`
+                      }}>
                       {initials}
                     </div>
                     <div className="flex-1 min-w-0">
@@ -1318,8 +1440,10 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
             {mediaHeadlines.length > 0 && (
               <div className="px-2 pb-2">
                 <button className="w-full py-1.5 rounded transition-all"
-                  style={{ border: '1px solid #1c3652', fontSize: 10, color: '#4b6280',
-                    fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.1em', background: 'none', cursor: 'pointer' }}
+                  style={{
+                    border: '1px solid #1c3652', fontSize: 10, color: '#4b6280',
+                    fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.1em', background: 'none', cursor: 'pointer'
+                  }}
                   onMouseEnter={e => { e.currentTarget.style.borderColor = '#e8a030'; e.currentTarget.style.color = '#e8a030' }}
                   onMouseLeave={e => { e.currentTarget.style.borderColor = '#1c3652'; e.currentTarget.style.color = '#4b6280' }}>
                   VIEW ALL MEDIA
@@ -1353,9 +1477,11 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                     <div className="shrink-0" style={{ position: 'relative', width: 30, height: 30 }}>
                       <Avatar seed={v.name} size={30} ring={ring} />
                       <div className="absolute bottom-0 right-0 rounded-full"
-                        style={{ width: 7, height: 7,
+                        style={{
+                          width: 7, height: 7,
                           background: v.sentiment === 'approve' ? '#22c55e' : v.sentiment === 'disapprove' ? '#f87171' : '#e8a030',
-                          border: '1px solid #050d1b', boxShadow: `0 0 4px ${ring}` }} />
+                          border: '1px solid #050d1b', boxShadow: `0 0 4px ${ring}`
+                        }} />
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
@@ -1363,8 +1489,10 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                         <span style={{ fontSize: 9, color: '#475569' }}>{v.demographics_summary}</span>
                       </div>
                       <div className="mt-1 px-2 py-1.5 rounded"
-                        style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(28,54,82,0.6)',
-                          fontSize: 10, color: '#94a3b8', lineHeight: 1.5 }}>
+                        style={{
+                          background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(28,54,82,0.6)',
+                          fontSize: 10, color: '#94a3b8', lineHeight: 1.5
+                        }}>
                         {v.reaction}
                       </div>
                     </div>

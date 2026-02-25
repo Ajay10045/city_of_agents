@@ -6,8 +6,10 @@ Side-effect free: no game-state mutation here.
 from __future__ import annotations
 
 import json
+import os
 import re
 import textwrap
+import hashlib
 from typing import Any
 
 from engine.models import (
@@ -151,6 +153,18 @@ def generate_city_profile(llm: LLMClient, city_hint: str) -> dict[str, Any]:
 
     city_hint: e.g. "Lagos, Nigeria" or "a mid-sized hill city in India"
     """
+    cache_dir = "data/cache/profiles"
+    os.makedirs(cache_dir, exist_ok=True)
+    hint_hash = hashlib.md5(city_hint.encode('utf-8')).hexdigest()
+    cache_path = os.path.join(cache_dir, f"{hint_hash}.json")
+    
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, "r") as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            pass
+
     user_prompt = textwrap.dedent(f"""\
         Generate a realistic City of Agents city profile for: **{city_hint}**
 
@@ -172,7 +186,15 @@ def generate_city_profile(llm: LLMClient, city_hint: str) -> dict[str, Any]:
         {CITY_PROFILE_SCHEMA}
     """)
     # chat() returns a dict; use it directly since we want JSON output
-    return llm.chat(CITY_PROFILE_SYSTEM, user_prompt)
+    result = llm.chat(CITY_PROFILE_SYSTEM, user_prompt)
+    
+    try:
+        with open(cache_path, "w") as f:
+            json.dump(result, f)
+    except Exception:
+        pass
+        
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -181,6 +203,19 @@ def generate_city_profile(llm: LLMClient, city_hint: str) -> dict[str, Any]:
 
 def generate_citizen_names(llm: LLMClient, profile: CityProfile, count: int) -> list[str]:
     """Generate culturally appropriate full names for citizens."""
+    cache_dir = "data/cache/names"
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_key = f"{profile.city_name}_{count}"
+    hint_hash = hashlib.md5(cache_key.encode('utf-8')).hexdigest()
+    cache_path = os.path.join(cache_dir, f"{hint_hash}.json")
+
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, "r") as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            pass
+
     system = "You are a cultural naming expert. Return only valid JSON arrays of strings."
     user = textwrap.dedent(f"""\
         Generate {count} realistic full names for citizens of {profile.city_name} ({profile.region}).
@@ -201,6 +236,13 @@ def generate_citizen_names(llm: LLMClient, profile: CityProfile, count: int) -> 
     # Fallback: pad with generic names if short
     while len(data) < count:
         data.append(f"Citizen {len(data)+1}")
+        
+    try:
+        with open(cache_path, "w") as f:
+            json.dump(data[:count], f)
+    except Exception:
+        pass
+
     return data[:count]
 
 
@@ -226,8 +268,8 @@ MINISTER_SYSTEM_TEMPLATE = textwrap.dedent("""\
     CONVERSATION STYLE — this is a real cabinet room discussion, not a solo briefing:
     - You can AGREE with another minister's point if it makes sense — don't always push your own angle.
     - You can say "I don't have much to add here" or defer to a colleague with more expertise.
-    - You can BUILD on what someone else said: "Building on what [colleague] mentioned..."
-    - You can SUPPORT or QUALIFY ideas: "That's a good point, though from my side..."
+    - You can BUILD on what someone else said"
+    - You can SUPPORT or QUALIFY ideas"
     - You can DISAGREE respectfully if your portfolio is directly affected.
     - You are NOT the only voice in the room. Be a team player when appropriate.
     - Sometimes the best response is short: one sentence of agreement or a clarifying question.
