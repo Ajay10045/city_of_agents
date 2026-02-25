@@ -67,7 +67,7 @@ function CandidateAvatar({ name, size = 64, borderColor = '#1c3652', borderRadiu
 }) {
   return (
     <img
-      src={`https://api.dicebear.com/7.x/personas/svg?seed=${encodeURIComponent(name)}&backgroundColor=1e3a5f,0f2942,1a2f4a,0d2137`}
+      src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(name)}&backgroundColor=1e3a5f,0f2942,1a2f4a,0d2137`}
       alt={name}
       style={{ width: size, height: size, borderRadius, border: `2px solid ${borderColor}`,
         background: '#0b1929', objectFit: 'cover', flexShrink: 0, display: 'block' }}
@@ -815,7 +815,7 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
               {/* Large Avatar */}
               <div style={{ position: 'relative', zIndex: 1 }}>
                 <img
-                  src={`https://api.dicebear.com/7.x/personas/svg?seed=${encodeURIComponent(interviewee.name)}&backgroundColor=1e3a5f,0f2942,1a2f4a,0d2137`}
+                  src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(interviewee.name)}&backgroundColor=1e3a5f,0f2942,1a2f4a,0d2137`}
                   alt={interviewee.name}
                   style={{ width: 280, height: 280, borderRadius: 12,
                     border: '2px solid rgba(232,160,48,0.3)',
