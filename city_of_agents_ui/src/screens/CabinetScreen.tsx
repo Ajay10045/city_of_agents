@@ -60,14 +60,108 @@ function generateTargetId(citizen: Citizen): string {
   return `${initials}-${hash}`
 }
 
+// ── Portrait Pools (Unsplash) — city-contextualized & gender-aware ────────────
+
+const U = (id: string) => `https://images.unsplash.com/photo-${id}?q=80&w=400&auto=format&fit=crop&crop=face`
+
+// South-Asian portraits (Delhi)
+const SOUTH_ASIAN_M = [
+  U('1506794778202-cad84cf45f1d'), U('1507003211169-0a1dd7228f2d'),
+  U('1492562080023-ab3db95bfbce'), U('1519085360753-af0119f7cbe7'),
+  U('1560250097-0b93528c311a'),  U('1552058544-f2b08422138a'),
+  U('1504257432389-52343af06ae3'), U('1545167622-3a6ac756afa4'),
+  U('1472099645785-5658abf4ff4e'), U('1500648767791-00dcc994a43e'),
+]
+const SOUTH_ASIAN_F = [
+  U('1494790108377-be9c29b29330'), U('1544005313-94ddf0286df2'),
+  U('1534528741775-53994a69daeb'), U('1573496359142-b8d87734a5a2'),
+  U('1580489944761-15a19d654956'), U('1531746020798-e6953c6e8e04'),
+  U('1488426862026-3ee34a7d66df'), U('1524504388940-b1c1722653e1'),
+  U('1517841905240-472988babdf9'), U('1438761681033-6461ffad8d80'),
+]
+
+// Middle-Eastern portraits (Dubai)
+const MIDDLE_EASTERN_M = [
+  U('1507003211169-0a1dd7228f2d'), U('1506794778202-cad84cf45f1d'),
+  U('1519085360753-af0119f7cbe7'), U('1560250097-0b93528c311a'),
+  U('1492562080023-ab3db95bfbce'), U('1545167622-3a6ac756afa4'),
+  U('1504257432389-52343af06ae3'), U('1552058544-f2b08422138a'),
+  U('1472099645785-5658abf4ff4e'), U('1463453091185-61582044d556'),
+]
+const MIDDLE_EASTERN_F = [
+  U('1494790108377-be9c29b29330'), U('1573496359142-b8d87734a5a2'),
+  U('1534528741775-53994a69daeb'), U('1544005313-94ddf0286df2'),
+  U('1580489944761-15a19d654956'), U('1531746020798-e6953c6e8e04'),
+  U('1524504388940-b1c1722653e1'), U('1488426862026-3ee34a7d66df'),
+  U('1517841905240-472988babdf9'), U('1438761681033-6461ffad8d80'),
+]
+
+// Western portraits (London, New York, San Francisco)
+const WESTERN_M = [
+  U('1500648767791-00dcc994a43e'), U('1472099645785-5658abf4ff4e'),
+  U('1507003211169-0a1dd7228f2d'), U('1519345182560-3f2917c472ef'),
+  U('1539571696357-5a69c17a67c6'), U('1506794778202-cad84cf45f1d'),
+  U('1519085360753-af0119f7cbe7'), U('1560250097-0b93528c311a'),
+  U('1463453091185-61582044d556'), U('1552058544-f2b08422138a'),
+]
+const WESTERN_F = [
+  U('1494790108377-be9c29b29330'), U('1438761681033-6461ffad8d80'),
+  U('1534528741775-53994a69daeb'), U('1517841905240-472988babdf9'),
+  U('1524504388940-b1c1722653e1'), U('1544005313-94ddf0286df2'),
+  U('1573496359142-b8d87734a5a2'), U('1580489944761-15a19d654956'),
+  U('1488426862026-3ee34a7d66df'), U('1531746020798-e6953c6e8e04'),
+]
+
+// Common feminine name endings/patterns for gender inference
+const FEMININE_SUFFIXES = ['a', 'i', 'ie', 'y', 'ee', 'ah', 'na', 'ta', 'ka', 'la', 'ra', 'ini', 'ika', 'ita', 'iya', 'ya']
+const FEMININE_NAMES = new Set([
+  'mary', 'priya', 'anita', 'sunita', 'kavita', 'rekha', 'neha', 'pooja', 'meera', 'deepa',
+  'fatima', 'aisha', 'mariam', 'sarah', 'huda', 'layla', 'noor', 'amina', 'zara', 'rania',
+  'elizabeth', 'margaret', 'jane', 'alice', 'emma', 'grace', 'lily', 'sophia', 'charlotte', 'olivia',
+  'jennifer', 'jessica', 'susan', 'linda', 'karen', 'nancy', 'betty', 'helen', 'sandra', 'donna',
+  'rachel', 'rebecca', 'laura', 'emily', 'hannah', 'megan', 'ashley', 'nicole', 'stephanie', 'amanda',
+])
+
+function inferGender(name: string): 'male' | 'female' {
+  const first = name.split(' ')[0].toLowerCase()
+  if (FEMININE_NAMES.has(first)) return 'female'
+  for (const suf of FEMININE_SUFFIXES) {
+    if (first.endsWith(suf) && first.length > suf.length + 1) return 'female'
+  }
+  return 'male'
+}
+
+function getPortraitPool(cityName: string, gender: 'male' | 'female'): string[] {
+  const city = cityName.toLowerCase()
+  if (city.includes('delhi') || city.includes('mumbai') || city.includes('india')) {
+    return gender === 'female' ? SOUTH_ASIAN_F : SOUTH_ASIAN_M
+  }
+  if (city.includes('dubai') || city.includes('abu dhabi') || city.includes('riyadh')) {
+    return gender === 'female' ? MIDDLE_EASTERN_F : MIDDLE_EASTERN_M
+  }
+  return gender === 'female' ? WESTERN_F : WESTERN_M
+}
+
+function nameHash(name: string): number {
+  let h = 0
+  for (let i = 0; i < name.length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0
+  return Math.abs(h)
+}
+
+function getPortraitUrl(name: string, cityName: string): string {
+  const gender = inferGender(name)
+  const pool = getPortraitPool(cityName, gender)
+  return pool[nameHash(name) % pool.length]
+}
+
 // ── Avatar ─────────────────────────────────────────────────────────────────────
 
-function CandidateAvatar({ name, size = 64, borderColor = '#1c3652', borderRadius = '50%' }: {
-  name: string; size?: number; borderColor?: string; borderRadius?: string
+function CandidateAvatar({ name, cityName, size = 64, borderColor = '#1c3652', borderRadius = '50%' }: {
+  name: string; cityName: string; size?: number; borderColor?: string; borderRadius?: string
 }) {
   return (
     <img
-      src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(name)}&backgroundColor=1e3a5f,0f2942,1a2f4a,0d2137`}
+      src={getPortraitUrl(name, cityName)}
       alt={name}
       style={{ width: size, height: size, borderRadius, border: `2px solid ${borderColor}`,
         background: '#0b1929', objectFit: 'cover', flexShrink: 0, display: 'block' }}
@@ -491,7 +585,7 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
                       background: isOver ? 'rgba(232,160,48,0.15)' : 'rgba(255,255,255,0.04)',
                       border: isOver ? '1.5px dashed #e8a030' : '1px solid #1c3652',
                       transition: 'all 0.15s' }}>
-                    <CandidateAvatar name={m.citizen.name} size={26}
+                    <CandidateAvatar name={m.citizen.name} cityName={state.city_name} size={26}
                       borderColor={PORTFOLIOS.find(p => p.id === m.portfolios[0])?.color ?? '#1c3652'} />
                     <div style={{ lineHeight: 1.1 }}>
                       <div style={{ fontSize: 11, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap' }}>
@@ -588,7 +682,7 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
 
                 {/* Identity card */}
                 <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-                  <CandidateAvatar name={interviewee.name} size={56} borderColor="#e8a030" />
+                  <CandidateAvatar name={interviewee.name} cityName={state.city_name} size={56} borderColor="#e8a030" />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 15,
                       color: '#fff', lineHeight: 1.2 }}>{interviewee.name}</div>
@@ -815,7 +909,7 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
               {/* Large Avatar */}
               <div style={{ position: 'relative', zIndex: 1 }}>
                 <img
-                  src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(interviewee.name)}&backgroundColor=1e3a5f,0f2942,1a2f4a,0d2137`}
+                  src={getPortraitUrl(interviewee.name, state.city_name)}
                   alt={interviewee.name}
                   style={{ width: 280, height: 280, borderRadius: 12,
                     border: '2px solid rgba(232,160,48,0.3)',
@@ -1012,7 +1106,7 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
                 {/* Avatar section */}
                 <div style={{ display: 'flex', justifyContent: 'center', padding: '14px 14px 8px',
                   position: 'relative' }}>
-                  <CandidateAvatar name={c.name} size={80}
+                  <CandidateAvatar name={c.name} cityName={state.city_name} size={80}
                     borderColor={isSelected ? '#e8a030' : '#1c3652'}
                     borderRadius="8px" />
                 </div>
