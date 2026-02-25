@@ -1,9 +1,7 @@
 """Smoke tests for the v2 engine modules."""
 from __future__ import annotations
 
-import random
-
-from engine.models import CityParameters, CityProfile
+from engine.models import CityParameters
 
 
 def test_city_parameters_apply_delta():
