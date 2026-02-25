@@ -801,6 +801,7 @@ class GameSession:
             citizen_voices=citizen_voices,
             opposition_attack=attack_strategy,
             counter_frame=counter_frame_strategy,
+            approval_before=approval_now,
             interim_approval=interim_approval,
             ward_report=ward_report,
             events_triggered=newly_triggered,

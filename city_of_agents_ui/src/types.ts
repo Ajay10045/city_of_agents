@@ -133,6 +133,7 @@ export interface TurnResult {
   citizen_voices: CitizenVoice[]
   opposition_attack: string
   counter_frame: string
+  approval_before: number
   interim_approval: number
   ward_report: WardReportEntry[]
   events_triggered: ActiveEvent[]
@@ -142,6 +143,7 @@ export interface TurnResult {
   outstanding_debt_after: number
   interest_paid: number
   tax_revenue: number
+  advisor_summary: string
 }
 
 export interface GameState {

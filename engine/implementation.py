@@ -127,9 +127,8 @@ def run_implementation(
     c = minister.citizen.capability
     p_pers = minister.citizen.personality
     total_portfolios = 1 + len(minister.extra_portfolios)
-    base_m = (c.competence * 0.35 + c.managerial_skill * 0.30 + p_pers.conscientiousness * 0.20 + c.bureaucratic_navigation * 0.15) / 100.0
     penalty_str = f"  ×{0.85 if total_portfolios == 2 else 0.75 if total_portfolios >= 3 else 1.0:.2f} portfolio penalty" if total_portfolios > 1 else ""
-    crisis_str = f"  +crisis_handling bonus" if active_crisis_in_portfolio else ""
+    crisis_str = "  +crisis_handling bonus" if active_crisis_in_portfolio else ""
     _log("calc", f"  Minister score: {m_score:.3f}  "
                  f"(comp×0.35={c.competence * 0.35:.1f} + mgr×0.30={c.managerial_skill * 0.30:.1f} + "
                  f"consc×0.20={p_pers.conscientiousness * 0.20:.1f} + bur×0.15={c.bureaucratic_navigation * 0.15:.1f}){penalty_str}{crisis_str}")

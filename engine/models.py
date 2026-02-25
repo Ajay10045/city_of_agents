@@ -359,6 +359,7 @@ class TurnResult(BaseModel):
     citizen_voices: list[CitizenVoice]
     opposition_attack: str
     counter_frame: str
+    approval_before: float = 0.0
     interim_approval: float
     ward_report: list[WardReportEntry]
     events_triggered: list[ActiveEvent]

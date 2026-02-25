@@ -57,28 +57,6 @@ function Avatar({ seed, size = 28, ring = '#1c3652' }: { seed: string; size?: nu
   )
 }
 
-// ─── LoyaltyArc ───────────────────────────────────────────────────────────────
-
-function LoyaltyArc({ value, color }: { value: number; color: string }) {
-  const r = 13
-  const circ = 2 * Math.PI * r
-  const fill = (Math.max(0, Math.min(100, value)) / 100) * circ
-  return (
-    <svg width="34" height="34" viewBox="0 0 34 34">
-      <circle cx="17" cy="17" r={r} fill="none" stroke="#0a1a30" strokeWidth="4" />
-      <circle
-        cx="17" cy="17" r={r} fill="none"
-        stroke={color} strokeWidth="4"
-        strokeLinecap="round"
-        strokeDasharray={`${fill} ${circ}`}
-        transform="rotate(-90 17 17)"
-        style={{ filter: `drop-shadow(0 0 3px ${color})` }}
-      />
-      <text x="17" y="21" textAnchor="middle" fill="white" fontSize="8" fontWeight="700"
-        fontFamily="Share Tech Mono">{Math.round(value)}</text>
-    </svg>
-  )
-}
 
 // ─── WelfareRing ──────────────────────────────────────────────────────────────
 
@@ -368,18 +346,57 @@ function severityLabel(s: number): { label: string; bg: string; border: string; 
 const MINISTER_COLORS = ['#7c3aed', '#2563eb', '#0d9488', '#d97706', '#be185d']
 
 // Detect @mention or direct name reference in a message.
-// Returns array of minister indices that should respond.
-function detectMentioned(msg: string, ministers: Minister[]): number[] {
+// ─── Portfolio → keywords that signal relevance to this minister ──────────────
+const PORTFOLIO_KEYWORDS: Record<string, string[]> = {
+  'Finance & Economy':    ['budget', 'tax', 'revenue', 'economy', 'jobs', 'commerce', 'trade', 'fiscal', 'debt', 'spend', 'cost', 'money', 'treasury', 'finance'],
+  'Infrastructure':       ['road', 'transit', 'metro', 'water', 'power', 'sanitation', 'transport', 'infrastructure', 'grid', 'highway', 'bridge', 'rail'],
+  'Health & Education':   ['hospital', 'clinic', 'health', 'school', 'university', 'education', 'doctor', 'teacher', 'student', 'medical', 'healthcare'],
+  'Housing & Community':  ['housing', 'house', 'home', 'community', 'park', 'space', 'affordable', 'rent', 'slum', 'neighbourhood', 'neighborhood'],
+  'Home Affairs':         ['police', 'crime', 'law', 'court', 'legal', 'security', 'enforcement', 'emergency', 'justice', 'arrest', 'order'],
+  'Environment':          ['air', 'pollution', 'environment', 'climate', 'green', 'emission', 'waste', 'clean', 'ecological'],
+  'Governance Reform':    ['corruption', 'reform', 'efficiency', 'media', 'transparency', 'admin', 'governance', 'bureaucracy', 'press', 'freedom'],
+}
+
+// Score how relevant a minister is to the message (higher = more relevant)
+function relevanceScore(minister: Minister, msgLower: string): number {
+  let score = 0
+
+  // Portfolio keyword match — primary signal
+  const keywords = PORTFOLIO_KEYWORDS[minister.portfolio] ?? []
+  for (const kw of keywords) {
+    if (msgLower.includes(kw)) score += 3
+  }
+  // Extra portfolios also count but weighted less
+  for (const ep of (minister.extra_portfolios ?? [])) {
+    const epKws = PORTFOLIO_KEYWORDS[ep] ?? []
+    for (const kw of epKws) {
+      if (msgLower.includes(kw)) score += 1.5
+    }
+  }
+
+  // Personality: high ambition → more eager to chime in
+  const ambition = (minister.personality?.['ambition'] ?? 50) / 100
+  score += ambition * 0.8
+
+  // Low loyalty → more likely to speak up / push back
+  const loyalty = minister.loyalty ?? 50
+  if (loyalty < 40) score += 0.6
+
+  // Tiny random jitter so same-score ministers don't always respond in the same order
+  score += Math.random() * 0.4
+
+  return score
+}
+
+// Parse direct @name mentions — returns indices of ministers explicitly addressed
+function parseMentioned(msg: string, ministers: Minister[]): number[] {
   const lower = msg.toLowerCase()
   const mentioned: number[] = []
   ministers.forEach((m, idx) => {
     const parts = m.name.toLowerCase().split(' ')
-    // Match @FirstName, @FullName, or just the first/last name in text
     if (
       lower.includes(`@${parts[0]}`) ||
-      lower.includes(`@${m.name.toLowerCase().replace(' ', '')}`) ||
-      lower.includes(parts[0]) ||
-      (parts[1] && lower.includes(parts[1]))
+      lower.includes(`@${m.name.toLowerCase().replace(/ /g, '')}`)
     ) {
       mentioned.push(idx)
     }
@@ -387,14 +404,45 @@ function detectMentioned(msg: string, ministers: Minister[]): number[] {
   return mentioned
 }
 
-// Pick 2-3 ministers to respond when no specific mention (natural council feel)
-function pickResponders(ministers: Minister[], excludeIndices: number[] = []): number[] {
-  const pool = ministers
-    .map((_, i) => i)
-    .filter(i => !excludeIndices.includes(i))
-  // Shuffle and pick 2
-  const shuffled = pool.sort(() => Math.random() - 0.5)
-  return shuffled.slice(0, Math.min(2, shuffled.length))
+const BROADCAST_RE = /\b(@all|@everyone|@ all|@ everyone)\b/i
+
+/**
+ * Select which ministers should respond.
+ *
+ * Modes:
+ *  - Direct @name  → that minister always replies; up to 1 highly-relevant
+ *    other may naturally jump in (score ≥ 3)
+ *  - @all / @everyone  → top 3 by relevance (never all of them)
+ *  - No mention  → top 2 by relevance; minimum 1 (most relevant)
+ */
+function selectResponders(msg: string, ministers: Minister[]): number[] {
+  const lower = msg.toLowerCase()
+  const directMentions = parseMentioned(msg, ministers)
+  const isBroadcast = BROADCAST_RE.test(msg)
+
+  // Score everyone
+  const scored = ministers.map((m, i) => ({ i, score: relevanceScore(m, lower) }))
+  scored.sort((a, b) => b.score - a.score)
+
+  if (directMentions.length > 0) {
+    // Directly addressed ministers always respond
+    const result = [...new Set(directMentions)]
+    // One naturally-relevant minister may jump in if their score is strong enough
+    // and they weren't already addressed
+    const topOther = scored.find(s => !result.includes(s.i) && s.score >= 3)
+    if (topOther && ministers.length > result.length) result.push(topOther.i)
+    return result
+  }
+
+  if (isBroadcast) {
+    // @all → top 3 most relevant; minimum 2 (cabinet-wide question still needs substance)
+    const cap = Math.min(3, Math.max(2, ministers.length - 1))
+    return scored.slice(0, cap).map(s => s.i)
+  }
+
+  // No explicit address → top 2 most relevant, minimum 1
+  const cap = Math.min(2, ministers.length)
+  return scored.slice(0, cap).map(s => s.i)
 }
 
 
@@ -410,12 +458,18 @@ function ExecScoreBadge({ score }: { score: number }) {
   )
 }
 
+// ─── TurnPhaseCard helpers ──────────────────────────────────────────────────────
+
+function findMinisterForPortfolio(ministers: Minister[], portfolio: string): Minister | undefined {
+  return ministers.find(m => m.portfolio === portfolio || m.extra_portfolios?.includes(portfolio))
+}
+
 // ─── TurnPhaseCard ─────────────────────────────────────────────────────────────
 
 function TurnPhaseCard({
-  entry, onToggle,
+  entry, ministers, onToggle,
 }: {
-  entry: TurnEntry; onToggle: () => void
+  entry: TurnEntry; ministers: Minister[]; onToggle: () => void
 }) {
   const tr = entry.result
   const paramDeltas = tr.city_params_after && tr.city_params_before
@@ -459,36 +513,148 @@ function TurnPhaseCard({
         const sideEffectEntries = Object.entries(tr.side_effect_deltas ?? {}).filter(([,v]) => Math.abs(v) >= 0.5)
         const fmt = (k: string) => k.replace(/_/g, ' ')
 
-        // Inline reasoning helpers
+        // ── Dynamic reasoning helpers ──────────────────────────────────────────
+        const execMinister = findMinisterForPortfolio(ministers, tr.major_policy?.portfolio ?? '')
+        const cap = execMinister?.capability as Record<string, number> | undefined
+        const pers = execMinister?.personality as Record<string, number> | undefined
+        const p = tr.city_params_before ?? {}
+
+        // Approximate minister score (mirrors engine formula)
+        const portfolioCount = 1 + (execMinister?.extra_portfolios?.length ?? 0)
+        const mScoreRaw = execMinister && cap && pers
+          ? ((cap.competence ?? 50) * 0.35 + (cap.managerial_skill ?? 50) * 0.30
+            + (pers.conscientiousness ?? 50) * 0.20 + (cap.bureaucratic_navigation ?? 50) * 0.15) / 100
+          : null
+        const mPenalty = portfolioCount >= 3 ? 0.75 : portfolioCount === 2 ? 0.85 : 1.0
+        const mScore = mScoreRaw !== null ? mScoreRaw * mPenalty : null
+
+        // Approximate city filter score
+        const instBase = ((p.courts_and_legal ?? 50) * 0.40 + (p.schools_and_universities ?? 50) * 0.35
+          + (p.police_and_emergency ?? 50) * 0.25) / 100 * 100
+        const cScore = ((p.admin_efficiency ?? 50) * 0.40 + (p.anti_corruption ?? 50) * 0.30 + instBase * 0.30) / 100
+
         const execReason = (() => {
-          if (tr.execution_score >= 0.75) return 'strong delivery conditions'
-          if (tr.execution_score >= 0.55) return 'moderate delivery conditions'
-          // low — try to explain why
-          const hints: string[] = []
-          const minister = (tr as any).minister
-          if (minister) {
-            const totalPorts = 1 + (minister.extra_portfolios?.length ?? 0)
-            if (totalPorts >= 2) hints.push('minister spread across portfolios')
+          const pct = Math.round(tr.execution_score * 100)
+          const name = execMinister?.name?.split(' ')[0] ?? 'Minister'
+          const comp = Math.round(cap?.competence ?? 50)
+          const adminEff = Math.round(p.admin_efficiency ?? 50)
+
+          if (pct >= 75) {
+            if (mScore && mScore > 0.7 && cScore > 0.6)
+              return `${name} (competence ${comp}) and strong city institutions aligned — smooth delivery`
+            return `${name}'s solid capabilities overcame moderate city constraints`
           }
-          const adminEff = tr.city_params_before?.admin_efficiency ?? 100
-          if (adminEff < 40) hints.push('weak city institutions')
-          return hints.length ? hints.join(', ') : 'difficult implementation conditions'
+          if (portfolioCount >= 3)
+            return `${name} is juggling ${portfolioCount} portfolios — 25% penalty applied`
+          if (portfolioCount === 2)
+            return `${name} managing two portfolios took a 15% efficiency hit this turn`
+          if (mScore && mScore < 0.5 && cScore > 0.6)
+            return `City institutions were ready, but ${name}'s capability (competence ${comp}) was the bottleneck`
+          if (mScore && mScore > 0.6 && cScore < 0.45)
+            return `${name} was capable, but admin efficiency (${adminEff}) and weak institutions slowed delivery`
+          if (adminEff < 35)
+            return `Bureaucratic breakdown — admin efficiency at ${adminEff} made every step harder`
+          if (mScore && mScore < 0.45)
+            return `${name}'s competence (${comp}) couldn't overcome the policy complexity`
+          return `Moderate delivery — both ${name} and city systems had room to improve`
         })()
 
-        const corruptReason = (() => {
-          if ((tr.budget_stolen ?? 0) < 2) return 'well-contained — strong oversight'
-          const hints: string[] = []
-          const minister = (tr as any).minister
-          if (minister?.citizen?.personality?.integrity < 50) hints.push('minister integrity low')
-          const p = tr.city_params_before
-          if (p && (p.police_and_emergency < 45 || p.courts_and_legal < 45)) hints.push('weak oversight')
-          if (p && p.anti_corruption < 45) hints.push('poor anti-corruption controls')
-          return hints.length ? hints.join(', ') : 'institutional gap exploited'
+        const budgetReason = (() => {
+          const stolen = tr.budget_stolen ?? 0
+          const taxRev = tr.tax_revenue ?? 0
+          const policyCost = tr.major_policy?.budget_cost ?? 0
+          const intPaid = tr.interest_paid ?? 0
+          const net = taxRev - policyCost - intPaid - stolen
+          const intPct = taxRev > 0 ? Math.round((intPaid / taxRev) * 100) : 0
+
+          if (stolen > 10) {
+            const integrity = Math.round(pers?.integrity ?? 50)
+            const antiCorr = Math.round(p.anti_corruption ?? 50)
+            return `₹${fmtNum(stolen)} Cr leaked — ${execMinister?.name?.split(' ')[0] ?? 'minister'} integrity (${integrity}) + anti-corruption at ${antiCorr} opened the window`
+          }
+          if (stolen > 2) {
+            const hints: string[] = []
+            if ((pers?.integrity ?? 100) < 50) hints.push('low integrity')
+            if ((p.police_and_emergency ?? 100) < 45) hints.push('weak enforcement')
+            if ((p.anti_corruption ?? 100) < 45) hints.push('poor oversight')
+            return `Minor leakage — ${hints.join(', ')} created a small corruption window`
+          }
+          if (intPaid > 0 && intPct > 40)
+            return `Debt servicing consumed ${intPct}% of tax revenue — outstanding debt is straining the treasury`
+          if (net >= 0)
+            return `Revenue covered all costs — net gain of ₹${fmtNum(net)} Cr this turn`
+          return `Policy cost exceeded revenue — treasury drew down by ₹${fmtNum(Math.abs(net))} Cr`
         })()
 
-        // Execution bar segments
-        const barW = execPct
-        const barColor = execColor
+        const paramReason = (() => {
+          const neg = paramDeltas.filter(d => d.diff < 0).map(d => fmt(d.key))
+          const pos = paramDeltas.filter(d => d.diff > 0).map(d => fmt(d.key))
+          const negSE = sideEffectEntries.filter(([,v]) => v < 0).map(([k]) => fmt(k))
+          const policyName = tr.major_policy?.name ?? 'the policy'
+          if (pos.length > 0 && negSE.length > 0)
+            return `${policyName} boosted ${pos[0]}, but spilled into ${negSE.slice(0,2).join(', ')} — unintended consequences`
+          if (pos.length > 0 && neg.length === 0)
+            return `Clean execution — targeted gains with no adverse side effects this turn`
+          if (neg.length > 0 && pos.length === 0)
+            return `${neg[0]} resisted improvement — city conditions in this sector are entrenched`
+          return `Mixed impact — some parameters moved, others absorbed the intervention`
+        })()
+
+        const attackDetail = (() => {
+          const attack = tr.opposition_attack ?? ''
+          const pct = Math.round(tr.execution_score * 100)
+          const tension = Math.round(tr.communal_tension_after ?? 0)
+          const debtAfter = tr.outstanding_debt_after ?? 0
+          const stolen = tr.budget_stolen ?? 0
+          const crises = tr.events_triggered?.filter(e => e.type === 'crisis').length ?? 0
+          if (attack.toLowerCase().includes('delivery') || attack.toLowerCase().includes('failure'))
+            return `Execution was ${pct}% — opposition citing poor delivery`
+          if (attack.toLowerCase().includes('corruption'))
+            return stolen > 0 ? `Corruption window: ₹${fmtNum(stolen)} Cr leaked this turn` : `Corruption window opened — cabinet integrity under scrutiny`
+          if (attack.toLowerCase().includes('crisis') || attack.toLowerCase().includes('blame'))
+            return `${crises > 0 ? crises : 'Active'} crisis${crises !== 1 ? 'es' : ''} this turn — opposition demanding accountability`
+          if (attack.toLowerCase().includes('fiscal') || attack.toLowerCase().includes('debt'))
+            return `Outstanding debt ₹${fmtNum(debtAfter)} Cr — opposition calling it reckless`
+          if (attack.toLowerCase().includes('populist') || attack.toLowerCase().includes('promise'))
+            return `Opposition bypassing policy debate with direct voter promises`
+          if (attack.toLowerCase().includes('identity') || attack.toLowerCase().includes('mobiliz'))
+            return `Communal tension at ${tension} — opposition exploiting divisions`
+          return `Opposition adapted their strategy to current city vulnerabilities`
+        })()
+
+        const counterDetail = (() => {
+          const cur = Math.round(tr.interim_approval)
+          const prev = Math.round(tr.approval_before ?? tr.interim_approval)
+          const delta = cur - prev
+          const sign = delta > 0 ? '+' : ''
+          if (delta > 2) return `approval ${sign}${delta}% — framing resonated with voters`
+          if (delta >= 0) return `approval ${sign}${delta}% — holding ground`
+          return `approval ${sign}${delta}% — facing pushback despite counter-narrative`
+        })()
+
+        const approvalReason = (() => {
+          const cur = Math.round(tr.interim_approval)
+          const prev = Math.round(tr.approval_before ?? tr.interim_approval)
+          const delta = cur - prev
+          const ward = tr.ward_report ?? []
+          const hotspots = ward.filter(w => w.hotspot).map(w => w.group_name)
+          const brightSpots = ward.filter(w => w.bright_spot).map(w => w.group_name)
+          if (delta > 3 && brightSpots.length > 0)
+            return `${brightSpots[0]} and ${brightSpots.length - 1 > 0 ? `${brightSpots.length - 1} other group${brightSpots.length > 2 ? 's' : ''}` : 'others'} responded positively — approval up ${delta}%`
+          if (delta > 1) return `Modest approval gain of +${delta}% — delivery is building credibility`
+          if (delta < -2 && hotspots.length > 0)
+            return `${hotspots[0]} dissatisfied — this turn's trade-offs hit them hardest`
+          if (delta < 0) return `Slight approval dip of ${delta}% — some demographics feel the costs`
+          return `Approval held steady — no major wins or losses in public perception`
+        })()
+
+        // Decay: params not in actualDeltas nor sideEffects are decaying
+        const protectedParams = new Set([
+          ...Object.keys(tr.actual_deltas ?? {}),
+          ...Object.keys(tr.side_effect_deltas ?? {}),
+        ])
+        const allParams = Object.keys(tr.city_params_before ?? {})
+        const decayingParams = allParams.filter(k => !protectedParams.has(k))
 
         const SectionLabel = ({ num, text }: { num: string; text: string }) => (
           <div className="flex items-center gap-1.5" style={{ marginBottom: 5 }}>
@@ -507,21 +673,101 @@ function TurnPhaseCard({
           <div style={{ fontSize: 9, color: '#4b6280', fontStyle: 'italic', marginTop: 3 }}>{text}</div>
         )
 
+        // Score bar row helper
+        const ScoreRow = ({ label, value, max = 1, color, note }: { label: string; value: number; max?: number; color: string; note?: string }) => (
+          <div className="flex items-center gap-2">
+            <span style={{ fontSize: 9, color: '#4b6280', minWidth: 90 }}>{label}</span>
+            <MiniBar value={(value / max) * 100} color={color} width={52} />
+            <span style={{ fontSize: 9, fontFamily: "'Share Tech Mono', monospace", color, fontWeight: 700, minWidth: 30 }}>
+              {value < 1 && max === 1 ? value.toFixed(3) : `${Math.round(value)}%`}
+            </span>
+            {note && <span style={{ fontSize: 8, color: '#4b6280', fontStyle: 'italic' }}>{note}</span>}
+          </div>
+        )
+
         return (
           <div style={{ padding: '8px 12px 12px', paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
 
-            {/* ① IMPLEMENTATION */}
-            <div>
-              <SectionLabel num="①" text="Implementation" />
-              {/* Exec bar */}
-              <div className="flex items-center gap-2" style={{ marginBottom: 4 }}>
-                <div style={{ flex: 1, height: 5, background: '#0a1a30', borderRadius: 3, overflow: 'hidden' }}>
-                  <div style={{ width: `${barW}%`, height: '100%', background: barColor,
-                    borderRadius: 3, boxShadow: `0 0 6px ${barColor}66` }} />
+            {/* ① MINOR ACTION */}
+            {tr.minor_action && (() => {
+              const ma = tr.minor_action
+              const typeLabels: Record<string, string> = {
+                governance_upkeep: '⚙ Governance Upkeep',
+                banking: '◈ Budget Banking',
+                maintenance: '⛏ Sector Maintenance',
+                press_conference: '◉ Press Conference',
+                emergency_fund: '⚡ Emergency Fund',
+                reshuffle: '⟲ Cabinet Reshuffle',
+              }
+              const typeEffects: Record<string, string> = {
+                governance_upkeep: 'admin efficiency, anti-corruption & media freedom each +1.0',
+                banking: `+₹20 Cr banked — skipped policy spend this turn`,
+                maintenance: ma.target ? `${fmt(ma.target)} protected from decay` : 'sector shielded from decay',
+                press_conference: ma.target ? `${ma.target} group alignment boosted` : 'public outreach executed',
+                emergency_fund: ma.budget > 0 ? `₹${fmtNum(ma.budget)} Cr emergency allocation` : 'crisis funds deployed',
+                reshuffle: 'cabinet restructured — loyalty and portfolios updated',
+              }
+              const label = typeLabels[ma.type] ?? ma.type.replace(/_/g, ' ')
+              const effect = typeEffects[ma.type] ?? ''
+              return (
+                <div>
+                  <SectionLabel num="①" text="Minor Action" />
+                  <div className="flex items-center gap-2">
+                    <span style={{ fontSize: 10, color: '#c4a35a', fontWeight: 700, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.05em' }}>
+                      {label}
+                    </span>
+                    <span style={{ fontSize: 9, color: '#4b6280' }}>→</span>
+                    <span style={{ fontSize: 9, color: '#64748b', fontStyle: 'italic' }}>{effect}</span>
+                  </div>
                 </div>
-                <span style={{ fontSize: 10, fontFamily: "'Share Tech Mono', monospace", color: barColor, fontWeight: 700, minWidth: 34 }}>
-                  {execPct}%
-                </span>
+              )
+            })()}
+
+            {/* ② IMPLEMENTATION ENGINE */}
+            <div>
+              <SectionLabel num="②" text="Implementation" />
+              {/* Minister header */}
+              {execMinister && (
+                <div className="flex items-center gap-2" style={{ marginBottom: 6 }}>
+                  <span style={{ fontSize: 10, color: '#cbd5e1', fontWeight: 600 }}>{execMinister.name}</span>
+                  <span style={{ fontSize: 8, color: '#4b6280' }}>|</span>
+                  <span style={{ fontSize: 9, color: '#4b6280' }}>{tr.major_policy?.portfolio}</span>
+                  {portfolioCount > 1 && (
+                    <span style={{
+                      fontSize: 8, padding: '1px 5px', borderRadius: 3,
+                      background: 'rgba(251,146,60,0.12)', border: '1px solid rgba(251,146,60,0.3)',
+                      color: '#fb923c', fontWeight: 600,
+                    }}>{portfolioCount} portfolios</span>
+                  )}
+                </div>
+              )}
+              {/* Score breakdown */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginBottom: 6 }}>
+                {mScoreRaw !== null && (
+                  <ScoreRow
+                    label="Minister score"
+                    value={mScoreRaw}
+                    color="#60a5fa"
+                    note={mPenalty < 1 ? `×${mPenalty} overload penalty` : undefined}
+                  />
+                )}
+                <ScoreRow label="City capacity" value={cScore} color="#818cf8" />
+                <div style={{ height: 1, background: '#1c3652', margin: '2px 0' }} />
+                <div className="flex items-center gap-2">
+                  <span style={{ fontSize: 9, color: '#4b6280', minWidth: 90 }}>Execution</span>
+                  <div style={{ flex: 1, height: 5, background: '#0a1a30', borderRadius: 3, overflow: 'hidden', maxWidth: 52 }}>
+                    <div style={{ width: `${execPct}%`, height: '100%', background: execColor,
+                      borderRadius: 3, boxShadow: `0 0 6px ${execColor}66` }} />
+                  </div>
+                  <span style={{ fontSize: 11, fontFamily: "'Share Tech Mono', monospace", color: execColor, fontWeight: 700, minWidth: 34 }}>
+                    {execPct}%
+                  </span>
+                  {mScoreRaw !== null && (
+                    <span style={{ fontSize: 8, color: '#4b6280', fontStyle: 'italic' }}>
+                      0.55×M + 0.45×C
+                    </span>
+                  )}
+                </div>
               </div>
               <Reason text={execReason} />
               {/* Delivery targets */}
@@ -554,14 +800,14 @@ function TurnPhaseCard({
                       {fmt(k)} {v > 0 ? '+' : ''}{Math.round(v)}
                     </span>
                   ))}
-                  <Reason text="side effects — immediate impact" />
+                  <Reason text={paramReason} />
                 </div>
               )}
             </div>
 
-            {/* ② BUDGET */}
+            {/* ③ BUDGET */}
             <div>
-              <SectionLabel num="②" text="Budget" />
+              <SectionLabel num="③" text="Budget" />
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '3px 12px' }}>
                 {[
                   { label: 'Tax Revenue', value: `+₹${fmtNum(tr.tax_revenue ?? 0)} Cr`, color: '#4ade80' },
@@ -570,7 +816,7 @@ function TurnPhaseCard({
                   tr.budget_stolen > 0 ? { label: 'Leaked', value: `-₹${fmtNum(tr.budget_stolen)} Cr`, color: '#fb923c' } : null,
                   { label: 'Treasury', value: `₹${fmtNum(tr.treasury_after ?? 0)} Cr`, color: '#f0c040' },
                   {
-                    label: 'Net',
+                    label: 'Net this turn',
                     value: netTreasury >= 0 ? `+₹${fmtNum(netTreasury)} Cr` : `-₹${fmtNum(Math.abs(netTreasury))} Cr`,
                     color: netTreasury >= 0 ? '#4ade80' : '#f87171',
                   },
@@ -581,48 +827,117 @@ function TurnPhaseCard({
                   </div>
                 ))}
               </div>
-              {(tr.budget_stolen ?? 0) > 2 && <Reason text={corruptReason} />}
+              {/* Time profile split */}
+              {tr.major_policy?.time_profile && Object.keys(tr.major_policy.time_profile).length > 1 && (() => {
+                const cost = tr.major_policy.budget_cost ?? 0
+                const entries = Object.entries(tr.major_policy.time_profile)
+                return (
+                  <div style={{ marginTop: 5, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {entries.map(([turn, frac]) => {
+                      const turnNum = parseInt(turn.replace('turn_', ''))
+                      const amt = Math.round(cost * frac)
+                      const isNow = turnNum === 0
+                      return (
+                        <span key={turn} style={{
+                          fontSize: 8, padding: '1px 6px', borderRadius: 3,
+                          background: isNow ? 'rgba(240,192,64,0.08)' : 'rgba(75,98,128,0.12)',
+                          color: isNow ? '#f0c040' : '#4b6280',
+                          border: `1px solid ${isNow ? 'rgba(240,192,64,0.25)' : 'rgba(75,98,128,0.3)'}`,
+                        }}>
+                          {isNow ? 'Now' : `+${turnNum}t`} · {Math.round(frac * 100)}% · ₹{fmtNum(amt)} Cr
+                        </span>
+                      )
+                    })}
+                  </div>
+                )
+              })()}
+              <Reason text={budgetReason} />
             </div>
 
-            {/* ③ PARAMETER CHANGES */}
-            {paramDeltas.length > 0 && (
+            {/* ④ PARAMETER CHANGES + DECAY */}
+            {(paramDeltas.length > 0 || decayingParams.length > 0) && (
               <div>
-                <SectionLabel num="③" text="Parameter Changes" />
-                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                  {paramDeltas.map(d => (
-                    <span key={d.key} style={{
-                      fontSize: 9, padding: '1px 6px', borderRadius: 3,
-                      background: d.diff > 0 ? 'rgba(34,197,94,0.10)' : 'rgba(248,113,113,0.10)',
-                      color: d.diff > 0 ? '#86efac' : '#fca5a5',
-                      border: `1px solid ${d.diff > 0 ? '#14532d44' : '#7f1d1d44'}`,
-                    }}>
-                      {fmt(d.key)} {d.diff > 0 ? '+' : ''}{d.diff}
-                    </span>
-                  ))}
-                </div>
+                <SectionLabel num="④" text="City Parameters" />
+                {/* Policy effects */}
+                {paramDeltas.length > 0 && (
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 5 }}>
+                    {paramDeltas.map(d => (
+                      <span key={d.key} style={{
+                        fontSize: 9, padding: '1px 6px', borderRadius: 3,
+                        background: d.diff > 0 ? 'rgba(34,197,94,0.10)' : 'rgba(248,113,113,0.10)',
+                        color: d.diff > 0 ? '#86efac' : '#fca5a5',
+                        border: `1px solid ${d.diff > 0 ? '#14532d44' : '#7f1d1d44'}`,
+                      }}>
+                        {fmt(d.key)} {d.diff > 0 ? '+' : ''}{d.diff}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {/* Decay */}
+                {decayingParams.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 8, color: '#4b6280', marginBottom: 3 }}>
+                      <span style={{ color: '#f87171' }}>{decayingParams.length} decaying</span>
+                      {protectedParams.size > 0 && (
+                        <span style={{ color: '#22c55e', marginLeft: 6 }}>{protectedParams.size} protected</span>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+                      {decayingParams.slice(0, 8).map(k => (
+                        <span key={k} style={{
+                          fontSize: 8, padding: '1px 5px', borderRadius: 3,
+                          background: 'rgba(248,113,113,0.06)', color: '#94a3b8',
+                          border: '1px solid rgba(248,113,113,0.15)',
+                        }}>
+                          {fmt(k)}
+                        </span>
+                      ))}
+                      {decayingParams.length > 8 && (
+                        <span style={{ fontSize: 8, color: '#4b6280' }}>+{decayingParams.length - 8} more</span>
+                      )}
+                    </div>
+                  </div>
+                )}
+                <Reason text={paramReason} />
               </div>
             )}
 
-            {/* ④ EVENTS */}
+            {/* ⑤ EVENTS */}
             {tr.events_triggered?.length > 0 && (
               <div>
-                <SectionLabel num="④" text="Events" />
+                <SectionLabel num="⑤" text="Events" />
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                   {tr.events_triggered.map(ev => {
                     const isCrisis = ev.type === 'crisis'
+                    const portfolioParamMap: Record<string, string> = {
+                      'Infrastructure': 'transit and roads', 'Health & Education': 'hospitals and clinics',
+                      'Environment': 'air quality and pollution', 'Home Affairs': 'police and emergency',
+                      'Finance & Economy': 'jobs and commerce', 'Housing & Community': 'affordable housing',
+                      'Governance Reform': 'admin efficiency',
+                    }
+                    const paramHint = portfolioParamMap[ev.portfolio ?? ''] ?? ev.portfolio ?? 'city conditions'
+                    const paramVal = ev.portfolio && p
+                      ? Math.round((p as Record<string, number>)[paramHint.replace(/ /g, '_')] ?? 0) : null
+                    const sevDots = Array.from({ length: ev.severity ?? 1 }).map((_, i) => (
+                      <span key={i} style={{ fontSize: 7, color: isCrisis ? '#f87171' : '#4ade80' }}>●</span>
+                    ))
                     return (
                       <div key={ev.id} style={{
                         padding: '4px 8px', borderRadius: 4,
                         background: isCrisis ? 'rgba(248,113,113,0.07)' : 'rgba(34,197,94,0.07)',
                         border: `1px solid ${isCrisis ? '#7f1d1d44' : '#14532d44'}`,
                       }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, color: isCrisis ? '#fca5a5' : '#86efac' }}>
-                          {isCrisis ? '⚠' : '✦'} {ev.name}
+                        <div className="flex items-center gap-1.5">
+                          <div style={{ fontSize: 10, fontWeight: 700, color: isCrisis ? '#fca5a5' : '#86efac' }}>
+                            {isCrisis ? '⚠' : '✦'} {ev.name}
+                          </div>
+                          <div className="flex items-center gap-0.5">{sevDots}</div>
+                          <span style={{ fontSize: 8, color: '#4b6280', marginLeft: 2 }}>sev {ev.severity}</span>
                         </div>
                         <div style={{ fontSize: 9, color: '#4b6280', marginTop: 1, fontStyle: 'italic' }}>
                           {isCrisis
-                            ? `crisis triggered${ev.portfolio ? ` in ${ev.portfolio}` : ''} — city conditions were vulnerable`
-                            : `opportunity opened${ev.portfolio ? ` in ${ev.portfolio}` : ''} — strong city performance`}
+                            ? `${ev.portfolio ?? 'sector'} was vulnerable${paramVal !== null && paramVal > 0 ? ` — ${paramHint} at ${paramVal}` : ''} when this crisis hit`
+                            : `strong city performance in ${ev.portfolio ?? 'this sector'} attracted this opportunity${paramVal !== null && paramVal > 0 ? ` — ${paramHint} at ${paramVal}` : ''}`}
                         </div>
                       </div>
                     )
@@ -631,64 +946,134 @@ function TurnPhaseCard({
               </div>
             )}
 
-            {/* ⑤ OPPOSITION */}
+            {/* ⑥ OPPOSITION */}
             {tr.opposition_attack && (
               <div>
-                <SectionLabel num="⑤" text="Opposition" />
+                <SectionLabel num="⑥" text="Opposition" />
                 <div className="flex items-start gap-2">
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 10, color: '#f87171', fontWeight: 600 }}>{tr.opposition_attack}</div>
-                    <Reason text="opposition exploiting public vulnerabilities" />
+                    <div style={{ fontSize: 9, color: '#4b6280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 }}>Attack</div>
+                    <div style={{ fontSize: 10, color: '#f87171', fontWeight: 700 }}>{tr.opposition_attack}</div>
+                    <Reason text={attackDetail} />
                   </div>
                   {tr.counter_frame && (
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 10, color: '#22c55e', fontWeight: 600 }}>{tr.counter_frame}</div>
-                      <Reason text="your counter-narrative" />
+                      <div style={{ fontSize: 9, color: '#4b6280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 }}>Counter</div>
+                      <div style={{ fontSize: 10, color: '#22c55e', fontWeight: 700 }}>{tr.counter_frame}</div>
+                      <Reason text={counterDetail} />
                     </div>
                   )}
                 </div>
               </div>
             )}
 
-            {/* ⑥ APPROVAL */}
+            {/* ⑦ CITY PULSE */}
             <div>
-              <SectionLabel num="⑥" text="Public Approval" />
-              <div className="flex items-center gap-3">
-                <span style={{ fontSize: 11, fontFamily: "'Share Tech Mono', monospace", color: '#f0c040', fontWeight: 700 }}>
-                  {Math.round((tr as any).approval_before ?? tr.interim_approval)}%
-                </span>
-                <span style={{ fontSize: 9, color: '#4b6280' }}>→</span>
-                <span style={{ fontSize: 13, fontFamily: "'Share Tech Mono', monospace", color: '#f0c040', fontWeight: 700 }}>
-                  {Math.round(tr.interim_approval)}%
-                </span>
-              </div>
+              <SectionLabel num="⑦" text="City Pulse" />
+              {(() => {
+                const approvalBefore = Math.round(tr.approval_before ?? tr.interim_approval)
+                const approvalAfter = Math.round(tr.interim_approval)
+
+                const tensionBefore = tr.city_params_before
+                  ? Math.round((tr.city_params_before as Record<string, number>).communal_tension ?? tr.communal_tension_after ?? 0)
+                  : Math.round(tr.communal_tension_after ?? 0)
+                const tensionAfter = Math.round(tr.communal_tension_after ?? 0)
+                const tensionDelta = tensionAfter - tensionBefore
+
+                // Loyalty changes as proxy for scandal
+                const loyaltyChanges = Object.entries(tr.minister_loyalty_changes ?? {})
+                const bigDrops = loyaltyChanges.filter(([,d]) => d < -5)
+
+                const PulseRow = ({ label, before, after, unit = '', higherGood = true }: {
+                  label: string; before: number; after: number; unit?: string; higherGood?: boolean
+                }) => {
+                  const delta = after - before
+                  const isGood = higherGood ? delta >= 0 : delta <= 0
+                  const isNeutral = Math.abs(delta) < 0.5
+                  const deltaColor = isNeutral ? '#4b6280' : isGood ? '#22c55e' : '#f87171'
+                  const arrow = isNeutral ? '─' : delta > 0 ? '↑' : '↓'
+                  return (
+                    <div className="flex items-center" style={{ gap: 8 }}>
+                      <span style={{ fontSize: 9, color: '#4b6280', minWidth: 72 }}>{label}</span>
+                      <span style={{ fontSize: 9, fontFamily: "'Share Tech Mono', monospace", color: '#64748b' }}>{before.toFixed(before < 10 ? 1 : 0)}{unit}</span>
+                      <span style={{ fontSize: 8, color: '#4b6280' }}>→</span>
+                      <span style={{ fontSize: 10, fontFamily: "'Share Tech Mono', monospace", color: '#cbd5e1', fontWeight: 700 }}>{after.toFixed(after < 10 ? 1 : 0)}{unit}</span>
+                      <span style={{ fontSize: 9, fontFamily: "'Share Tech Mono', monospace", color: deltaColor, fontWeight: 600, minWidth: 32 }}>
+                        {delta > 0 ? '+' : ''}{delta.toFixed(Math.abs(delta) < 2 ? 1 : 0)}{unit}
+                      </span>
+                      <span style={{ fontSize: 10, color: deltaColor }}>{arrow}</span>
+                    </div>
+                  )
+                }
+
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <PulseRow label="Approval" before={approvalBefore} after={approvalAfter} unit="%" />
+                    <PulseRow label="Tension" before={tensionBefore} after={tensionAfter} higherGood={false} />
+                    {bigDrops.length > 0 && (
+                      <div className="flex items-center" style={{ gap: 8 }}>
+                        <span style={{ fontSize: 9, color: '#f87171', minWidth: 72 }}>Scandal risk</span>
+                        <span style={{ fontSize: 9, color: '#4b6280', fontStyle: 'italic' }}>
+                          {bigDrops.map(([id]) => ministers.find(m => m.id === id)?.name ?? id.slice(0, 8)).join(', ')} loyalty dropped sharply
+                        </span>
+                      </div>
+                    )}
+                    <Reason text={approvalReason} />
+                    {tensionDelta !== 0 && (
+                      <Reason text={tensionDelta > 0
+                        ? `Communal tension rose — ${tr.opposition_attack?.toLowerCase().includes('identity') ? 'opposition mobilized divisions' : 'community spaces impact'}`
+                        : `Tension eased — community stability holding`}
+                      />
+                    )}
+                  </div>
+                )
+              })()}
             </div>
 
-            {/* ⑦ NARRATIVE */}
-            {tr.delivery_narrative && (
-              <div>
-                <SectionLabel num="⑦" text="Narrative" />
-                <div style={{ fontSize: 10, color: '#64748b', lineHeight: 1.6, fontStyle: 'italic' }}>
-                  {tr.delivery_narrative}
+            {/* ⑧ NARRATIVE */}
+            {tr.delivery_narrative && (() => {
+              const bullets = tr.delivery_narrative
+                .split(/(?<=\.)\s+/)
+                .map(s => s.trim().replace(/\.$/, ''))
+                .filter(s => s.length > 12)
+                .slice(0, 3)
+              return (
+                <div>
+                  <SectionLabel num="⑧" text="Narrative" />
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                    {bullets.map((b, i) => (
+                      <div key={i} className="flex items-start gap-1.5">
+                        <span style={{ fontSize: 8, color: '#e8a030', marginTop: 1 }}>•</span>
+                        <span style={{ fontSize: 10, color: '#64748b', lineHeight: 1.5, fontStyle: 'italic' }}>{b}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )
+            })()}
 
             {/* ADVISOR */}
-            {(tr as any).advisor_summary && (
-              <div style={{
-                padding: '8px 10px', borderRadius: 5,
-                background: 'rgba(232,160,48,0.06)', border: '1px solid rgba(232,160,48,0.20)',
-              }}>
-                <div style={{ fontSize: 8, fontWeight: 700, color: '#e8a030',
-                  fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.12em', marginBottom: 4 }}>
-                  ADVISOR
+            {tr.advisor_summary && (() => {
+              const line = tr.advisor_summary
+                .split(/(?<=\.)\s+/)
+                .filter(s => s.length > 10)
+                .slice(0, 1)[0] ?? tr.advisor_summary
+              return (
+                <div style={{
+                  padding: '6px 10px', borderRadius: 5,
+                  background: 'rgba(232,160,48,0.06)', border: '1px solid rgba(232,160,48,0.20)',
+                  display: 'flex', gap: 8, alignItems: 'flex-start',
+                }}>
+                  <div style={{ fontSize: 8, fontWeight: 700, color: '#e8a030',
+                    fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.12em', marginTop: 1, whiteSpace: 'nowrap' }}>
+                    ADVISOR
+                  </div>
+                  <div style={{ fontSize: 10, color: '#b8924a', lineHeight: 1.5, fontStyle: 'italic' }}>
+                    {line}
+                  </div>
                 </div>
-                <div style={{ fontSize: 10, color: '#b8924a', lineHeight: 1.6, fontStyle: 'italic' }}>
-                  "{(tr as any).advisor_summary}"
-                </div>
-              </div>
-            )}
+              )
+            })()}
 
           </div>
         )
@@ -786,12 +1171,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
 
     try {
       const ministers = gameState.ministers
-      // Detect @mention or name references
-      const mentioned = detectMentioned(msg, ministers)
-      // If specific minister(s) mentioned, only they reply. Otherwise pick 2 naturally.
-      const responderIndices = mentioned.length > 0
-        ? [...new Set(mentioned)].slice(0, 3)
-        : pickResponders(ministers)
+      const responderIndices = selectResponders(msg, ministers)
 
       for (const idx of responderIndices) {
         const m = ministers[idx]
@@ -930,7 +1310,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
   const spentPct = initTreasury > 0 ? Math.min(100, (spent / initTreasury) * 100) : 0
 
   const approval = gameState.interim_approval
-  const prevApproval = lastTurn ? (lastTurn.interim_approval - (lastTurn.actual_deltas?.['interim_approval'] ?? 0)) : approval
+  const prevApproval = lastTurn ? lastTurn.approval_before : approval
   const approvalDelta = approval - prevApproval
   const approvalCirc = 2 * Math.PI * 16
   const approvalFill = (Math.max(0, Math.min(100, approval)) / 100) * approvalCirc
@@ -1160,7 +1540,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
         <div className="w-[300px] flex flex-col gap-2 shrink-0">
 
           {/* Advisory Chat Panel */}
-          <div className="flex flex-col flex-1 overflow-hidden" style={PANEL}>
+          <div className="flex flex-col" style={PANEL}>
 
             {/* Header */}
             <div className="flex items-center justify-between px-3 py-2"
@@ -1176,39 +1556,39 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
             </div>
 
             {/* Minister List */}
-            <div style={{ borderBottom: '1px solid #1c3652', position: 'relative' }}>
-              {gameState.ministers.map((m, idx) => {
-                const col = MINISTER_COLORS[idx % MINISTER_COLORS.length]
-                const isExpanded = expandedMinisterId === m.id
-                return (
-                  <div key={m.id}>
+            <div style={{ borderBottom: '1px solid #1c3652' }}>
+              {/* Horizontal avatar strip */}
+              <div className="flex flex-wrap" style={{ borderBottom: expandedMinisterId ? '1px solid rgba(28,54,82,0.5)' : 'none' }}>
+                {gameState.ministers.map((m, idx) => {
+                  const col = MINISTER_COLORS[idx % MINISTER_COLORS.length]
+                  const isExpanded = expandedMinisterId === m.id
+                  return (
                     <div
+                      key={m.id}
                       onClick={() => setExpandedMinisterId(isExpanded ? null : m.id)}
-                      className="flex items-center gap-2.5 px-3 py-2 cursor-pointer transition-colors"
+                      className="flex flex-col items-center gap-1 cursor-pointer transition-colors"
                       style={{
-                        borderBottom: isExpanded ? 'none' : '1px solid rgba(28,54,82,0.5)',
-                        background: isExpanded ? 'rgba(255,255,255,0.04)' : '',
+                        padding: '8px 10px 6px',
+                        background: isExpanded ? 'rgba(255,255,255,0.05)' : '',
+                        borderBottom: isExpanded ? `2px solid ${col}` : '2px solid transparent',
                       }}
                       onMouseEnter={e => { if (!isExpanded) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
                       onMouseLeave={e => { if (!isExpanded) e.currentTarget.style.background = '' }}
                     >
-                      <div className="shrink-0">
-                        {isExpanded
-                          ? <ChevronDown size={10} color="#4b6280" />
-                          : <ChevronRight size={10} color="#4b6280" />}
-                      </div>
-                      <div className="shrink-0 relative" style={{ width: 34, height: 34 }}>
-                        <Avatar seed={m.name} size={28} ring={col} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-white truncate" style={{ fontSize: 11, fontWeight: 600 }}>{m.name}</div>
-                        <div className="text-gray-500 truncate" style={{ fontSize: 10 }}>{m.portfolio}</div>
-                      </div>
-                      <div className="shrink-0 flex flex-col items-center gap-0.5">
-                        <LoyaltyArc value={m.loyalty} color={col} />
-                        <span style={{ fontSize: 9, letterSpacing: '0.05em', color: '#4b6280' }}>LOYALTY</span>
-                      </div>
+                      <Avatar seed={m.name} size={26} ring={col} />
+                      <span style={{ fontSize: 9, fontWeight: 600, color: isExpanded ? '#fff' : '#94a3b8', whiteSpace: 'nowrap' }}>
+                        {m.name.split(' ')[0]}
+                      </span>
                     </div>
+                  )
+                })}
+              </div>
+              {/* Expanded detail — full width below the strip */}
+              {gameState.ministers.map((m, idx) => {
+                const col = MINISTER_COLORS[idx % MINISTER_COLORS.length]
+                const isExpanded = expandedMinisterId === m.id
+                return isExpanded ? (
+                  <div key={m.id}>
                     {/* Expanded inline detail */}
                     {isExpanded && (
                       <div style={{
@@ -1294,7 +1674,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                       </div>
                     )}
                   </div>
-                )
+                ) : null
               })}
             </div>
 
@@ -1307,12 +1687,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
             </div>
 
             {/* Chat Messages */}
-            <div className="flex-1 overflow-y-auto p-2 space-y-2.5 min-h-0">
-              {chatMessages.length === 0 && (
-                <div style={{ fontSize: 11, color: '#334155', textAlign: 'center', paddingTop: 16 }}>
-                  Type a message to consult the council
-                </div>
-              )}
+            <div className="overflow-y-auto space-y-2.5" style={{ maxHeight: 280, padding: chatMessages.length > 0 ? '8px' : 0 }}>
               {chatMessages.map((msg, i) => (
                 <div key={i} className="flex gap-2">
                   <div className="shrink-0 mt-0.5" style={{ width: 26, height: 26 }}>
@@ -1617,6 +1992,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                 <TurnPhaseCard
                   key={entry.turn}
                   entry={entry}
+                  ministers={gameState.ministers}
                   onToggle={() => setTurnHistory(prev =>
                     prev.map((e, j) => j === i ? { ...e, expanded: !e.expanded } : e)
                   )}
