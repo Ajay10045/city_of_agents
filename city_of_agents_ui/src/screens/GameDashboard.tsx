@@ -472,10 +472,13 @@ function TurnPhaseCard({
         const p = tr.city_params_before ?? {}
 
         // Approximate minister score (mirrors engine formula)
-        const mScore = execMinister && cap && pers
+        const portfolioCount = 1 + (execMinister?.extra_portfolios?.length ?? 0)
+        const mScoreRaw = execMinister && cap && pers
           ? ((cap.competence ?? 50) * 0.35 + (cap.managerial_skill ?? 50) * 0.30
             + (pers.conscientiousness ?? 50) * 0.20 + (cap.bureaucratic_navigation ?? 50) * 0.15) / 100
           : null
+        const mPenalty = portfolioCount >= 3 ? 0.75 : portfolioCount === 2 ? 0.85 : 1.0
+        const mScore = mScoreRaw !== null ? mScoreRaw * mPenalty : null
 
         // Approximate city filter score
         const instBase = ((p.courts_and_legal ?? 50) * 0.40 + (p.schools_and_universities ?? 50) * 0.35
@@ -484,7 +487,6 @@ function TurnPhaseCard({
 
         const execReason = (() => {
           const pct = Math.round(tr.execution_score * 100)
-          const portfolioCount = 1 + (execMinister?.extra_portfolios?.length ?? 0)
           const name = execMinister?.name?.split(' ')[0] ?? 'Minister'
           const comp = Math.round(cap?.competence ?? 50)
           const adminEff = Math.round(p.admin_efficiency ?? 50)
@@ -495,7 +497,7 @@ function TurnPhaseCard({
             return `${name}'s solid capabilities overcame moderate city constraints`
           }
           if (portfolioCount >= 3)
-            return `${name} is juggling ${portfolioCount} portfolios — a 25% penalty applied to execution`
+            return `${name} is juggling ${portfolioCount} portfolios — 25% penalty applied`
           if (portfolioCount === 2)
             return `${name} managing two portfolios took a 15% efficiency hit this turn`
           if (mScore && mScore < 0.5 && cScore > 0.6)
@@ -505,7 +507,7 @@ function TurnPhaseCard({
           if (adminEff < 35)
             return `Bureaucratic breakdown — admin efficiency at ${adminEff} made every step harder`
           if (mScore && mScore < 0.45)
-            return `${name}'s competence (${comp}) couldn't overcome the policy complexity — low minister score`
+            return `${name}'s competence (${comp}) couldn't overcome the policy complexity`
           return `Moderate delivery — both ${name} and city systems had room to improve`
         })()
 
@@ -598,9 +600,13 @@ function TurnPhaseCard({
           return `Approval held steady — no major wins or losses in public perception`
         })()
 
-        // Execution bar segments
-        const barW = execPct
-        const barColor = execColor
+        // Decay: params not in actualDeltas nor sideEffects are decaying
+        const protectedParams = new Set([
+          ...Object.keys(tr.actual_deltas ?? {}),
+          ...Object.keys(tr.side_effect_deltas ?? {}),
+        ])
+        const allParams = Object.keys(tr.city_params_before ?? {})
+        const decayingParams = allParams.filter(k => !protectedParams.has(k))
 
         const SectionLabel = ({ num, text }: { num: string; text: string }) => (
           <div className="flex items-center gap-1.5" style={{ marginBottom: 5 }}>
@@ -619,21 +625,101 @@ function TurnPhaseCard({
           <div style={{ fontSize: 9, color: '#4b6280', fontStyle: 'italic', marginTop: 3 }}>{text}</div>
         )
 
+        // Score bar row helper
+        const ScoreRow = ({ label, value, max = 1, color, note }: { label: string; value: number; max?: number; color: string; note?: string }) => (
+          <div className="flex items-center gap-2">
+            <span style={{ fontSize: 9, color: '#4b6280', minWidth: 90 }}>{label}</span>
+            <MiniBar value={(value / max) * 100} color={color} width={52} />
+            <span style={{ fontSize: 9, fontFamily: "'Share Tech Mono', monospace", color, fontWeight: 700, minWidth: 30 }}>
+              {value < 1 && max === 1 ? value.toFixed(3) : `${Math.round(value)}%`}
+            </span>
+            {note && <span style={{ fontSize: 8, color: '#4b6280', fontStyle: 'italic' }}>{note}</span>}
+          </div>
+        )
+
         return (
           <div style={{ padding: '8px 12px 12px', paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
 
-            {/* ① IMPLEMENTATION */}
-            <div>
-              <SectionLabel num="①" text="Implementation" />
-              {/* Exec bar */}
-              <div className="flex items-center gap-2" style={{ marginBottom: 4 }}>
-                <div style={{ flex: 1, height: 5, background: '#0a1a30', borderRadius: 3, overflow: 'hidden' }}>
-                  <div style={{ width: `${barW}%`, height: '100%', background: barColor,
-                    borderRadius: 3, boxShadow: `0 0 6px ${barColor}66` }} />
+            {/* ① MINOR ACTION */}
+            {tr.minor_action && (() => {
+              const ma = tr.minor_action
+              const typeLabels: Record<string, string> = {
+                governance_upkeep: '⚙ Governance Upkeep',
+                banking: '◈ Budget Banking',
+                maintenance: '⛏ Sector Maintenance',
+                press_conference: '◉ Press Conference',
+                emergency_fund: '⚡ Emergency Fund',
+                reshuffle: '⟲ Cabinet Reshuffle',
+              }
+              const typeEffects: Record<string, string> = {
+                governance_upkeep: 'admin efficiency, anti-corruption & media freedom each +1.0',
+                banking: `+₹20 Cr banked — skipped policy spend this turn`,
+                maintenance: ma.target ? `${fmt(ma.target)} protected from decay` : 'sector shielded from decay',
+                press_conference: ma.target ? `${ma.target} group alignment boosted` : 'public outreach executed',
+                emergency_fund: ma.budget > 0 ? `₹${fmtNum(ma.budget)} Cr emergency allocation` : 'crisis funds deployed',
+                reshuffle: 'cabinet restructured — loyalty and portfolios updated',
+              }
+              const label = typeLabels[ma.type] ?? ma.type.replace(/_/g, ' ')
+              const effect = typeEffects[ma.type] ?? ''
+              return (
+                <div>
+                  <SectionLabel num="①" text="Minor Action" />
+                  <div className="flex items-center gap-2">
+                    <span style={{ fontSize: 10, color: '#c4a35a', fontWeight: 700, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.05em' }}>
+                      {label}
+                    </span>
+                    <span style={{ fontSize: 9, color: '#4b6280' }}>→</span>
+                    <span style={{ fontSize: 9, color: '#64748b', fontStyle: 'italic' }}>{effect}</span>
+                  </div>
                 </div>
-                <span style={{ fontSize: 10, fontFamily: "'Share Tech Mono', monospace", color: barColor, fontWeight: 700, minWidth: 34 }}>
-                  {execPct}%
-                </span>
+              )
+            })()}
+
+            {/* ② IMPLEMENTATION ENGINE */}
+            <div>
+              <SectionLabel num="②" text="Implementation" />
+              {/* Minister header */}
+              {execMinister && (
+                <div className="flex items-center gap-2" style={{ marginBottom: 6 }}>
+                  <span style={{ fontSize: 10, color: '#cbd5e1', fontWeight: 600 }}>{execMinister.name}</span>
+                  <span style={{ fontSize: 8, color: '#4b6280' }}>|</span>
+                  <span style={{ fontSize: 9, color: '#4b6280' }}>{tr.major_policy?.portfolio}</span>
+                  {portfolioCount > 1 && (
+                    <span style={{
+                      fontSize: 8, padding: '1px 5px', borderRadius: 3,
+                      background: 'rgba(251,146,60,0.12)', border: '1px solid rgba(251,146,60,0.3)',
+                      color: '#fb923c', fontWeight: 600,
+                    }}>{portfolioCount} portfolios</span>
+                  )}
+                </div>
+              )}
+              {/* Score breakdown */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginBottom: 6 }}>
+                {mScoreRaw !== null && (
+                  <ScoreRow
+                    label="Minister score"
+                    value={mScoreRaw}
+                    color="#60a5fa"
+                    note={mPenalty < 1 ? `×${mPenalty} overload penalty` : undefined}
+                  />
+                )}
+                <ScoreRow label="City capacity" value={cScore} color="#818cf8" />
+                <div style={{ height: 1, background: '#1c3652', margin: '2px 0' }} />
+                <div className="flex items-center gap-2">
+                  <span style={{ fontSize: 9, color: '#4b6280', minWidth: 90 }}>Execution</span>
+                  <div style={{ flex: 1, height: 5, background: '#0a1a30', borderRadius: 3, overflow: 'hidden', maxWidth: 52 }}>
+                    <div style={{ width: `${execPct}%`, height: '100%', background: execColor,
+                      borderRadius: 3, boxShadow: `0 0 6px ${execColor}66` }} />
+                  </div>
+                  <span style={{ fontSize: 11, fontFamily: "'Share Tech Mono', monospace", color: execColor, fontWeight: 700, minWidth: 34 }}>
+                    {execPct}%
+                  </span>
+                  {mScoreRaw !== null && (
+                    <span style={{ fontSize: 8, color: '#4b6280', fontStyle: 'italic' }}>
+                      0.55×M + 0.45×C
+                    </span>
+                  )}
+                </div>
               </div>
               <Reason text={execReason} />
               {/* Delivery targets */}
@@ -666,14 +752,14 @@ function TurnPhaseCard({
                       {fmt(k)} {v > 0 ? '+' : ''}{Math.round(v)}
                     </span>
                   ))}
-                  <Reason text={sideEffectEntries.length > 0 ? paramReason : 'no side effects this turn'} />
+                  <Reason text={paramReason} />
                 </div>
               )}
             </div>
 
-            {/* ② BUDGET */}
+            {/* ③ BUDGET */}
             <div>
-              <SectionLabel num="②" text="Budget" />
+              <SectionLabel num="③" text="Budget" />
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '3px 12px' }}>
                 {[
                   { label: 'Tax Revenue', value: `+₹${fmtNum(tr.tax_revenue ?? 0)} Cr`, color: '#4ade80' },
@@ -682,7 +768,7 @@ function TurnPhaseCard({
                   tr.budget_stolen > 0 ? { label: 'Leaked', value: `-₹${fmtNum(tr.budget_stolen)} Cr`, color: '#fb923c' } : null,
                   { label: 'Treasury', value: `₹${fmtNum(tr.treasury_after ?? 0)} Cr`, color: '#f0c040' },
                   {
-                    label: 'Net',
+                    label: 'Net this turn',
                     value: netTreasury >= 0 ? `+₹${fmtNum(netTreasury)} Cr` : `-₹${fmtNum(Math.abs(netTreasury))} Cr`,
                     color: netTreasury >= 0 ? '#4ade80' : '#f87171',
                   },
@@ -693,37 +779,88 @@ function TurnPhaseCard({
                   </div>
                 ))}
               </div>
+              {/* Time profile split */}
+              {tr.major_policy?.time_profile && Object.keys(tr.major_policy.time_profile).length > 1 && (() => {
+                const cost = tr.major_policy.budget_cost ?? 0
+                const entries = Object.entries(tr.major_policy.time_profile)
+                return (
+                  <div style={{ marginTop: 5, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {entries.map(([turn, frac]) => {
+                      const turnNum = parseInt(turn.replace('turn_', ''))
+                      const amt = Math.round(cost * frac)
+                      const isNow = turnNum === 0
+                      return (
+                        <span key={turn} style={{
+                          fontSize: 8, padding: '1px 6px', borderRadius: 3,
+                          background: isNow ? 'rgba(240,192,64,0.08)' : 'rgba(75,98,128,0.12)',
+                          color: isNow ? '#f0c040' : '#4b6280',
+                          border: `1px solid ${isNow ? 'rgba(240,192,64,0.25)' : 'rgba(75,98,128,0.3)'}`,
+                        }}>
+                          {isNow ? 'Now' : `+${turnNum}t`} · {Math.round(frac * 100)}% · ₹{fmtNum(amt)} Cr
+                        </span>
+                      )
+                    })}
+                  </div>
+                )
+              })()}
               <Reason text={budgetReason} />
             </div>
 
-            {/* ③ PARAMETER CHANGES */}
-            {paramDeltas.length > 0 && (
+            {/* ④ PARAMETER CHANGES + DECAY */}
+            {(paramDeltas.length > 0 || decayingParams.length > 0) && (
               <div>
-                <SectionLabel num="③" text="Parameter Changes" />
-                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                  {paramDeltas.map(d => (
-                    <span key={d.key} style={{
-                      fontSize: 9, padding: '1px 6px', borderRadius: 3,
-                      background: d.diff > 0 ? 'rgba(34,197,94,0.10)' : 'rgba(248,113,113,0.10)',
-                      color: d.diff > 0 ? '#86efac' : '#fca5a5',
-                      border: `1px solid ${d.diff > 0 ? '#14532d44' : '#7f1d1d44'}`,
-                    }}>
-                      {fmt(d.key)} {d.diff > 0 ? '+' : ''}{d.diff}
-                    </span>
-                  ))}
-                </div>
+                <SectionLabel num="④" text="City Parameters" />
+                {/* Policy effects */}
+                {paramDeltas.length > 0 && (
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 5 }}>
+                    {paramDeltas.map(d => (
+                      <span key={d.key} style={{
+                        fontSize: 9, padding: '1px 6px', borderRadius: 3,
+                        background: d.diff > 0 ? 'rgba(34,197,94,0.10)' : 'rgba(248,113,113,0.10)',
+                        color: d.diff > 0 ? '#86efac' : '#fca5a5',
+                        border: `1px solid ${d.diff > 0 ? '#14532d44' : '#7f1d1d44'}`,
+                      }}>
+                        {fmt(d.key)} {d.diff > 0 ? '+' : ''}{d.diff}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {/* Decay */}
+                {decayingParams.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 8, color: '#4b6280', marginBottom: 3 }}>
+                      <span style={{ color: '#f87171' }}>{decayingParams.length} decaying</span>
+                      {protectedParams.size > 0 && (
+                        <span style={{ color: '#22c55e', marginLeft: 6 }}>{protectedParams.size} protected</span>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+                      {decayingParams.slice(0, 8).map(k => (
+                        <span key={k} style={{
+                          fontSize: 8, padding: '1px 5px', borderRadius: 3,
+                          background: 'rgba(248,113,113,0.06)', color: '#94a3b8',
+                          border: '1px solid rgba(248,113,113,0.15)',
+                        }}>
+                          {fmt(k)}
+                        </span>
+                      ))}
+                      {decayingParams.length > 8 && (
+                        <span style={{ fontSize: 8, color: '#4b6280' }}>+{decayingParams.length - 8} more</span>
+                      )}
+                    </div>
+                  </div>
+                )}
                 <Reason text={paramReason} />
               </div>
             )}
 
-            {/* ④ EVENTS */}
+            {/* ⑤ EVENTS */}
             {tr.events_triggered?.length > 0 && (
               <div>
-                <SectionLabel num="④" text="Events" />
+                <SectionLabel num="⑤" text="Events" />
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                   {tr.events_triggered.map(ev => {
                     const isCrisis = ev.type === 'crisis'
-                    // Find the most relevant city param for this event's portfolio
                     const portfolioParamMap: Record<string, string> = {
                       'Infrastructure': 'transit and roads', 'Health & Education': 'hospitals and clinics',
                       'Environment': 'air quality and pollution', 'Home Affairs': 'police and emergency',
@@ -733,14 +870,21 @@ function TurnPhaseCard({
                     const paramHint = portfolioParamMap[ev.portfolio ?? ''] ?? ev.portfolio ?? 'city conditions'
                     const paramVal = ev.portfolio && p
                       ? Math.round((p as Record<string, number>)[paramHint.replace(/ /g, '_')] ?? 0) : null
+                    const sevDots = Array.from({ length: ev.severity ?? 1 }).map((_, i) => (
+                      <span key={i} style={{ fontSize: 7, color: isCrisis ? '#f87171' : '#4ade80' }}>●</span>
+                    ))
                     return (
                       <div key={ev.id} style={{
                         padding: '4px 8px', borderRadius: 4,
                         background: isCrisis ? 'rgba(248,113,113,0.07)' : 'rgba(34,197,94,0.07)',
                         border: `1px solid ${isCrisis ? '#7f1d1d44' : '#14532d44'}`,
                       }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, color: isCrisis ? '#fca5a5' : '#86efac' }}>
-                          {isCrisis ? '⚠' : '✦'} {ev.name}
+                        <div className="flex items-center gap-1.5">
+                          <div style={{ fontSize: 10, fontWeight: 700, color: isCrisis ? '#fca5a5' : '#86efac' }}>
+                            {isCrisis ? '⚠' : '✦'} {ev.name}
+                          </div>
+                          <div className="flex items-center gap-0.5">{sevDots}</div>
+                          <span style={{ fontSize: 8, color: '#4b6280', marginLeft: 2 }}>sev {ev.severity}</span>
                         </div>
                         <div style={{ fontSize: 9, color: '#4b6280', marginTop: 1, fontStyle: 'italic' }}>
                           {isCrisis
@@ -754,10 +898,10 @@ function TurnPhaseCard({
               </div>
             )}
 
-            {/* ⑤ OPPOSITION */}
+            {/* ⑥ OPPOSITION */}
             {tr.opposition_attack && (
               <div>
-                <SectionLabel num="⑤" text="Opposition" />
+                <SectionLabel num="⑥" text="Opposition" />
                 <div className="flex items-start gap-2">
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 9, color: '#4b6280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 }}>Attack</div>
@@ -775,22 +919,70 @@ function TurnPhaseCard({
               </div>
             )}
 
-            {/* ⑥ APPROVAL */}
+            {/* ⑦ CITY PULSE */}
             <div>
-              <SectionLabel num="⑥" text="Public Approval" />
-              <div className="flex items-center gap-3">
-                <span style={{ fontSize: 11, fontFamily: "'Share Tech Mono', monospace", color: '#f0c040', fontWeight: 700 }}>
-                  {Math.round(tr.approval_before ?? tr.interim_approval)}%
-                </span>
-                <span style={{ fontSize: 9, color: '#4b6280' }}>→</span>
-                <span style={{ fontSize: 13, fontFamily: "'Share Tech Mono', monospace", color: '#f0c040', fontWeight: 700 }}>
-                  {Math.round(tr.interim_approval)}%
-                </span>
-              </div>
-              <Reason text={approvalReason} />
+              <SectionLabel num="⑦" text="City Pulse" />
+              {(() => {
+                const approvalBefore = Math.round(tr.approval_before ?? tr.interim_approval)
+                const approvalAfter = Math.round(tr.interim_approval)
+
+                const tensionBefore = tr.city_params_before
+                  ? Math.round((tr.city_params_before as Record<string, number>).communal_tension ?? tr.communal_tension_after ?? 0)
+                  : Math.round(tr.communal_tension_after ?? 0)
+                const tensionAfter = Math.round(tr.communal_tension_after ?? 0)
+                const tensionDelta = tensionAfter - tensionBefore
+
+                // Loyalty changes as proxy for scandal
+                const loyaltyChanges = Object.entries(tr.minister_loyalty_changes ?? {})
+                const bigDrops = loyaltyChanges.filter(([,d]) => d < -5)
+
+                const PulseRow = ({ label, before, after, unit = '', higherGood = true }: {
+                  label: string; before: number; after: number; unit?: string; higherGood?: boolean
+                }) => {
+                  const delta = after - before
+                  const isGood = higherGood ? delta >= 0 : delta <= 0
+                  const isNeutral = Math.abs(delta) < 0.5
+                  const deltaColor = isNeutral ? '#4b6280' : isGood ? '#22c55e' : '#f87171'
+                  const arrow = isNeutral ? '─' : delta > 0 ? '↑' : '↓'
+                  return (
+                    <div className="flex items-center" style={{ gap: 8 }}>
+                      <span style={{ fontSize: 9, color: '#4b6280', minWidth: 72 }}>{label}</span>
+                      <span style={{ fontSize: 9, fontFamily: "'Share Tech Mono', monospace", color: '#64748b' }}>{before.toFixed(before < 10 ? 1 : 0)}{unit}</span>
+                      <span style={{ fontSize: 8, color: '#4b6280' }}>→</span>
+                      <span style={{ fontSize: 10, fontFamily: "'Share Tech Mono', monospace", color: '#cbd5e1', fontWeight: 700 }}>{after.toFixed(after < 10 ? 1 : 0)}{unit}</span>
+                      <span style={{ fontSize: 9, fontFamily: "'Share Tech Mono', monospace", color: deltaColor, fontWeight: 600, minWidth: 32 }}>
+                        {delta > 0 ? '+' : ''}{delta.toFixed(Math.abs(delta) < 2 ? 1 : 0)}{unit}
+                      </span>
+                      <span style={{ fontSize: 10, color: deltaColor }}>{arrow}</span>
+                    </div>
+                  )
+                }
+
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <PulseRow label="Approval" before={approvalBefore} after={approvalAfter} unit="%" />
+                    <PulseRow label="Tension" before={tensionBefore} after={tensionAfter} higherGood={false} />
+                    {bigDrops.length > 0 && (
+                      <div className="flex items-center" style={{ gap: 8 }}>
+                        <span style={{ fontSize: 9, color: '#f87171', minWidth: 72 }}>Scandal risk</span>
+                        <span style={{ fontSize: 9, color: '#4b6280', fontStyle: 'italic' }}>
+                          {bigDrops.map(([id]) => ministers.find(m => m.id === id)?.name ?? id.slice(0, 8)).join(', ')} loyalty dropped sharply
+                        </span>
+                      </div>
+                    )}
+                    <Reason text={approvalReason} />
+                    {tensionDelta !== 0 && (
+                      <Reason text={tensionDelta > 0
+                        ? `Communal tension rose — ${tr.opposition_attack?.toLowerCase().includes('identity') ? 'opposition mobilized divisions' : 'community spaces impact'}`
+                        : `Tension eased — community stability holding`}
+                      />
+                    )}
+                  </div>
+                )
+              })()}
             </div>
 
-            {/* ⑦ NARRATIVE */}
+            {/* ⑧ NARRATIVE */}
             {tr.delivery_narrative && (() => {
               const bullets = tr.delivery_narrative
                 .split(/(?<=\.)\s+/)
@@ -799,7 +991,7 @@ function TurnPhaseCard({
                 .slice(0, 3)
               return (
                 <div>
-                  <SectionLabel num="⑦" text="Narrative" />
+                  <SectionLabel num="⑧" text="Narrative" />
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                     {bullets.map((b, i) => (
                       <div key={i} className="flex items-start gap-1.5">
