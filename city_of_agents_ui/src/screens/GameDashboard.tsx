@@ -550,37 +550,41 @@ function TurnPhaseCard({
           return `Mixed impact — some parameters moved, others absorbed the intervention`
         })()
 
-        const attackReason = (() => {
+        const attackDetail = (() => {
           const attack = tr.opposition_attack ?? ''
           const pct = Math.round(tr.execution_score * 100)
           const tension = Math.round(tr.communal_tension_after ?? 0)
           const debtAfter = tr.outstanding_debt_after ?? 0
+          const stolen = tr.budget_stolen ?? 0
+          const crises = tr.events_triggered?.filter(e => e.type === 'crisis').length ?? 0
           if (attack.toLowerCase().includes('delivery') || attack.toLowerCase().includes('failure'))
-            return `${pct}% execution gave the opposition a concrete failure to amplify`
+            return `Execution was ${pct}% — opposition citing poor delivery`
           if (attack.toLowerCase().includes('corruption'))
-            return `Cabinet scandal exposure opened the door to credibility attacks`
+            return stolen > 0 ? `Corruption window: ₹${fmtNum(stolen)} Cr leaked this turn` : `Corruption window opened — cabinet integrity under scrutiny`
           if (attack.toLowerCase().includes('crisis') || attack.toLowerCase().includes('blame'))
-            return `Active crisis events gave opposition an easy target — how you respond matters now`
+            return `${crises > 0 ? crises : 'Active'} crisis${crises !== 1 ? 'es' : ''} this turn — opposition demanding accountability`
           if (attack.toLowerCase().includes('fiscal') || attack.toLowerCase().includes('debt'))
-            return `Outstanding debt of ₹${fmtNum(debtAfter)} Cr gives opposition fiscal ammunition`
+            return `Outstanding debt ₹${fmtNum(debtAfter)} Cr — opposition calling it reckless`
           if (attack.toLowerCase().includes('populist') || attack.toLowerCase().includes('promise'))
-            return `Close to election — opposition shifting to direct voter promises over policy debate`
+            return `Opposition bypassing policy debate with direct voter promises`
           if (attack.toLowerCase().includes('identity') || attack.toLowerCase().includes('mobiliz'))
-            return `Communal tension at ${tension} made identity politics viable this turn`
+            return `Communal tension at ${tension} — opposition exploiting divisions`
           return `Opposition adapted their strategy to current city vulnerabilities`
         })()
 
-        const counterReason = (() => {
-          const approval = Math.round(tr.interim_approval)
-          const counter = tr.counter_frame ?? ''
-          if (approval >= 55) return `${counter} framing is resonating — approval at ${approval}% reflects public trust`
-          if (approval >= 45) return `Counter-narrative holding steady — ${approval}% approval is a competitive position`
-          return `${counter} message hasn't broken through yet — approval at ${approval}% needs improvement`
+        const counterDetail = (() => {
+          const cur = Math.round(tr.interim_approval)
+          const prev = Math.round(tr.approval_before ?? tr.interim_approval)
+          const delta = cur - prev
+          const sign = delta > 0 ? '+' : ''
+          if (delta > 2) return `approval ${sign}${delta}% — framing resonated with voters`
+          if (delta >= 0) return `approval ${sign}${delta}% — holding ground`
+          return `approval ${sign}${delta}% — facing pushback despite counter-narrative`
         })()
 
         const approvalReason = (() => {
           const cur = Math.round(tr.interim_approval)
-          const prev = Math.round((tr as Record<string, unknown>).approval_before as number ?? tr.interim_approval)
+          const prev = Math.round(tr.approval_before ?? tr.interim_approval)
           const delta = cur - prev
           const ward = tr.ward_report ?? []
           const hotspots = ward.filter(w => w.hotspot).map(w => w.group_name)
@@ -756,13 +760,15 @@ function TurnPhaseCard({
                 <SectionLabel num="⑤" text="Opposition" />
                 <div className="flex items-start gap-2">
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 10, color: '#f87171', fontWeight: 600 }}>{tr.opposition_attack}</div>
-                    <Reason text={attackReason} />
+                    <div style={{ fontSize: 9, color: '#4b6280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 }}>Attack</div>
+                    <div style={{ fontSize: 10, color: '#f87171', fontWeight: 700 }}>{tr.opposition_attack}</div>
+                    <Reason text={attackDetail} />
                   </div>
                   {tr.counter_frame && (
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 10, color: '#22c55e', fontWeight: 600 }}>{tr.counter_frame}</div>
-                      <Reason text={counterReason} />
+                      <div style={{ fontSize: 9, color: '#4b6280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 }}>Counter</div>
+                      <div style={{ fontSize: 10, color: '#22c55e', fontWeight: 700 }}>{tr.counter_frame}</div>
+                      <Reason text={counterDetail} />
                     </div>
                   )}
                 </div>
@@ -774,7 +780,7 @@ function TurnPhaseCard({
               <SectionLabel num="⑥" text="Public Approval" />
               <div className="flex items-center gap-3">
                 <span style={{ fontSize: 11, fontFamily: "'Share Tech Mono', monospace", color: '#f0c040', fontWeight: 700 }}>
-                  {Math.round((tr as any).approval_before ?? tr.interim_approval)}%
+                  {Math.round(tr.approval_before ?? tr.interim_approval)}%
                 </span>
                 <span style={{ fontSize: 9, color: '#4b6280' }}>→</span>
                 <span style={{ fontSize: 13, fontFamily: "'Share Tech Mono', monospace", color: '#f0c040', fontWeight: 700 }}>
@@ -785,30 +791,49 @@ function TurnPhaseCard({
             </div>
 
             {/* ⑦ NARRATIVE */}
-            {tr.delivery_narrative && (
-              <div>
-                <SectionLabel num="⑦" text="Narrative" />
-                <div style={{ fontSize: 10, color: '#64748b', lineHeight: 1.6, fontStyle: 'italic' }}>
-                  {tr.delivery_narrative}
+            {tr.delivery_narrative && (() => {
+              const bullets = tr.delivery_narrative
+                .split(/(?<=\.)\s+/)
+                .map(s => s.trim().replace(/\.$/, ''))
+                .filter(s => s.length > 12)
+                .slice(0, 3)
+              return (
+                <div>
+                  <SectionLabel num="⑦" text="Narrative" />
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                    {bullets.map((b, i) => (
+                      <div key={i} className="flex items-start gap-1.5">
+                        <span style={{ fontSize: 8, color: '#e8a030', marginTop: 1 }}>•</span>
+                        <span style={{ fontSize: 10, color: '#64748b', lineHeight: 1.5, fontStyle: 'italic' }}>{b}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )
+            })()}
 
             {/* ADVISOR */}
-            {(tr as any).advisor_summary && (
-              <div style={{
-                padding: '8px 10px', borderRadius: 5,
-                background: 'rgba(232,160,48,0.06)', border: '1px solid rgba(232,160,48,0.20)',
-              }}>
-                <div style={{ fontSize: 8, fontWeight: 700, color: '#e8a030',
-                  fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.12em', marginBottom: 4 }}>
-                  ADVISOR
+            {tr.advisor_summary && (() => {
+              const line = tr.advisor_summary
+                .split(/(?<=\.)\s+/)
+                .filter(s => s.length > 10)
+                .slice(0, 1)[0] ?? tr.advisor_summary
+              return (
+                <div style={{
+                  padding: '6px 10px', borderRadius: 5,
+                  background: 'rgba(232,160,48,0.06)', border: '1px solid rgba(232,160,48,0.20)',
+                  display: 'flex', gap: 8, alignItems: 'flex-start',
+                }}>
+                  <div style={{ fontSize: 8, fontWeight: 700, color: '#e8a030',
+                    fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.12em', marginTop: 1, whiteSpace: 'nowrap' }}>
+                    ADVISOR
+                  </div>
+                  <div style={{ fontSize: 10, color: '#b8924a', lineHeight: 1.5, fontStyle: 'italic' }}>
+                    {line}
+                  </div>
                 </div>
-                <div style={{ fontSize: 10, color: '#b8924a', lineHeight: 1.6, fontStyle: 'italic' }}>
-                  "{(tr as any).advisor_summary}"
-                </div>
-              </div>
-            )}
+              )
+            })()}
 
           </div>
         )
