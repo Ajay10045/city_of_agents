@@ -131,7 +131,8 @@ def _build_personality(
 
 
 def _build_capability(p: CitizenPersonality, education: float, rng: random.Random) -> CitizenCapability:
-    noise = lambda: rng.gauss(0, 5)
+    def noise() -> float:
+        return rng.gauss(0, 5)
     competence = _clamp(p.conscientiousness * 0.4 + education * 0.4 + rng.gauss(45, 15) * 0.2 + noise())
     managerial = _clamp(competence * 0.6 + p.conscientiousness * 0.4 + noise())
     strategic = _clamp(competence * 0.5 + education * 0.3 + p.ambition * 0.2 + noise())
@@ -153,7 +154,8 @@ def _compute_initial_wellbeing(
 ) -> WellbeingState:
     p = params
     # Base formulas from Section 3.4
-    noise = lambda: rng.gauss(0, 3)
+    def noise() -> float:
+        return rng.gauss(0, 3)
     health_base = (p.hospitals_and_clinics * 0.50 + p.water_power_sanitation * 0.20
                    + p.air_quality_and_pollution * 0.10 + p.affordable_housing * 0.10
                    + p.transit_and_roads * 0.10)
@@ -211,7 +213,7 @@ def generate_citizens(
         religion = _weighted_choice([r.model_dump() for r in demo_cfg.religion_distribution], rng)
         profession = _weighted_choice([p.model_dump() for p in demo_cfg.profession_distribution], rng)
         education = _clamp(rng.gauss(demo_cfg.education_distribution.mean, demo_cfg.education_distribution.spread))
-        location = _weighted_choice([l.model_dump() for l in demo_cfg.location_distribution], rng)
+        location = _weighted_choice([loc.model_dump() for loc in demo_cfg.location_distribution], rng)
         ideology_e = _sample_ideology_economic(demo_cfg.ideology_economic_distribution, rng)
         ideology_s = _sample_ideology_social(demo_cfg.ideology_social_distribution, rng)
 

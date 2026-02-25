@@ -120,8 +120,10 @@ export interface WardReportEntry {
 export interface TurnResult {
   turn: number
   major_policy: Policy
+  minor_action: { type: string; target?: string; budget: number }
   execution_score: number
   actual_deltas: Record<string, number>
+  side_effect_deltas: Record<string, number>
   budget_stolen: number
   delivery_targets: DeliveryTarget[]
   delivery_narrative: string
@@ -135,6 +137,7 @@ export interface TurnResult {
   ward_report: WardReportEntry[]
   events_triggered: ActiveEvent[]
   communal_tension_after: number
+  minister_loyalty_changes: Record<string, number>
   treasury_after: number
   outstanding_debt_after: number
   interest_paid: number

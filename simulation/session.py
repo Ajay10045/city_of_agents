@@ -40,13 +40,10 @@ from engine.events import (
 from engine.implementation import run_implementation
 from engine.media import apply_media_drift, check_scandal_break, init_media_outlets
 from engine.models import (
-    ActiveEvent,
-    CityParameters,
     CityProfile,
     DeliveryTarget,
     GameState,
     GovernanceScorecard,
-    MediaHeadline,
     Minister,
     MinisterState,
     MinorAction,
@@ -62,7 +59,6 @@ from engine.opposition import (
     update_opposition_credibility,
 )
 from engine.political import (
-    compute_election_approval,
     compute_interim_approval,
     political_engagement,
     update_mayor_alignment,
@@ -72,7 +68,6 @@ from engine.wellbeing import update_citizen_wellbeing
 from llm.llm_client import LLMClient
 from simulation.llm_calls import (
     generate_citizen_names,
-    generate_city_profile,
     generate_delivery_narrative,
     generate_media_headlines,
     generate_policy_options,
@@ -407,7 +402,6 @@ class GameSession:
         params = params.apply_delta(pending)
 
         # ⑥ Events: tick existing, check for new
-        params_before_events = params
         remaining_events, event_deltas = step_events(state.active_events, rng)
         params = params.apply_delta(event_deltas)
 

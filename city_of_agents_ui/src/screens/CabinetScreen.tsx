@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Loader2, AlertTriangle, Check, ChevronRight, X, Briefcase, GripVertical } from 'lucide-react'
+import { Loader2, AlertTriangle, Check, ChevronRight, X, Briefcase, GripVertical, Shuffle } from 'lucide-react'
 import { getMinisterCandidates, assignCabinet } from '../api'
 import type { Citizen, GameState } from '../types'
 
@@ -189,6 +189,33 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
       // If removing last portfolio, remove the minister entirely
       return next.length > 0 ? { ...m, portfolios: next } : m
     }).filter(m => m.portfolios.length > 0))
+  }
+
+  function handleRandomCabinet() {
+    const available = candidates.slice()
+    // Shuffle candidates
+    for (let i = available.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[available[i], available[j]] = [available[j], available[i]]
+    }
+    // Shuffle portfolios
+    const pIds = PORTFOLIOS.map(p => p.id)
+    for (let i = pIds.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[pIds[i], pIds[j]] = [pIds[j], pIds[i]]
+    }
+    // Assign ~2 portfolios per minister across 5 ministers
+    const count = Math.min(5, available.length)
+    const newCabinet: MinisterSelection[] = []
+    for (let i = 0; i < count; i++) {
+      newCabinet.push({ citizen: available[i], portfolios: [] })
+    }
+    pIds.forEach((pid, idx) => {
+      newCabinet[idx % count].portfolios.push(pid)
+    })
+    setCabinet(newCabinet)
+    setInterviewee(null)
+    setSelectedPortfolios(new Set())
   }
 
   async function handleBeginGovernance() {
@@ -555,6 +582,19 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
               APPLICANTS — {waitingCandidates.length}
             </span>
             <div style={{ height: 1, flex: 1, background: 'linear-gradient(90deg, #1c3652, transparent)' }} />
+            <button
+              onClick={handleRandomCabinet}
+              disabled={candidates.length === 0}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded transition-all"
+              style={{ border: '1px solid #1c3652', fontSize: 9, color: '#e8a030',
+                fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.1em', fontWeight: 700,
+                background: 'rgba(232,160,48,0.06)', cursor: 'pointer', whiteSpace: 'nowrap',
+                opacity: candidates.length === 0 ? 0.4 : 1 }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(232,160,48,0.15)'; e.currentTarget.style.borderColor = '#e8a030' }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'rgba(232,160,48,0.06)'; e.currentTarget.style.borderColor = '#1c3652' }}
+            >
+              <Shuffle size={10} /> RANDOM CABINET
+            </button>
           </div>
 
           <div style={{ flex: 1, overflowY: 'auto', padding: '4px 14px 16px',

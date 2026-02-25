@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import {
-  ChevronRight, HelpCircle, Settings, Clock, SkipForward,
+  ChevronRight, ChevronDown, HelpCircle, Settings, Clock, SkipForward,
   Zap, Send, AlertTriangle, TrendingDown, Droplets,
   MapPin, Info,
   Newspaper, MessageCircle, TrendingUp, Loader2,
@@ -149,97 +149,6 @@ function MiniBar({ value, color, width = 36 }: { value: number; color: string; w
         height: '100%', width: `${Math.max(0, Math.min(100, value))}%`,
         background: color, borderRadius: 2, boxShadow: `0 0 4px ${color}80`
       }} />
-    </div>
-  )
-}
-
-// ─── Minister Profile Card (hover) ────────────────────────────────────────────
-
-function MinisterProfileCard({ minister, color }: { minister: Minister; color: string }) {
-  const scandalPct = Math.max(0, Math.min(100, minister.scandal_exposure))
-  const loyaltyPct = Math.max(0, Math.min(100, minister.loyalty))
-  const capPct = Math.max(0, Math.min(100, minister.political_capital ?? 50))
-  return (
-    <div style={{
-      position: 'absolute', left: '100%', top: 0, marginLeft: 8, zIndex: 100,
-      width: 220,
-      background: 'linear-gradient(180deg, #0d1f36 0%, #081527 100%)',
-      border: `1px solid ${color}55`,
-      borderRadius: 8,
-      padding: 14,
-      boxShadow: `0 8px 32px rgba(0,0,0,0.7), 0 0 20px ${color}22`,
-      pointerEvents: 'none',
-    }}>
-      {/* Top strip */}
-      <div style={{
-        height: 2, background: `linear-gradient(90deg, ${color}, transparent)`,
-        borderRadius: 2, marginBottom: 12
-      }} />
-      <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 12 }}>
-        <Avatar seed={minister.name} size={42} ring={color} />
-        <div>
-          <div style={{ fontWeight: 700, fontSize: 12, color: '#fff', lineHeight: 1.2 }}>{minister.name}</div>
-          <div style={{
-            fontSize: 10, color: color, marginTop: 2, fontFamily: "'Rajdhani', sans-serif",
-            letterSpacing: '0.05em', fontWeight: 600
-          }}>{minister.portfolio}</div>
-        </div>
-      </div>
-
-      {/* Stats */}
-      {[
-        { label: 'Loyalty', value: loyaltyPct, color: '#22c55e' },
-        { label: 'Political Capital', value: capPct, color: '#38bdf8' },
-        { label: 'Scandal Exposure', value: scandalPct, color: scandalPct > 50 ? '#f87171' : '#64748b' },
-      ].map(({ label, value, color: c }) => (
-        <div key={label} style={{ marginBottom: 8 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-            <span style={{
-              fontSize: 9, color: '#64748b', fontFamily: "'Rajdhani', sans-serif",
-              letterSpacing: '0.08em', fontWeight: 600
-            }}>{label.toUpperCase()}</span>
-            <span style={{ fontSize: 9, fontFamily: "'Share Tech Mono', monospace", color: c }}>{Math.round(value)}</span>
-          </div>
-          <div style={{ height: 3, background: '#071018', borderRadius: 2, overflow: 'hidden' }}>
-            <div style={{
-              height: '100%', width: `${value}%`, background: c, borderRadius: 2,
-              boxShadow: `0 0 4px ${c}80`
-            }} />
-          </div>
-        </div>
-      ))}
-
-      {/* Badges */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
-        {loyaltyPct >= 70 && (
-          <span style={{
-            fontSize: 8, padding: '2px 6px', borderRadius: 3,
-            background: 'rgba(34,197,94,0.12)', border: '1px solid #14532d', color: '#4ade80',
-            fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em', fontWeight: 700
-          }}>LOYAL</span>
-        )}
-        {loyaltyPct < 40 && (
-          <span style={{
-            fontSize: 8, padding: '2px 6px', borderRadius: 3,
-            background: 'rgba(248,113,113,0.12)', border: '1px solid #7f1d1d', color: '#f87171',
-            fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em', fontWeight: 700
-          }}>DISLOYAL</span>
-        )}
-        {scandalPct > 60 && (
-          <span style={{
-            fontSize: 8, padding: '2px 6px', borderRadius: 3,
-            background: 'rgba(249,115,22,0.12)', border: '1px solid #7c2d12', color: '#fb923c',
-            fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em', fontWeight: 700
-          }}>AT RISK</span>
-        )}
-        {capPct >= 70 && (
-          <span style={{
-            fontSize: 8, padding: '2px 6px', borderRadius: 3,
-            background: 'rgba(56,189,248,0.12)', border: '1px solid #0c4a6e', color: '#38bdf8',
-            fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em', fontWeight: 700
-          }}>HIGH INFLUENCE</span>
-        )}
-      </div>
     </div>
   )
 }
@@ -401,11 +310,8 @@ interface ChatMsg {
 
 interface TurnEntry {
   turn: number
-  actor: 'Mayor' | 'Opposition' | null
-  actorColor: string
-  title: string
-  description: string
-  tags: Array<{ label: string; bg: string; border: string; color: string }>
+  result: TurnResult
+  expanded: boolean
 }
 
 // ─── Portfolio image map ───────────────────────────────────────────────────────
@@ -491,6 +397,239 @@ function pickResponders(ministers: Minister[], excludeIndices: number[] = []): n
   return shuffled.slice(0, Math.min(2, shuffled.length))
 }
 
+// ─── Phase Section helper ─────────────────────────────────────────────────────
+
+function PhaseSection({ label, accent, children }: { label: string; accent: string; children: React.ReactNode }) {
+  return (
+    <div style={{ borderLeft: `2px solid ${accent}`, paddingLeft: 8, marginBottom: 8 }}>
+      <div style={{ ...HDR_LABEL, color: accent, fontSize: 9, marginBottom: 4 }}>{label}</div>
+      {children}
+    </div>
+  )
+}
+
+function DeltaTag({ label, value }: { label: string; value: number }) {
+  const pos = value >= 0
+  const color = pos ? '#86efac' : '#fca5a5'
+  const bg = pos ? 'rgba(34,197,94,0.12)' : 'rgba(248,113,113,0.12)'
+  const border = pos ? '#14532d' : '#7f1d1d'
+  return (
+    <span className="px-1.5 py-0.5 rounded" style={{ fontSize: 9, color, background: bg,
+      border: `1px solid ${border}`, fontFamily: "'Share Tech Mono', monospace" }}>
+      {label.replace(/_/g, ' ')} {pos ? '+' : ''}{Math.round(value)}
+    </span>
+  )
+}
+
+function ExecScoreBadge({ score }: { score: number }) {
+  const pct = Math.round(score * 100)
+  const color = pct >= 70 ? '#22c55e' : pct >= 45 ? '#e8a030' : '#f87171'
+  return (
+    <span style={{ fontSize: 9, fontWeight: 700, fontFamily: "'Share Tech Mono', monospace",
+      color, background: `${color}18`, border: `1px solid ${color}44`,
+      borderRadius: 3, padding: '1px 5px' }}>
+      {pct}% EXEC
+    </span>
+  )
+}
+
+// ─── TurnPhaseCard ─────────────────────────────────────────────────────────────
+
+function TurnPhaseCard({
+  entry, ministers, onToggle,
+}: {
+  entry: TurnEntry; ministers: Minister[]; onToggle: () => void
+}) {
+  const tr = entry.result
+  const paramDeltas = tr.city_params_after && tr.city_params_before
+    ? Object.entries(tr.city_params_after)
+        .map(([k, v]) => ({ key: k, diff: Math.round(v - (tr.city_params_before[k] ?? v)) }))
+        .filter(d => Math.abs(d.diff) >= 1)
+    : []
+
+  return (
+    <div style={{ borderBottom: '1px solid #1c3652' }}>
+      {/* Header — always visible */}
+      <div
+        onClick={onToggle}
+        className="flex items-center gap-2 px-3 py-2 cursor-pointer transition-all"
+        style={{ background: entry.expanded ? 'rgba(255,255,255,0.02)' : '' }}
+        onMouseEnter={e => { if (!entry.expanded) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
+        onMouseLeave={e => { if (!entry.expanded) e.currentTarget.style.background = '' }}
+      >
+        <div className="shrink-0">
+          {entry.expanded
+            ? <ChevronDown size={12} color="#4b6280" />
+            : <ChevronRight size={12} color="#4b6280" />}
+        </div>
+        <div className="shrink-0 px-2 py-0.5 rounded"
+          style={{ background: 'rgba(232,160,48,0.12)', border: '1px solid rgba(232,160,48,0.3)',
+            fontSize: 9, fontWeight: 700, color: '#e8a030',
+            fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em' }}>
+          TURN {tr.turn}
+        </div>
+        <span style={{ fontSize: 10, fontWeight: 600, color: '#fff', flex: 1, minWidth: 0 }} className="truncate">
+          {tr.major_policy?.name ?? 'Policy Executed'}
+        </span>
+        <ExecScoreBadge score={tr.execution_score} />
+      </div>
+
+      {/* Expanded phases */}
+      {entry.expanded && (
+        <div className="px-3 pb-3 pt-1" style={{ paddingLeft: 28 }}>
+
+          {/* ① IMPLEMENTATION */}
+          <PhaseSection label="① IMPLEMENTATION" accent="#38bdf8">
+            <div className="flex items-center gap-2 mb-1.5">
+              <span style={{ fontSize: 10, color: '#94a3b8' }}>Execution:</span>
+              <div style={{ flex: 1, maxWidth: 120, height: 4, background: '#071018', borderRadius: 2, overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: `${Math.round(tr.execution_score * 100)}%`,
+                  background: tr.execution_score >= 0.7 ? '#22c55e' : tr.execution_score >= 0.45 ? '#e8a030' : '#f87171',
+                  borderRadius: 2 }} />
+              </div>
+              <span style={{ fontSize: 10, ...MONO(tr.execution_score >= 0.7 ? '#22c55e' : tr.execution_score >= 0.45 ? '#e8a030' : '#f87171') }}>
+                {Math.round(tr.execution_score * 100)}%
+              </span>
+            </div>
+            {/* Delivery targets */}
+            {tr.delivery_targets?.length > 0 && (
+              <div className="space-y-1 mb-1.5">
+                {tr.delivery_targets.map(t => {
+                  const ratio = Math.round(t.completion_ratio * 100)
+                  const col = ratio >= 80 ? '#22c55e' : ratio >= 50 ? '#e8a030' : '#f87171'
+                  return (
+                    <div key={t.key} className="flex items-center gap-2">
+                      <span style={{ fontSize: 9, color: '#64748b', flex: 1, minWidth: 0 }} className="truncate">
+                        {t.label}
+                      </span>
+                      <span style={{ fontSize: 9, ...MONO(col) }}>
+                        {Math.round(t.delivered)}/{Math.round(t.proposed)} {t.unit}
+                      </span>
+                      <span style={{ fontSize: 8, color: col }}>({ratio}%)</span>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+            {/* Side effects */}
+            {tr.side_effect_deltas && Object.keys(tr.side_effect_deltas).length > 0 && (
+              <div className="flex gap-1 flex-wrap mt-1">
+                <span style={{ fontSize: 9, color: '#64748b' }}>Side effects:</span>
+                {Object.entries(tr.side_effect_deltas).filter(([, v]) => Math.abs(v) >= 0.5).map(([k, v]) => (
+                  <DeltaTag key={k} label={k} value={v} />
+                ))}
+              </div>
+            )}
+          </PhaseSection>
+
+          {/* ② BUDGET */}
+          <PhaseSection label="② BUDGET" accent="#f59e0b">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-0.5" style={{ fontSize: 10 }}>
+              <span style={{ color: '#64748b' }}>Policy cost</span>
+              <span style={MONO('#f87171')}>-₹{fmtNum(tr.major_policy?.budget_cost ?? 0)} Cr</span>
+              <span style={{ color: '#64748b' }}>Tax revenue</span>
+              <span style={MONO('#4ade80')}>+₹{fmtNum(tr.tax_revenue ?? 0)} Cr</span>
+              <span style={{ color: '#64748b' }}>Interest paid</span>
+              <span style={MONO('#f87171')}>-₹{fmtNum(tr.interest_paid ?? 0)} Cr</span>
+              {tr.budget_stolen > 0 && <>
+                <span style={{ color: '#fb923c' }}>Corruption leakage</span>
+                <span style={MONO('#fb923c')}>₹{fmtNum(tr.budget_stolen)} Cr</span>
+              </>}
+              <span style={{ color: '#94a3b8', fontWeight: 600 }}>Treasury after</span>
+              <span style={{ ...MONO('#f0c040'), fontWeight: 700 }}>₹{fmtNum(tr.treasury_after ?? 0)} Cr</span>
+            </div>
+          </PhaseSection>
+
+          {/* ③ PARAMETER CHANGES */}
+          {paramDeltas.length > 0 && (
+            <PhaseSection label="③ PARAMETER CHANGES" accent="#a855f7">
+              <div className="flex gap-1 flex-wrap">
+                {paramDeltas.map(d => <DeltaTag key={d.key} label={d.key} value={d.diff} />)}
+              </div>
+            </PhaseSection>
+          )}
+
+          {/* ④ EVENTS */}
+          {tr.events_triggered?.length > 0 && (
+            <PhaseSection label="④ EVENTS TRIGGERED" accent="#ef4444">
+              {tr.events_triggered.map(ev => {
+                const isCrisis = ev.type === 'crisis'
+                return (
+                  <div key={ev.id} className="flex items-center gap-2 mb-1">
+                    <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3,
+                      background: isCrisis ? 'rgba(248,113,113,0.12)' : 'rgba(34,197,94,0.12)',
+                      border: `1px solid ${isCrisis ? '#7f1d1d' : '#14532d'}`,
+                      color: isCrisis ? '#fca5a5' : '#86efac',
+                      fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, letterSpacing: '0.05em' }}>
+                      {ev.type === 'crisis' ? '⚠' : '✦'} {ev.name}
+                    </span>
+                    {ev.portfolio && <span style={{ fontSize: 9, color: '#475569' }}>{ev.portfolio}</span>}
+                  </div>
+                )
+              })}
+            </PhaseSection>
+          )}
+
+          {/* ⑤ OPPOSITION & POLITICS */}
+          <PhaseSection label="⑤ OPPOSITION & POLITICS" accent="#f87171">
+            <div style={{ fontSize: 10 }}>
+              {tr.opposition_attack && (
+                <div className="mb-1">
+                  <span style={{ color: '#f87171', fontWeight: 600 }}>Attack: </span>
+                  <span style={{ color: '#94a3b8' }}>{tr.opposition_attack}</span>
+                </div>
+              )}
+              {tr.counter_frame && (
+                <div className="mb-1">
+                  <span style={{ color: '#22c55e', fontWeight: 600 }}>Counter: </span>
+                  <span style={{ color: '#94a3b8' }}>{tr.counter_frame}</span>
+                </div>
+              )}
+              <div className="flex items-center gap-4 mt-1">
+                <span style={{ color: '#64748b', fontSize: 9 }}>Approval</span>
+                <span style={{ ...MONO('#f0c040'), fontSize: 10, fontWeight: 700 }}>
+                  {Math.round(tr.interim_approval)}%
+                </span>
+                <span style={{ color: '#64748b', fontSize: 9 }}>Tension</span>
+                <span style={{ ...MONO(tr.communal_tension_after > 50 ? '#f87171' : '#64748b'), fontSize: 10 }}>
+                  {Math.round(tr.communal_tension_after)}
+                </span>
+              </div>
+            </div>
+          </PhaseSection>
+
+          {/* ⑥ MINISTER LOYALTY */}
+          {tr.minister_loyalty_changes && Object.keys(tr.minister_loyalty_changes).length > 0 && (
+            <PhaseSection label="⑥ CABINET" accent="#7c3aed">
+              <div className="flex gap-2 flex-wrap">
+                {Object.entries(tr.minister_loyalty_changes).map(([id, delta]) => {
+                  const m = ministers.find(mi => mi.id === id)
+                  if (!m) return null
+                  const col = delta > 0 ? '#22c55e' : delta < 0 ? '#f87171' : '#64748b'
+                  return (
+                    <span key={id} style={{ fontSize: 9, color: col }}>
+                      {m.name.split(' ')[0]} {delta > 0 ? '▲' : delta < 0 ? '▼' : '—'}{delta !== 0 ? Math.abs(delta).toFixed(0) : ''}
+                    </span>
+                  )
+                })}
+              </div>
+            </PhaseSection>
+          )}
+
+          {/* ⑦ NARRATIVE */}
+          {tr.delivery_narrative && (
+            <PhaseSection label="⑦ NARRATIVE" accent="#64748b">
+              <div style={{ fontSize: 10, color: '#94a3b8', lineHeight: 1.5 }}>
+                {tr.delivery_narrative}
+              </div>
+            </PhaseSection>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function GameDashboard({ gameId, initialState }: { gameId: string; initialState: GameState }) {
@@ -507,8 +646,11 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
   // Track who is open in backend (one at a time)
   const activeConsultRef = useRef<string | null>(null)
 
-  // Minister hover profile
-  const [hoveredMinisterId, setHoveredMinisterId] = useState<string | null>(null)
+  // Minister expand
+  const [expandedMinisterId, setExpandedMinisterId] = useState<string | null>(null)
+
+  // All parameters panel
+  const [showAllParams, setShowAllParams] = useState(false)
 
   // Policy modal
   const [policyOptions, setPolicyOptions] = useState<Policy[] | null>(null)
@@ -653,36 +795,10 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
       setGameState(newState)
       setLastTurn(tr)
 
-      // Build turn history entry from param deltas
-      const deltas = tr.city_params_after && tr.city_params_before
-        ? Object.entries(tr.city_params_after).map(([k, v]) => {
-          const diff = Math.round(v - (tr.city_params_before[k] ?? v))
-          if (Math.abs(diff) < 1) return null
-          return {
-            label: `${k.replace(/_/g, ' ')} ${diff > 0 ? '+' : ''}${diff}`,
-            bg: diff > 0 ? 'rgba(34,197,94,0.12)' : 'rgba(248,113,113,0.12)',
-            border: diff > 0 ? '#14532d' : '#7f1d1d',
-            color: diff > 0 ? '#86efac' : '#fca5a5',
-          }
-        }).filter((x): x is NonNullable<typeof x> => x !== null).slice(0, 4)
-        : []
-
-      const newEntry: TurnEntry = {
-        turn: tr.turn, actor: 'Mayor', actorColor: '#e8a030',
-        title: tr.major_policy?.name ?? 'Policy Executed',
-        description: tr.delivery_narrative ?? '',
-        tags: deltas,
-      }
-
-      const entries: TurnEntry[] = [newEntry]
-      if (tr.opposition_attack) {
-        entries.push({
-          turn: tr.turn, actor: 'Opposition', actorColor: '#f87171',
-          title: tr.opposition_attack.slice(0, 60) + (tr.opposition_attack.length > 60 ? '...' : ''),
-          description: '', tags: [],
-        })
-      }
-      setTurnHistory(prev => [...entries, ...prev])
+      // Add turn to history — latest expanded, collapse all previous
+      const newEntry: TurnEntry = { turn: tr.turn, result: tr, expanded: true }
+      setTurnHistory(prev => [newEntry, ...prev.map(e => ({ ...e, expanded: false }))])
+      setShowPolicyModal(false)
       setPolicyOptions(null)
       setExecutingPolicyName(null)
       setPolicyError(null)
@@ -992,17 +1108,24 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
             <div style={{ borderBottom: '1px solid #1c3652', position: 'relative' }}>
               {gameState.ministers.map((m, idx) => {
                 const col = MINISTER_COLORS[idx % MINISTER_COLORS.length]
-                const isHovered = hoveredMinisterId === m.id
+                const isExpanded = expandedMinisterId === m.id
                 return (
-                  <div key={m.id} style={{ position: 'relative' }}>
+                  <div key={m.id}>
                     <div
-                      onMouseEnter={() => setHoveredMinisterId(m.id)}
-                      onMouseLeave={() => setHoveredMinisterId(null)}
-                      className="flex items-center gap-2.5 px-3 py-2 cursor-default transition-colors"
+                      onClick={() => setExpandedMinisterId(isExpanded ? null : m.id)}
+                      className="flex items-center gap-2.5 px-3 py-2 cursor-pointer transition-colors"
                       style={{
-                        borderBottom: '1px solid rgba(28,54,82,0.5)',
-                        background: isHovered ? 'rgba(255,255,255,0.04)' : '',
-                      }}>
+                        borderBottom: isExpanded ? 'none' : '1px solid rgba(28,54,82,0.5)',
+                        background: isExpanded ? 'rgba(255,255,255,0.04)' : '',
+                      }}
+                      onMouseEnter={e => { if (!isExpanded) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
+                      onMouseLeave={e => { if (!isExpanded) e.currentTarget.style.background = '' }}
+                    >
+                      <div className="shrink-0">
+                        {isExpanded
+                          ? <ChevronDown size={10} color="#4b6280" />
+                          : <ChevronRight size={10} color="#4b6280" />}
+                      </div>
                       <div className="shrink-0 relative" style={{ width: 34, height: 34 }}>
                         <Avatar seed={m.name} size={28} ring={col} />
                       </div>
@@ -1015,9 +1138,89 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                         <span style={{ fontSize: 9, letterSpacing: '0.05em', color: '#4b6280' }}>LOYALTY</span>
                       </div>
                     </div>
-                    {/* Profile hover card */}
-                    {isHovered && (
-                      <MinisterProfileCard minister={m} color={col} />
+                    {/* Expanded inline detail */}
+                    {isExpanded && (
+                      <div style={{
+                        borderLeft: `2px solid ${col}`,
+                        borderBottom: '1px solid rgba(28,54,82,0.5)',
+                        background: 'rgba(255,255,255,0.02)',
+                        padding: '8px 10px 10px 12px',
+                      }}>
+                        {/* Stat bars */}
+                        {[
+                          { label: 'Loyalty', value: m.loyalty, color: '#22c55e' },
+                          { label: 'Political Capital', value: m.political_capital ?? 50, color: '#38bdf8' },
+                          { label: 'Scandal Exposure', value: m.scandal_exposure, color: m.scandal_exposure > 50 ? '#f87171' : '#64748b' },
+                        ].map(s => (
+                          <div key={s.label} className="flex items-center gap-2 mb-1.5">
+                            <span style={{ fontSize: 9, color: '#64748b', width: 80, fontFamily: "'Rajdhani', sans-serif",
+                              letterSpacing: '0.06em', fontWeight: 600 }}>{s.label.toUpperCase()}</span>
+                            <div style={{ flex: 1, height: 3, background: '#071018', borderRadius: 2, overflow: 'hidden' }}>
+                              <div style={{ height: '100%', width: `${Math.max(0, Math.min(100, s.value))}%`,
+                                background: s.color, borderRadius: 2, boxShadow: `0 0 4px ${s.color}80` }} />
+                            </div>
+                            <span style={{ fontSize: 9, fontFamily: "'Share Tech Mono', monospace", color: s.color, width: 20, textAlign: 'right' }}>
+                              {Math.round(s.value)}
+                            </span>
+                          </div>
+                        ))}
+
+                        {/* Capability & Alignment */}
+                        <div className="flex gap-4 mt-2 mb-2">
+                          {m.capability?.competence != null && (
+                            <div className="flex items-center gap-1.5">
+                              <span style={{ fontSize: 9, color: '#64748b' }}>Competence</span>
+                              <span style={{ fontSize: 10, ...MONO('#38bdf8'), fontWeight: 700 }}>{Math.round(m.capability.competence)}</span>
+                            </div>
+                          )}
+                          <div className="flex items-center gap-1.5">
+                            <span style={{ fontSize: 9, color: '#64748b' }}>Alignment</span>
+                            <span style={{ fontSize: 10, fontFamily: "'Share Tech Mono', monospace", fontWeight: 700,
+                              color: m.mayor_alignment > 20 ? '#22c55e' : m.mayor_alignment < -20 ? '#f87171' : '#94a3b8' }}>
+                              {m.mayor_alignment > 0 ? '+' : ''}{Math.round(m.mayor_alignment)}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Demographics summary */}
+                        {m.demographics && (
+                          <div style={{ fontSize: 9, color: '#475569', marginBottom: 6, lineHeight: 1.4 }}>
+                            {[m.demographics.profession, m.demographics.age_group, m.demographics.location, m.demographics.income_bracket]
+                              .filter(Boolean).join(' · ')}
+                          </div>
+                        )}
+
+                        {/* Personality traits */}
+                        {m.personality && Object.keys(m.personality).length > 0 && (
+                          <div className="flex gap-1.5 flex-wrap mb-1.5">
+                            {Object.entries(m.personality).map(([trait, val]) => {
+                              const v = Math.round(val)
+                              const c = v > 65 ? '#38bdf8' : v < 35 ? '#f59e0b' : '#64748b'
+                              return (
+                                <span key={trait} style={{ fontSize: 8, padding: '1px 4px', borderRadius: 3,
+                                  background: `${c}14`, border: `1px solid ${c}33`, color: c,
+                                  fontFamily: "'Share Tech Mono', monospace" }}>
+                                  {trait.replace(/_/g, ' ')} {v}
+                                </span>
+                              )
+                            })}
+                          </div>
+                        )}
+
+                        {/* Extra portfolios */}
+                        {m.extra_portfolios?.length > 0 && (
+                          <div className="flex items-center gap-1.5 mt-1">
+                            <span style={{ fontSize: 9, color: '#64748b' }}>Also:</span>
+                            {m.extra_portfolios.map(p => (
+                              <span key={p} style={{ fontSize: 8, padding: '1px 5px', borderRadius: 3,
+                                background: 'rgba(232,160,48,0.08)', border: '1px solid rgba(232,160,48,0.25)',
+                                color: '#e8a030', fontFamily: "'Rajdhani', sans-serif", fontWeight: 600 }}>
+                                {p}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
                 )
@@ -1028,9 +1231,8 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
             <div style={{
               padding: '5px 12px', fontSize: 10, color: '#475569',
               background: 'rgba(232,160,48,0.03)', borderBottom: '1px solid rgba(28,54,82,0.4)',
-              fontStyle: 'italic', lineHeight: 1.4
-            }}>
-              Hover a minister for their profile. Use @name to address someone directly.
+              fontStyle: 'italic', lineHeight: 1.4 }}>
+              Click a minister for full stats. Use @name to address someone directly.
             </div>
 
             {/* Chat Messages */}
@@ -1185,17 +1387,64 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                 <div className="w-1 h-4 rounded-full bg-amber-400" style={{ boxShadow: '0 0 6px #f59e0b' }} />
                 <span style={HDR_LABEL}>WELFARE INDICATORS</span>
               </div>
-              <button className="flex items-center gap-1.5 px-2 py-1 rounded transition-all"
-                style={{
-                  border: '1px solid #1c3652', fontSize: 10, color: '#4b6280',
-                  fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.05em', background: 'none', cursor: 'pointer'
-                }}>
-                View All Parameters <ChevronRight size={10} />
+              <button
+                onClick={() => setShowAllParams(p => !p)}
+                className="flex items-center gap-1.5 px-2 py-1 rounded transition-all"
+                style={{ border: '1px solid #1c3652', fontSize: 10, color: showAllParams ? '#e8a030' : '#4b6280',
+                  fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.05em', background: showAllParams ? 'rgba(232,160,48,0.08)' : 'none', cursor: 'pointer' }}>
+                {showAllParams ? 'Hide' : 'View All Parameters'} {showAllParams ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
               </button>
             </div>
             <div className="p-2.5 flex gap-2">
               {welfareStats.map(stat => <WelfareRing key={stat.label} stat={stat} />)}
             </div>
+            {/* All Parameters Grid */}
+            {showAllParams && (() => {
+              const paramDeltas: Record<string, number> = {}
+              if (lastTurn?.city_params_after && lastTurn?.city_params_before) {
+                for (const [k, v] of Object.entries(lastTurn.city_params_after)) {
+                  paramDeltas[k] = v - (lastTurn.city_params_before[k] ?? v)
+                }
+              }
+              const barColor = (v: number) => v > 65 ? '#22c55e' : v > 35 ? '#f59e0b' : '#f87171'
+              const groups: { label: string; params: [string, string][] }[] = [
+                { label: 'HEALTH', params: [['hospitals_and_clinics', 'Hospitals & Clinics'], ['air_quality_and_pollution', 'Air Quality']] },
+                { label: 'WEALTH', params: [['jobs_and_commerce', 'Jobs & Commerce'], ['affordable_housing', 'Affordable Housing']] },
+                { label: 'SAFETY', params: [['police_and_emergency', 'Police & Emergency'], ['courts_and_legal', 'Courts & Legal']] },
+                { label: 'SOCIETY', params: [['community_and_spaces', 'Community & Spaces'], ['schools_and_universities', 'Schools & Universities']] },
+                { label: 'INFRASTRUCTURE', params: [['transit_and_roads', 'Transit & Roads'], ['water_power_sanitation', 'Water & Sanitation']] },
+                { label: 'GOVERNANCE', params: [['admin_efficiency', 'Admin Efficiency'], ['anti_corruption', 'Anti-Corruption'], ['media_freedom', 'Media Freedom']] },
+              ]
+              return (
+                <div style={{ borderTop: '1px solid #1c3652', padding: '8px 12px 10px' }}>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-0">
+                    {groups.map(g => (
+                      <div key={g.label} className="mb-2">
+                        <div style={{ ...HDR_LABEL, fontSize: 8, marginBottom: 4, color: '#6b7280' }}>{g.label}</div>
+                        {g.params.map(([key, label]) => {
+                          const val = (cp as unknown as Record<string, number>)[key] ?? 0
+                          const delta = paramDeltas[key] ?? 0
+                          const roundDelta = Math.round(delta)
+                          return (
+                            <div key={key} className="flex items-center gap-2 mb-1" style={{ height: 18 }}>
+                              <span style={{ fontSize: 9, color: '#94a3b8', width: 90, flexShrink: 0 }} className="truncate">{label}</span>
+                              <MiniBar value={val} color={barColor(val)} width={50} />
+                              <span style={{ fontSize: 9, ...MONO('#fff'), width: 20, textAlign: 'right' }}>{Math.round(val)}</span>
+                              {roundDelta !== 0 && (
+                                <span style={{ fontSize: 8, fontFamily: "'Share Tech Mono', monospace",
+                                  color: roundDelta > 0 ? '#4ade80' : '#f87171' }}>
+                                  {roundDelta > 0 ? `▲+${roundDelta}` : `▼${roundDelta}`}
+                                </span>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            })()}
           </div>
 
           {/* Game Stream */}
@@ -1294,50 +1543,14 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                 </div>
               )}
               {turnHistory.map((entry, i) => (
-                <div key={i} className="px-3 py-2.5 cursor-pointer transition-all"
-                  style={{ borderBottom: '1px solid #1c3652' }}
-                  onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.03)')}
-                  onMouseLeave={e => (e.currentTarget.style.background = '')}>
-                  <div className="flex items-start gap-2">
-                    <div className="shrink-0 mt-0.5 px-2 py-0.5 rounded"
-                      style={{
-                        background: 'rgba(232,160,48,0.12)', border: '1px solid rgba(232,160,48,0.3)',
-                        fontSize: 9, fontWeight: 700, color: '#e8a030',
-                        fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em', whiteSpace: 'nowrap'
-                      }}>
-                      TURN {entry.turn}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1 flex-wrap">
-                        {entry.actor && (
-                          <span style={{ fontSize: 10, fontWeight: 700, color: entry.actorColor }}>
-                            {entry.actor}:
-                          </span>
-                        )}
-                        <span style={{ fontSize: 10, fontWeight: 600, color: '#fff' }}>{entry.title}</span>
-                      </div>
-                      {entry.description && (
-                        <div style={{ fontSize: 10, color: '#64748b', marginTop: 2, lineHeight: 1.4 }}>
-                          {entry.description.slice(0, 120)}{entry.description.length > 120 ? '...' : ''}
-                        </div>
-                      )}
-                      {entry.tags.length > 0 && (
-                        <div className="flex gap-1.5 mt-1.5 flex-wrap">
-                          {entry.tags.map((tag, ti) => (
-                            <span key={ti} className="px-1.5 py-0.5 rounded"
-                              style={{
-                                fontSize: 9, color: tag.color, background: tag.bg,
-                                border: `1px solid ${tag.border}`,
-                                fontFamily: "'Share Tech Mono', monospace"
-                              }}>
-                              {tag.label}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
+                <TurnPhaseCard
+                  key={entry.turn}
+                  entry={entry}
+                  ministers={gameState.ministers}
+                  onToggle={() => setTurnHistory(prev =>
+                    prev.map((e, j) => j === i ? { ...e, expanded: !e.expanded } : e)
+                  )}
+                />
               ))}
             </div>
           </div>
