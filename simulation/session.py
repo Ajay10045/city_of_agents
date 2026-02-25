@@ -191,16 +191,23 @@ class GameSession:
         """assignments: [{"citizen_id": str, "portfolio": str}]"""
         assert self.state
         citizen_map = {c.id: c for c in self.state.citizens}
-        ministers = []
-        minister_ids: set[str] = set()
+
+        # Group portfolios by citizen so each citizen becomes one Minister
+        citizen_portfolios: dict[str, list[str]] = {}
         for a in assignments:
             cid = a["citizen_id"]
+            citizen_portfolios.setdefault(cid, []).append(a["portfolio"])
+
+        ministers = []
+        minister_ids: set[str] = set()
+        for cid, portfolios in citizen_portfolios.items():
             citizen = citizen_map.get(cid)
             if citizen is None:
                 continue
             ministers.append(Minister(
                 citizen=citizen,
-                portfolio=a["portfolio"],
+                portfolio=portfolios[0],
+                extra_portfolios=portfolios[1:],
                 state=MinisterState(),
             ))
             minister_ids.add(cid)
