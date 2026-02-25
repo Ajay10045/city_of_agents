@@ -349,6 +349,17 @@ const MINISTER_COLORS = ['#7c3aed', '#2563eb', '#0d9488', '#d97706', '#be185d']
 // Returns array of minister indices that should respond.
 function detectMentioned(msg: string, ministers: Minister[]): number[] {
   const lower = msg.toLowerCase()
+  // Broadcast keywords — all advisors respond
+  if (
+    lower.includes('@all') ||
+    lower.includes('@everyone') ||
+    lower.includes('@ all') ||
+    lower.includes('@ everyone') ||
+    /\ball\b/.test(lower) ||
+    /\beveryone\b/.test(lower)
+  ) {
+    return ministers.map((_, i) => i)
+  }
   const mentioned: number[] = []
   ministers.forEach((m, idx) => {
     const parts = m.name.toLowerCase().split(' ')
@@ -1105,7 +1116,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
       const mentioned = detectMentioned(msg, ministers)
       // If specific minister(s) mentioned, only they reply. Otherwise pick 2 naturally.
       const responderIndices = mentioned.length > 0
-        ? [...new Set(mentioned)].slice(0, 3)
+        ? [...new Set(mentioned)]
         : pickResponders(ministers)
 
       for (const idx of responderIndices) {
@@ -1245,7 +1256,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
   const spentPct = initTreasury > 0 ? Math.min(100, (spent / initTreasury) * 100) : 0
 
   const approval = gameState.interim_approval
-  const prevApproval = lastTurn ? (lastTurn.interim_approval - (lastTurn.actual_deltas?.['interim_approval'] ?? 0)) : approval
+  const prevApproval = lastTurn ? lastTurn.approval_before : approval
   const approvalDelta = approval - prevApproval
   const approvalCirc = 2 * Math.PI * 16
   const approvalFill = (Math.max(0, Math.min(100, approval)) / 100) * approvalCirc
