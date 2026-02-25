@@ -81,7 +81,9 @@ function RadarChart({ axes, size = 200 }: {
   axes: { intellect: number; charisma: number; agility: number; experience: number }
   size?: number
 }) {
-  const cx = size / 2, cy = size / 2, r = size * 0.35
+  const pad = 36
+  const vw = size + pad * 2, vh = size + pad * 2
+  const cx = vw / 2, cy = vh / 2, r = size * 0.35
   const labels = [
     { key: 'intellect', label: 'INTELLECT', angle: 270 },
     { key: 'charisma', label: 'CHARISMA', angle: 0 },
@@ -94,13 +96,12 @@ function RadarChart({ axes, size = 200 }: {
     y: cy + r * (pct / 100) * Math.sin((angle * Math.PI) / 180),
   })
 
-  // Grid rings
   const rings = [25, 50, 75, 100]
   const dataPoints = labels.map(l => toXY(l.angle, axes[l.key]))
   const dataPath = dataPoints.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ') + 'Z'
 
   return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+    <svg width={size} height={size} viewBox={`0 0 ${vw} ${vh}`} overflow="visible">
       {/* Grid rings */}
       {rings.map(ring => {
         const pts = labels.map(l => toXY(l.angle, ring))
@@ -119,15 +120,22 @@ function RadarChart({ axes, size = 200 }: {
       {dataPoints.map((p, i) => (
         <circle key={i} cx={p.x} cy={p.y} r={3} fill="#e8a030" />
       ))}
-      {/* Labels */}
+      {/* Labels with values */}
       {labels.map(l => {
-        const pos = toXY(l.angle, 130)
+        const pos = toXY(l.angle, 125)
         const textAnchor = l.angle === 0 ? 'start' : l.angle === 180 ? 'end' : 'middle'
-        const dy = l.angle === 270 ? -4 : l.angle === 90 ? 12 : 3
+        const dy = l.angle === 270 ? -6 : l.angle === 90 ? 14 : 4
+        const val = axes[l.key]
         return (
-          <text key={l.key} x={pos.x} y={pos.y + dy} textAnchor={textAnchor}
-            fill="#4b6280" fontSize={8} fontFamily="'Rajdhani', sans-serif" fontWeight={700}
-            letterSpacing="0.1em">{l.label}</text>
+          <g key={l.key}>
+            <text x={pos.x} y={pos.y + dy} textAnchor={textAnchor}
+              fill="#94a3b8" fontSize={10} fontFamily="'Rajdhani', sans-serif" fontWeight={700}
+              letterSpacing="0.08em">{l.label}</text>
+            <text x={pos.x} y={pos.y + dy + 13} textAnchor={textAnchor}
+              fill="#e8a030" fontSize={12} fontFamily="'Share Tech Mono', monospace" fontWeight={700}>
+              {val}
+            </text>
+          </g>
         )
       })}
       <defs>
@@ -211,7 +219,11 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
 
   useEffect(() => {
     getMinisterCandidates(gameId)
-      .then(res => { setCandidates(res.candidates); setLoading(false) })
+      .then(res => {
+        setCandidates(res.candidates)
+        if (res.candidates.length > 0) setInterviewee(res.candidates[0])
+        setLoading(false)
+      })
       .catch(e => { setError(String(e)); setLoading(false) })
   }, [gameId])
 
@@ -382,7 +394,7 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
             justifyContent: 'center', fontSize: 16, flexShrink: 0,
             background: 'linear-gradient(135deg, #b45309 0%, #d97706 50%, #92400e 100%)',
             boxShadow: '0 0 12px rgba(217,119,6,0.5)', border: '1.5px solid #f59e0b' }}>
-            <span style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 14 }}>account_balance</span>
+            🏛
           </div>
           <div>
             <div style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 14,
