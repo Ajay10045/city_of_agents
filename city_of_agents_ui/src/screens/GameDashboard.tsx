@@ -57,28 +57,6 @@ function Avatar({ seed, size = 28, ring = '#1c3652' }: { seed: string; size?: nu
   )
 }
 
-// ─── LoyaltyArc ───────────────────────────────────────────────────────────────
-
-function LoyaltyArc({ value, color }: { value: number; color: string }) {
-  const r = 13
-  const circ = 2 * Math.PI * r
-  const fill = (Math.max(0, Math.min(100, value)) / 100) * circ
-  return (
-    <svg width="34" height="34" viewBox="0 0 34 34">
-      <circle cx="17" cy="17" r={r} fill="none" stroke="#0a1a30" strokeWidth="4" />
-      <circle
-        cx="17" cy="17" r={r} fill="none"
-        stroke={color} strokeWidth="4"
-        strokeLinecap="round"
-        strokeDasharray={`${fill} ${circ}`}
-        transform="rotate(-90 17 17)"
-        style={{ filter: `drop-shadow(0 0 3px ${color})` }}
-      />
-      <text x="17" y="21" textAnchor="middle" fill="white" fontSize="8" fontWeight="700"
-        fontFamily="Share Tech Mono">{Math.round(value)}</text>
-    </svg>
-  )
-}
 
 // ─── WelfareRing ──────────────────────────────────────────────────────────────
 
@@ -1521,7 +1499,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                   <div key={m.id}>
                     <div
                       onClick={() => setExpandedMinisterId(isExpanded ? null : m.id)}
-                      className="flex items-center gap-2.5 px-3 py-2 cursor-pointer transition-colors"
+                      className="flex items-center gap-2 px-3 py-1.5 cursor-pointer transition-colors"
                       style={{
                         borderBottom: isExpanded ? 'none' : '1px solid rgba(28,54,82,0.5)',
                         background: isExpanded ? 'rgba(255,255,255,0.04)' : '',
@@ -1534,17 +1512,10 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                           ? <ChevronDown size={10} color="#4b6280" />
                           : <ChevronRight size={10} color="#4b6280" />}
                       </div>
-                      <div className="shrink-0 relative" style={{ width: 34, height: 34 }}>
-                        <Avatar seed={m.name} size={28} ring={col} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-white truncate" style={{ fontSize: 11, fontWeight: 600 }}>{m.name}</div>
-                        <div className="text-gray-500 truncate" style={{ fontSize: 10 }}>{m.portfolio}</div>
-                      </div>
-                      <div className="shrink-0 flex flex-col items-center gap-0.5">
-                        <LoyaltyArc value={m.loyalty} color={col} />
-                        <span style={{ fontSize: 9, letterSpacing: '0.05em', color: '#4b6280' }}>LOYALTY</span>
-                      </div>
+                      <Avatar seed={m.name} size={24} ring={col} />
+                      <span className="truncate" style={{ fontSize: 11, fontWeight: 600, color: '#fff' }}>
+                        {m.name}
+                      </span>
                     </div>
                     {/* Expanded inline detail */}
                     {isExpanded && (
