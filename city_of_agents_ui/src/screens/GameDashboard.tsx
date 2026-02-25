@@ -410,12 +410,18 @@ function ExecScoreBadge({ score }: { score: number }) {
   )
 }
 
+// ─── TurnPhaseCard helpers ──────────────────────────────────────────────────────
+
+function findMinisterForPortfolio(ministers: Minister[], portfolio: string): Minister | undefined {
+  return ministers.find(m => m.portfolio === portfolio || m.extra_portfolios?.includes(portfolio))
+}
+
 // ─── TurnPhaseCard ─────────────────────────────────────────────────────────────
 
 function TurnPhaseCard({
-  entry, onToggle,
+  entry, ministers, onToggle,
 }: {
-  entry: TurnEntry; onToggle: () => void
+  entry: TurnEntry; ministers: Minister[]; onToggle: () => void
 }) {
   const tr = entry.result
   const paramDeltas = tr.city_params_after && tr.city_params_before
@@ -459,31 +465,133 @@ function TurnPhaseCard({
         const sideEffectEntries = Object.entries(tr.side_effect_deltas ?? {}).filter(([,v]) => Math.abs(v) >= 0.5)
         const fmt = (k: string) => k.replace(/_/g, ' ')
 
-        // Inline reasoning helpers
+        // ── Dynamic reasoning helpers ──────────────────────────────────────────
+        const execMinister = findMinisterForPortfolio(ministers, tr.major_policy?.portfolio ?? '')
+        const cap = execMinister?.capability as Record<string, number> | undefined
+        const pers = execMinister?.personality as Record<string, number> | undefined
+        const p = tr.city_params_before ?? {}
+
+        // Approximate minister score (mirrors engine formula)
+        const mScore = execMinister && cap && pers
+          ? ((cap.competence ?? 50) * 0.35 + (cap.managerial_skill ?? 50) * 0.30
+            + (pers.conscientiousness ?? 50) * 0.20 + (cap.bureaucratic_navigation ?? 50) * 0.15) / 100
+          : null
+
+        // Approximate city filter score
+        const instBase = ((p.courts_and_legal ?? 50) * 0.40 + (p.schools_and_universities ?? 50) * 0.35
+          + (p.police_and_emergency ?? 50) * 0.25) / 100 * 100
+        const cScore = ((p.admin_efficiency ?? 50) * 0.40 + (p.anti_corruption ?? 50) * 0.30 + instBase * 0.30) / 100
+
         const execReason = (() => {
-          if (tr.execution_score >= 0.75) return 'strong delivery conditions'
-          if (tr.execution_score >= 0.55) return 'moderate delivery conditions'
-          // low — try to explain why
-          const hints: string[] = []
-          const minister = (tr as any).minister
-          if (minister) {
-            const totalPorts = 1 + (minister.extra_portfolios?.length ?? 0)
-            if (totalPorts >= 2) hints.push('minister spread across portfolios')
+          const pct = Math.round(tr.execution_score * 100)
+          const portfolioCount = 1 + (execMinister?.extra_portfolios?.length ?? 0)
+          const name = execMinister?.name?.split(' ')[0] ?? 'Minister'
+          const comp = Math.round(cap?.competence ?? 50)
+          const adminEff = Math.round(p.admin_efficiency ?? 50)
+
+          if (pct >= 75) {
+            if (mScore && mScore > 0.7 && cScore > 0.6)
+              return `${name} (competence ${comp}) and strong city institutions aligned — smooth delivery`
+            return `${name}'s solid capabilities overcame moderate city constraints`
           }
-          const adminEff = tr.city_params_before?.admin_efficiency ?? 100
-          if (adminEff < 40) hints.push('weak city institutions')
-          return hints.length ? hints.join(', ') : 'difficult implementation conditions'
+          if (portfolioCount >= 3)
+            return `${name} is juggling ${portfolioCount} portfolios — a 25% penalty applied to execution`
+          if (portfolioCount === 2)
+            return `${name} managing two portfolios took a 15% efficiency hit this turn`
+          if (mScore && mScore < 0.5 && cScore > 0.6)
+            return `City institutions were ready, but ${name}'s capability (competence ${comp}) was the bottleneck`
+          if (mScore && mScore > 0.6 && cScore < 0.45)
+            return `${name} was capable, but admin efficiency (${adminEff}) and weak institutions slowed delivery`
+          if (adminEff < 35)
+            return `Bureaucratic breakdown — admin efficiency at ${adminEff} made every step harder`
+          if (mScore && mScore < 0.45)
+            return `${name}'s competence (${comp}) couldn't overcome the policy complexity — low minister score`
+          return `Moderate delivery — both ${name} and city systems had room to improve`
         })()
 
-        const corruptReason = (() => {
-          if ((tr.budget_stolen ?? 0) < 2) return 'well-contained — strong oversight'
-          const hints: string[] = []
-          const minister = (tr as any).minister
-          if (minister?.citizen?.personality?.integrity < 50) hints.push('minister integrity low')
-          const p = tr.city_params_before
-          if (p && (p.police_and_emergency < 45 || p.courts_and_legal < 45)) hints.push('weak oversight')
-          if (p && p.anti_corruption < 45) hints.push('poor anti-corruption controls')
-          return hints.length ? hints.join(', ') : 'institutional gap exploited'
+        const budgetReason = (() => {
+          const stolen = tr.budget_stolen ?? 0
+          const taxRev = tr.tax_revenue ?? 0
+          const policyCost = tr.major_policy?.budget_cost ?? 0
+          const intPaid = tr.interest_paid ?? 0
+          const net = taxRev - policyCost - intPaid - stolen
+          const intPct = taxRev > 0 ? Math.round((intPaid / taxRev) * 100) : 0
+
+          if (stolen > 10) {
+            const integrity = Math.round(pers?.integrity ?? 50)
+            const antiCorr = Math.round(p.anti_corruption ?? 50)
+            return `₹${fmtNum(stolen)} Cr leaked — ${execMinister?.name?.split(' ')[0] ?? 'minister'} integrity (${integrity}) + anti-corruption at ${antiCorr} opened the window`
+          }
+          if (stolen > 2) {
+            const hints: string[] = []
+            if ((pers?.integrity ?? 100) < 50) hints.push('low integrity')
+            if ((p.police_and_emergency ?? 100) < 45) hints.push('weak enforcement')
+            if ((p.anti_corruption ?? 100) < 45) hints.push('poor oversight')
+            return `Minor leakage — ${hints.join(', ')} created a small corruption window`
+          }
+          if (intPaid > 0 && intPct > 40)
+            return `Debt servicing consumed ${intPct}% of tax revenue — outstanding debt is straining the treasury`
+          if (net >= 0)
+            return `Revenue covered all costs — net gain of ₹${fmtNum(net)} Cr this turn`
+          return `Policy cost exceeded revenue — treasury drew down by ₹${fmtNum(Math.abs(net))} Cr`
+        })()
+
+        const paramReason = (() => {
+          const neg = paramDeltas.filter(d => d.diff < 0).map(d => fmt(d.key))
+          const pos = paramDeltas.filter(d => d.diff > 0).map(d => fmt(d.key))
+          const negSE = sideEffectEntries.filter(([,v]) => v < 0).map(([k]) => fmt(k))
+          const policyName = tr.major_policy?.name ?? 'the policy'
+          if (pos.length > 0 && negSE.length > 0)
+            return `${policyName} boosted ${pos[0]}, but spilled into ${negSE.slice(0,2).join(', ')} — unintended consequences`
+          if (pos.length > 0 && neg.length === 0)
+            return `Clean execution — targeted gains with no adverse side effects this turn`
+          if (neg.length > 0 && pos.length === 0)
+            return `${neg[0]} resisted improvement — city conditions in this sector are entrenched`
+          return `Mixed impact — some parameters moved, others absorbed the intervention`
+        })()
+
+        const attackReason = (() => {
+          const attack = tr.opposition_attack ?? ''
+          const pct = Math.round(tr.execution_score * 100)
+          const tension = Math.round(tr.communal_tension_after ?? 0)
+          const debtAfter = tr.outstanding_debt_after ?? 0
+          if (attack.toLowerCase().includes('delivery') || attack.toLowerCase().includes('failure'))
+            return `${pct}% execution gave the opposition a concrete failure to amplify`
+          if (attack.toLowerCase().includes('corruption'))
+            return `Cabinet scandal exposure opened the door to credibility attacks`
+          if (attack.toLowerCase().includes('crisis') || attack.toLowerCase().includes('blame'))
+            return `Active crisis events gave opposition an easy target — how you respond matters now`
+          if (attack.toLowerCase().includes('fiscal') || attack.toLowerCase().includes('debt'))
+            return `Outstanding debt of ₹${fmtNum(debtAfter)} Cr gives opposition fiscal ammunition`
+          if (attack.toLowerCase().includes('populist') || attack.toLowerCase().includes('promise'))
+            return `Close to election — opposition shifting to direct voter promises over policy debate`
+          if (attack.toLowerCase().includes('identity') || attack.toLowerCase().includes('mobiliz'))
+            return `Communal tension at ${tension} made identity politics viable this turn`
+          return `Opposition adapted their strategy to current city vulnerabilities`
+        })()
+
+        const counterReason = (() => {
+          const approval = Math.round(tr.interim_approval)
+          const counter = tr.counter_frame ?? ''
+          if (approval >= 55) return `${counter} framing is resonating — approval at ${approval}% reflects public trust`
+          if (approval >= 45) return `Counter-narrative holding steady — ${approval}% approval is a competitive position`
+          return `${counter} message hasn't broken through yet — approval at ${approval}% needs improvement`
+        })()
+
+        const approvalReason = (() => {
+          const cur = Math.round(tr.interim_approval)
+          const prev = Math.round((tr as Record<string, unknown>).approval_before as number ?? tr.interim_approval)
+          const delta = cur - prev
+          const ward = tr.ward_report ?? []
+          const hotspots = ward.filter(w => w.hotspot).map(w => w.group_name)
+          const brightSpots = ward.filter(w => w.bright_spot).map(w => w.group_name)
+          if (delta > 3 && brightSpots.length > 0)
+            return `${brightSpots[0]} and ${brightSpots.length - 1 > 0 ? `${brightSpots.length - 1} other group${brightSpots.length > 2 ? 's' : ''}` : 'others'} responded positively — approval up ${delta}%`
+          if (delta > 1) return `Modest approval gain of +${delta}% — delivery is building credibility`
+          if (delta < -2 && hotspots.length > 0)
+            return `${hotspots[0]} dissatisfied — this turn's trade-offs hit them hardest`
+          if (delta < 0) return `Slight approval dip of ${delta}% — some demographics feel the costs`
+          return `Approval held steady — no major wins or losses in public perception`
         })()
 
         // Execution bar segments
@@ -554,7 +662,7 @@ function TurnPhaseCard({
                       {fmt(k)} {v > 0 ? '+' : ''}{Math.round(v)}
                     </span>
                   ))}
-                  <Reason text="side effects — immediate impact" />
+                  <Reason text={sideEffectEntries.length > 0 ? paramReason : 'no side effects this turn'} />
                 </div>
               )}
             </div>
@@ -581,7 +689,7 @@ function TurnPhaseCard({
                   </div>
                 ))}
               </div>
-              {(tr.budget_stolen ?? 0) > 2 && <Reason text={corruptReason} />}
+              <Reason text={budgetReason} />
             </div>
 
             {/* ③ PARAMETER CHANGES */}
@@ -600,6 +708,7 @@ function TurnPhaseCard({
                     </span>
                   ))}
                 </div>
+                <Reason text={paramReason} />
               </div>
             )}
 
@@ -610,6 +719,16 @@ function TurnPhaseCard({
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                   {tr.events_triggered.map(ev => {
                     const isCrisis = ev.type === 'crisis'
+                    // Find the most relevant city param for this event's portfolio
+                    const portfolioParamMap: Record<string, string> = {
+                      'Infrastructure': 'transit and roads', 'Health & Education': 'hospitals and clinics',
+                      'Environment': 'air quality and pollution', 'Home Affairs': 'police and emergency',
+                      'Finance & Economy': 'jobs and commerce', 'Housing & Community': 'affordable housing',
+                      'Governance Reform': 'admin efficiency',
+                    }
+                    const paramHint = portfolioParamMap[ev.portfolio ?? ''] ?? ev.portfolio ?? 'city conditions'
+                    const paramVal = ev.portfolio && p
+                      ? Math.round((p as Record<string, number>)[paramHint.replace(/ /g, '_')] ?? 0) : null
                     return (
                       <div key={ev.id} style={{
                         padding: '4px 8px', borderRadius: 4,
@@ -621,8 +740,8 @@ function TurnPhaseCard({
                         </div>
                         <div style={{ fontSize: 9, color: '#4b6280', marginTop: 1, fontStyle: 'italic' }}>
                           {isCrisis
-                            ? `crisis triggered${ev.portfolio ? ` in ${ev.portfolio}` : ''} — city conditions were vulnerable`
-                            : `opportunity opened${ev.portfolio ? ` in ${ev.portfolio}` : ''} — strong city performance`}
+                            ? `${ev.portfolio ?? 'sector'} was vulnerable${paramVal !== null && paramVal > 0 ? ` — ${paramHint} at ${paramVal}` : ''} when this crisis hit`
+                            : `strong city performance in ${ev.portfolio ?? 'this sector'} attracted this opportunity${paramVal !== null && paramVal > 0 ? ` — ${paramHint} at ${paramVal}` : ''}`}
                         </div>
                       </div>
                     )
@@ -638,12 +757,12 @@ function TurnPhaseCard({
                 <div className="flex items-start gap-2">
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 10, color: '#f87171', fontWeight: 600 }}>{tr.opposition_attack}</div>
-                    <Reason text="opposition exploiting public vulnerabilities" />
+                    <Reason text={attackReason} />
                   </div>
                   {tr.counter_frame && (
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 10, color: '#22c55e', fontWeight: 600 }}>{tr.counter_frame}</div>
-                      <Reason text="your counter-narrative" />
+                      <Reason text={counterReason} />
                     </div>
                   )}
                 </div>
@@ -662,6 +781,7 @@ function TurnPhaseCard({
                   {Math.round(tr.interim_approval)}%
                 </span>
               </div>
+              <Reason text={approvalReason} />
             </div>
 
             {/* ⑦ NARRATIVE */}
@@ -1617,6 +1737,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                 <TurnPhaseCard
                   key={entry.turn}
                   entry={entry}
+                  ministers={gameState.ministers}
                   onToggle={() => setTurnHistory(prev =>
                     prev.map((e, j) => j === i ? { ...e, expanded: !e.expanded } : e)
                   )}
