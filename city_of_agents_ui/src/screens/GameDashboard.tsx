@@ -397,29 +397,6 @@ function pickResponders(ministers: Minister[], excludeIndices: number[] = []): n
   return shuffled.slice(0, Math.min(2, shuffled.length))
 }
 
-// ─── Phase Section helper ─────────────────────────────────────────────────────
-
-function PhaseSection({ label, accent, children }: { label: string; accent: string; children: React.ReactNode }) {
-  return (
-    <div style={{ borderLeft: `2px solid ${accent}`, paddingLeft: 8, marginBottom: 8 }}>
-      <div style={{ ...HDR_LABEL, color: accent, fontSize: 9, marginBottom: 4 }}>{label}</div>
-      {children}
-    </div>
-  )
-}
-
-function DeltaTag({ label, value }: { label: string; value: number }) {
-  const pos = value >= 0
-  const color = pos ? '#86efac' : '#fca5a5'
-  const bg = pos ? 'rgba(34,197,94,0.12)' : 'rgba(248,113,113,0.12)'
-  const border = pos ? '#14532d' : '#7f1d1d'
-  return (
-    <span className="px-1.5 py-0.5 rounded" style={{ fontSize: 9, color, background: bg,
-      border: `1px solid ${border}`, fontFamily: "'Share Tech Mono', monospace" }}>
-      {label.replace(/_/g, ' ')} {pos ? '+' : ''}{Math.round(value)}
-    </span>
-  )
-}
 
 function ExecScoreBadge({ score }: { score: number }) {
   const pct = Math.round(score * 100)
@@ -436,9 +413,9 @@ function ExecScoreBadge({ score }: { score: number }) {
 // ─── TurnPhaseCard ─────────────────────────────────────────────────────────────
 
 function TurnPhaseCard({
-  entry, ministers, onToggle,
+  entry, onToggle,
 }: {
-  entry: TurnEntry; ministers: Minister[]; onToggle: () => void
+  entry: TurnEntry; onToggle: () => void
 }) {
   const tr = entry.result
   const paramDeltas = tr.city_params_after && tr.city_params_before
@@ -474,158 +451,248 @@ function TurnPhaseCard({
         <ExecScoreBadge score={tr.execution_score} />
       </div>
 
-      {/* Expanded phases */}
-      {entry.expanded && (
-        <div className="px-3 pb-3 pt-1" style={{ paddingLeft: 28 }}>
+      {/* Expanded numbered sections */}
+      {entry.expanded && (() => {
+        const execPct = Math.round(tr.execution_score * 100)
+        const execColor = tr.execution_score >= 0.7 ? '#22c55e' : tr.execution_score >= 0.45 ? '#e8a030' : '#f87171'
+        const netTreasury = (tr.tax_revenue ?? 0) - (tr.major_policy?.budget_cost ?? 0) - (tr.interest_paid ?? 0) - (tr.budget_stolen ?? 0)
+        const sideEffectEntries = Object.entries(tr.side_effect_deltas ?? {}).filter(([,v]) => Math.abs(v) >= 0.5)
+        const fmt = (k: string) => k.replace(/_/g, ' ')
 
-          {/* ① IMPLEMENTATION */}
-          <PhaseSection label="① IMPLEMENTATION" accent="#38bdf8">
-            <div className="flex items-center gap-2 mb-1.5">
-              <span style={{ fontSize: 10, color: '#94a3b8' }}>Execution:</span>
-              <div style={{ flex: 1, maxWidth: 120, height: 4, background: '#071018', borderRadius: 2, overflow: 'hidden' }}>
-                <div style={{ height: '100%', width: `${Math.round(tr.execution_score * 100)}%`,
-                  background: tr.execution_score >= 0.7 ? '#22c55e' : tr.execution_score >= 0.45 ? '#e8a030' : '#f87171',
-                  borderRadius: 2 }} />
+        // Inline reasoning helpers
+        const execReason = (() => {
+          if (tr.execution_score >= 0.75) return 'strong delivery conditions'
+          if (tr.execution_score >= 0.55) return 'moderate delivery conditions'
+          // low — try to explain why
+          const hints: string[] = []
+          const minister = (tr as any).minister
+          if (minister) {
+            const totalPorts = 1 + (minister.extra_portfolios?.length ?? 0)
+            if (totalPorts >= 2) hints.push('minister spread across portfolios')
+          }
+          const adminEff = tr.city_params_before?.admin_efficiency ?? 100
+          if (adminEff < 40) hints.push('weak city institutions')
+          return hints.length ? hints.join(', ') : 'difficult implementation conditions'
+        })()
+
+        const corruptReason = (() => {
+          if ((tr.budget_stolen ?? 0) < 2) return 'well-contained — strong oversight'
+          const hints: string[] = []
+          const minister = (tr as any).minister
+          if (minister?.citizen?.personality?.integrity < 50) hints.push('minister integrity low')
+          const p = tr.city_params_before
+          if (p && (p.police_and_emergency < 45 || p.courts_and_legal < 45)) hints.push('weak oversight')
+          if (p && p.anti_corruption < 45) hints.push('poor anti-corruption controls')
+          return hints.length ? hints.join(', ') : 'institutional gap exploited'
+        })()
+
+        // Execution bar segments
+        const barW = execPct
+        const barColor = execColor
+
+        const SectionLabel = ({ num, text }: { num: string; text: string }) => (
+          <div className="flex items-center gap-1.5" style={{ marginBottom: 5 }}>
+            <span style={{
+              fontSize: 8, fontWeight: 700, color: '#e8a030', fontFamily: "'Rajdhani', sans-serif",
+              letterSpacing: '0.12em', minWidth: 14, textAlign: 'right',
+            }}>{num}</span>
+            <span style={{ fontSize: 8, fontWeight: 700, color: '#4b6280',
+              fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+              {text}
+            </span>
+          </div>
+        )
+
+        const Reason = ({ text }: { text: string }) => (
+          <div style={{ fontSize: 9, color: '#4b6280', fontStyle: 'italic', marginTop: 3 }}>{text}</div>
+        )
+
+        return (
+          <div style={{ padding: '8px 12px 12px', paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+
+            {/* ① IMPLEMENTATION */}
+            <div>
+              <SectionLabel num="①" text="Implementation" />
+              {/* Exec bar */}
+              <div className="flex items-center gap-2" style={{ marginBottom: 4 }}>
+                <div style={{ flex: 1, height: 5, background: '#0a1a30', borderRadius: 3, overflow: 'hidden' }}>
+                  <div style={{ width: `${barW}%`, height: '100%', background: barColor,
+                    borderRadius: 3, boxShadow: `0 0 6px ${barColor}66` }} />
+                </div>
+                <span style={{ fontSize: 10, fontFamily: "'Share Tech Mono', monospace", color: barColor, fontWeight: 700, minWidth: 34 }}>
+                  {execPct}%
+                </span>
               </div>
-              <span style={{ fontSize: 10, ...MONO(tr.execution_score >= 0.7 ? '#22c55e' : tr.execution_score >= 0.45 ? '#e8a030' : '#f87171') }}>
-                {Math.round(tr.execution_score * 100)}%
-              </span>
+              <Reason text={execReason} />
+              {/* Delivery targets */}
+              {((tr as any).delivery_details ?? tr.delivery_targets ?? []).length > 0 && (
+                <div style={{ marginTop: 5, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {((tr as any).delivery_details ?? tr.delivery_targets ?? [] as any[]).map((d: any, i: number) => {
+                    const ratio = d.completion_ratio ?? 1
+                    const col = ratio >= 0.8 ? '#22c55e' : ratio >= 0.5 ? '#e8a030' : '#f87171'
+                    return (
+                      <div key={i} className="flex items-center justify-between" style={{ fontSize: 9, color: '#64748b' }}>
+                        <span>{d.label ?? d.key}</span>
+                        <span style={{ color: col, fontFamily: "'Share Tech Mono', monospace", fontWeight: 600 }}>
+                          {Math.round(d.delivered ?? 0)}{d.unit ? ` ${d.unit}` : ''} / {Math.round(d.proposed ?? 0)}{d.unit ? ` ${d.unit}` : ''}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+              {/* Side effects */}
+              {sideEffectEntries.length > 0 && (
+                <div style={{ marginTop: 5, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                  {sideEffectEntries.map(([k, v]) => (
+                    <span key={k} style={{
+                      fontSize: 9, padding: '1px 6px', borderRadius: 3,
+                      background: v < 0 ? 'rgba(248,113,113,0.10)' : 'rgba(34,197,94,0.10)',
+                      color: v < 0 ? '#fca5a5' : '#86efac',
+                      border: `1px solid ${v < 0 ? '#7f1d1d44' : '#14532d44'}`,
+                    }}>
+                      {fmt(k)} {v > 0 ? '+' : ''}{Math.round(v)}
+                    </span>
+                  ))}
+                  <Reason text="side effects — immediate impact" />
+                </div>
+              )}
             </div>
-            {/* Delivery targets */}
-            {tr.delivery_targets?.length > 0 && (
-              <div className="space-y-1 mb-1.5">
-                {tr.delivery_targets.map(t => {
-                  const ratio = Math.round(t.completion_ratio * 100)
-                  const col = ratio >= 80 ? '#22c55e' : ratio >= 50 ? '#e8a030' : '#f87171'
-                  return (
-                    <div key={t.key} className="flex items-center gap-2">
-                      <span style={{ fontSize: 9, color: '#64748b', flex: 1, minWidth: 0 }} className="truncate">
-                        {t.label}
-                      </span>
-                      <span style={{ fontSize: 9, ...MONO(col) }}>
-                        {Math.round(t.delivered)}/{Math.round(t.proposed)} {t.unit}
-                      </span>
-                      <span style={{ fontSize: 8, color: col }}>({ratio}%)</span>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-            {/* Side effects */}
-            {tr.side_effect_deltas && Object.keys(tr.side_effect_deltas).length > 0 && (
-              <div className="flex gap-1 flex-wrap mt-1">
-                <span style={{ fontSize: 9, color: '#64748b' }}>Side effects:</span>
-                {Object.entries(tr.side_effect_deltas).filter(([, v]) => Math.abs(v) >= 0.5).map(([k, v]) => (
-                  <DeltaTag key={k} label={k} value={v} />
+
+            {/* ② BUDGET */}
+            <div>
+              <SectionLabel num="②" text="Budget" />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '3px 12px' }}>
+                {[
+                  { label: 'Tax Revenue', value: `+₹${fmtNum(tr.tax_revenue ?? 0)} Cr`, color: '#4ade80' },
+                  { label: 'Policy Cost', value: `-₹${fmtNum(tr.major_policy?.budget_cost ?? 0)} Cr`, color: '#f87171' },
+                  tr.interest_paid > 0 ? { label: 'Interest', value: `-₹${fmtNum(tr.interest_paid)} Cr`, color: '#fb923c' } : null,
+                  tr.budget_stolen > 0 ? { label: 'Leaked', value: `-₹${fmtNum(tr.budget_stolen)} Cr`, color: '#fb923c' } : null,
+                  { label: 'Treasury', value: `₹${fmtNum(tr.treasury_after ?? 0)} Cr`, color: '#f0c040' },
+                  {
+                    label: 'Net',
+                    value: netTreasury >= 0 ? `+₹${fmtNum(netTreasury)} Cr` : `-₹${fmtNum(Math.abs(netTreasury))} Cr`,
+                    color: netTreasury >= 0 ? '#4ade80' : '#f87171',
+                  },
+                ].filter(Boolean).map((row, i) => (
+                  <div key={i} className="flex items-center justify-between">
+                    <span style={{ fontSize: 9, color: '#4b6280' }}>{row!.label}</span>
+                    <span style={{ fontSize: 9, fontFamily: "'Share Tech Mono', monospace", color: row!.color, fontWeight: 600 }}>{row!.value}</span>
+                  </div>
                 ))}
               </div>
-            )}
-          </PhaseSection>
-
-          {/* ② BUDGET */}
-          <PhaseSection label="② BUDGET" accent="#f59e0b">
-            <div className="grid grid-cols-2 gap-x-4 gap-y-0.5" style={{ fontSize: 10 }}>
-              <span style={{ color: '#64748b' }}>Policy cost</span>
-              <span style={MONO('#f87171')}>-₹{fmtNum(tr.major_policy?.budget_cost ?? 0)} Cr</span>
-              <span style={{ color: '#64748b' }}>Tax revenue</span>
-              <span style={MONO('#4ade80')}>+₹{fmtNum(tr.tax_revenue ?? 0)} Cr</span>
-              <span style={{ color: '#64748b' }}>Interest paid</span>
-              <span style={MONO('#f87171')}>-₹{fmtNum(tr.interest_paid ?? 0)} Cr</span>
-              {tr.budget_stolen > 0 && <>
-                <span style={{ color: '#fb923c' }}>Corruption leakage</span>
-                <span style={MONO('#fb923c')}>₹{fmtNum(tr.budget_stolen)} Cr</span>
-              </>}
-              <span style={{ color: '#94a3b8', fontWeight: 600 }}>Treasury after</span>
-              <span style={{ ...MONO('#f0c040'), fontWeight: 700 }}>₹{fmtNum(tr.treasury_after ?? 0)} Cr</span>
+              {(tr.budget_stolen ?? 0) > 2 && <Reason text={corruptReason} />}
             </div>
-          </PhaseSection>
 
-          {/* ③ PARAMETER CHANGES */}
-          {paramDeltas.length > 0 && (
-            <PhaseSection label="③ PARAMETER CHANGES" accent="#a855f7">
-              <div className="flex gap-1 flex-wrap">
-                {paramDeltas.map(d => <DeltaTag key={d.key} label={d.key} value={d.diff} />)}
-              </div>
-            </PhaseSection>
-          )}
-
-          {/* ④ EVENTS */}
-          {tr.events_triggered?.length > 0 && (
-            <PhaseSection label="④ EVENTS TRIGGERED" accent="#ef4444">
-              {tr.events_triggered.map(ev => {
-                const isCrisis = ev.type === 'crisis'
-                return (
-                  <div key={ev.id} className="flex items-center gap-2 mb-1">
-                    <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3,
-                      background: isCrisis ? 'rgba(248,113,113,0.12)' : 'rgba(34,197,94,0.12)',
-                      border: `1px solid ${isCrisis ? '#7f1d1d' : '#14532d'}`,
-                      color: isCrisis ? '#fca5a5' : '#86efac',
-                      fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, letterSpacing: '0.05em' }}>
-                      {ev.type === 'crisis' ? '⚠' : '✦'} {ev.name}
+            {/* ③ PARAMETER CHANGES */}
+            {paramDeltas.length > 0 && (
+              <div>
+                <SectionLabel num="③" text="Parameter Changes" />
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                  {paramDeltas.map(d => (
+                    <span key={d.key} style={{
+                      fontSize: 9, padding: '1px 6px', borderRadius: 3,
+                      background: d.diff > 0 ? 'rgba(34,197,94,0.10)' : 'rgba(248,113,113,0.10)',
+                      color: d.diff > 0 ? '#86efac' : '#fca5a5',
+                      border: `1px solid ${d.diff > 0 ? '#14532d44' : '#7f1d1d44'}`,
+                    }}>
+                      {fmt(d.key)} {d.diff > 0 ? '+' : ''}{d.diff}
                     </span>
-                    {ev.portfolio && <span style={{ fontSize: 9, color: '#475569' }}>{ev.portfolio}</span>}
-                  </div>
-                )
-              })}
-            </PhaseSection>
-          )}
+                  ))}
+                </div>
+              </div>
+            )}
 
-          {/* ⑤ OPPOSITION & POLITICS */}
-          <PhaseSection label="⑤ OPPOSITION & POLITICS" accent="#f87171">
-            <div style={{ fontSize: 10 }}>
-              {tr.opposition_attack && (
-                <div className="mb-1">
-                  <span style={{ color: '#f87171', fontWeight: 600 }}>Attack: </span>
-                  <span style={{ color: '#94a3b8' }}>{tr.opposition_attack}</span>
+            {/* ④ EVENTS */}
+            {tr.events_triggered?.length > 0 && (
+              <div>
+                <SectionLabel num="④" text="Events" />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  {tr.events_triggered.map(ev => {
+                    const isCrisis = ev.type === 'crisis'
+                    return (
+                      <div key={ev.id} style={{
+                        padding: '4px 8px', borderRadius: 4,
+                        background: isCrisis ? 'rgba(248,113,113,0.07)' : 'rgba(34,197,94,0.07)',
+                        border: `1px solid ${isCrisis ? '#7f1d1d44' : '#14532d44'}`,
+                      }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: isCrisis ? '#fca5a5' : '#86efac' }}>
+                          {isCrisis ? '⚠' : '✦'} {ev.name}
+                        </div>
+                        <div style={{ fontSize: 9, color: '#4b6280', marginTop: 1, fontStyle: 'italic' }}>
+                          {isCrisis
+                            ? `crisis triggered${ev.portfolio ? ` in ${ev.portfolio}` : ''} — city conditions were vulnerable`
+                            : `opportunity opened${ev.portfolio ? ` in ${ev.portfolio}` : ''} — strong city performance`}
+                        </div>
+                      </div>
+                    )
+                  })}
                 </div>
-              )}
-              {tr.counter_frame && (
-                <div className="mb-1">
-                  <span style={{ color: '#22c55e', fontWeight: 600 }}>Counter: </span>
-                  <span style={{ color: '#94a3b8' }}>{tr.counter_frame}</span>
+              </div>
+            )}
+
+            {/* ⑤ OPPOSITION */}
+            {tr.opposition_attack && (
+              <div>
+                <SectionLabel num="⑤" text="Opposition" />
+                <div className="flex items-start gap-2">
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 10, color: '#f87171', fontWeight: 600 }}>{tr.opposition_attack}</div>
+                    <Reason text="opposition exploiting public vulnerabilities" />
+                  </div>
+                  {tr.counter_frame && (
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 10, color: '#22c55e', fontWeight: 600 }}>{tr.counter_frame}</div>
+                      <Reason text="your counter-narrative" />
+                    </div>
+                  )}
                 </div>
-              )}
-              <div className="flex items-center gap-4 mt-1">
-                <span style={{ color: '#64748b', fontSize: 9 }}>Approval</span>
-                <span style={{ ...MONO('#f0c040'), fontSize: 10, fontWeight: 700 }}>
+              </div>
+            )}
+
+            {/* ⑥ APPROVAL */}
+            <div>
+              <SectionLabel num="⑥" text="Public Approval" />
+              <div className="flex items-center gap-3">
+                <span style={{ fontSize: 11, fontFamily: "'Share Tech Mono', monospace", color: '#f0c040', fontWeight: 700 }}>
+                  {Math.round((tr as any).approval_before ?? tr.interim_approval)}%
+                </span>
+                <span style={{ fontSize: 9, color: '#4b6280' }}>→</span>
+                <span style={{ fontSize: 13, fontFamily: "'Share Tech Mono', monospace", color: '#f0c040', fontWeight: 700 }}>
                   {Math.round(tr.interim_approval)}%
                 </span>
-                <span style={{ color: '#64748b', fontSize: 9 }}>Tension</span>
-                <span style={{ ...MONO(tr.communal_tension_after > 50 ? '#f87171' : '#64748b'), fontSize: 10 }}>
-                  {Math.round(tr.communal_tension_after)}
-                </span>
               </div>
             </div>
-          </PhaseSection>
 
-          {/* ⑥ MINISTER LOYALTY */}
-          {tr.minister_loyalty_changes && Object.keys(tr.minister_loyalty_changes).length > 0 && (
-            <PhaseSection label="⑥ CABINET" accent="#7c3aed">
-              <div className="flex gap-2 flex-wrap">
-                {Object.entries(tr.minister_loyalty_changes).map(([id, delta]) => {
-                  const m = ministers.find(mi => mi.id === id)
-                  if (!m) return null
-                  const col = delta > 0 ? '#22c55e' : delta < 0 ? '#f87171' : '#64748b'
-                  return (
-                    <span key={id} style={{ fontSize: 9, color: col }}>
-                      {m.name.split(' ')[0]} {delta > 0 ? '▲' : delta < 0 ? '▼' : '—'}{delta !== 0 ? Math.abs(delta).toFixed(0) : ''}
-                    </span>
-                  )
-                })}
+            {/* ⑦ NARRATIVE */}
+            {tr.delivery_narrative && (
+              <div>
+                <SectionLabel num="⑦" text="Narrative" />
+                <div style={{ fontSize: 10, color: '#64748b', lineHeight: 1.6, fontStyle: 'italic' }}>
+                  {tr.delivery_narrative}
+                </div>
               </div>
-            </PhaseSection>
-          )}
+            )}
 
-          {/* ⑦ NARRATIVE */}
-          {tr.delivery_narrative && (
-            <PhaseSection label="⑦ NARRATIVE" accent="#64748b">
-              <div style={{ fontSize: 10, color: '#94a3b8', lineHeight: 1.5 }}>
-                {tr.delivery_narrative}
+            {/* ADVISOR */}
+            {(tr as any).advisor_summary && (
+              <div style={{
+                padding: '8px 10px', borderRadius: 5,
+                background: 'rgba(232,160,48,0.06)', border: '1px solid rgba(232,160,48,0.20)',
+              }}>
+                <div style={{ fontSize: 8, fontWeight: 700, color: '#e8a030',
+                  fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.12em', marginBottom: 4 }}>
+                  ADVISOR
+                </div>
+                <div style={{ fontSize: 10, color: '#b8924a', lineHeight: 1.6, fontStyle: 'italic' }}>
+                  "{(tr as any).advisor_summary}"
+                </div>
               </div>
-            </PhaseSection>
-          )}
-        </div>
-      )}
+            )}
+
+          </div>
+        )
+      })()}
     </div>
   )
 }
@@ -651,6 +718,9 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
 
   // All parameters panel
   const [showAllParams, setShowAllParams] = useState(false)
+
+  // Minor Action
+
 
   // Policy modal
   const [policyOptions, setPolicyOptions] = useState<Policy[] | null>(null)
@@ -1045,6 +1115,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                 <Icon size={13} color="#4b6280" />
               </button>
             ))}
+
           <button
             onClick={handleNextTurn}
             disabled={isTurnExecuting || fetchingPolicies || showPolicyModal}
@@ -1546,7 +1617,6 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                 <TurnPhaseCard
                   key={entry.turn}
                   entry={entry}
-                  ministers={gameState.ministers}
                   onToggle={() => setTurnHistory(prev =>
                     prev.map((e, j) => j === i ? { ...e, expanded: !e.expanded } : e)
                   )}

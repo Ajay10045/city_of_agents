@@ -45,13 +45,8 @@ def apply_maintenance_decay(
     targeted_last_turn: set[str],
     admin_efficiency: float,
 ) -> CityParameters:
-    """Section 14.3 — decay parameters not targeted this or last turn."""
-    data = params.as_dict()
-    decay_rate = 1.5 * (1 - admin_efficiency / 200.0)
-    for key in data:
-        if key not in targeted_this_turn and key not in targeted_last_turn:
-            data[key] = max(0.0, data[key] - decay_rate)
-    return CityParameters(**data)
+    """Decay disabled — returns params unchanged."""
+    return params
 
 
 def apply_corruption_consequences(

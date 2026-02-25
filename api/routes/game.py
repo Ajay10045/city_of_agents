@@ -16,6 +16,7 @@ Endpoints:
 """
 from __future__ import annotations
 
+import traceback
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -230,6 +231,7 @@ def execute_turn(game_id: str, req: TurnRequest) -> dict[str, Any]:
             counter_frame_strategy=req.counter_frame,
         )
     except Exception as exc:
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Turn execution failed: {exc}") from exc
 
     # Post-turn loss check

@@ -21,6 +21,21 @@ import random
 import time
 from typing import Any
 
+# ─── Debug Logger ─────────────────────────────────────────────────────────────
+_RESET = "\033[0m"
+_COLOURS = {
+    "phase": "\033[1;36m",   # bold cyan  — phase headers
+    "calc":  "\033[0;33m",   # yellow     — calculation values
+    "good":  "\033[0;32m",   # green      — positive outcomes
+    "bad":   "\033[0;31m",   # red        — warnings / losses
+    "info":  "\033[0;37m",   # grey       — neutral info
+    "llm":   "\033[0;35m",   # magenta    — LLM call markers
+}
+
+def _log(tag: str, msg: str) -> None:
+    colour = _COLOURS.get(tag, "")
+    print(f"{colour}[{tag.upper():5s}] {msg}{_RESET}", flush=True)
+
 from engine.budget import (
     apply_corruption_consequences,
     apply_maintenance_decay,
@@ -67,6 +82,7 @@ from engine.scoring import check_loss_conditions, compute_scorecard
 from engine.wellbeing import update_citizen_wellbeing
 from llm.llm_client import LLMClient
 from simulation.llm_calls import (
+    generate_advisor_summary,
     generate_citizen_names,
     generate_delivery_narrative,
     generate_media_headlines,
@@ -318,27 +334,39 @@ class GameSession:
         state = self.state
         rng = random.Random(state.prng_seed + state.current_turn * 1000)
 
+        # ─── Turn header ───────────────────────────────────────────────────────
+        city = state.city_profile.city_name
+        _log("phase", "═" * 54)
+        _log("phase", f"TURN {state.current_turn}  |  City of {city}  |  Seed: {state.prng_seed + state.current_turn * 1000}")
+        _log("phase", "═" * 54)
+        approval_now = sum(c.mayor_alignment for c in state.citizens) / max(len(state.citizens), 1)
+        _log("info",  f"Treasury: ₹{state.treasury:.0f} Cr  |  Debt: ₹{state.outstanding_debt:.0f} Cr  |  Approx approval: {approval_now:.1f}%")
+
         # ① Resolve minor action
         m_action = MinorAction(**minor_action)
         treasury = state.treasury
+        _log("phase", f"① MINOR ACTION — {m_action.type}")
+        treasury_before_minor = treasury
         treasury = apply_minor_action_budget(
             treasury, m_action,
             bonus_banking=20.0,
         )
+        _log("calc",  f"Treasury after minor action: ₹{treasury:.0f} Cr  (Δ {treasury - treasury_before_minor:+.0f})")
         params = state.city_params
+        targeted_this_turn: set[str] = set()
 
         # Handle governance upkeep
+        _GOVERNANCE_PARAMS = {"admin_efficiency", "anti_corruption", "media_freedom"}
         if m_action.type == "governance_upkeep":
-            params = params.apply_delta({
-                "admin_efficiency": 1.0,
-                "anti_corruption": 1.0,
-                "media_freedom": 1.0,
-            })
-
-        # Handle maintenance (prevent decay for target param)
-        targeted_this_turn: set[str] = set()
-        if m_action.type == "maintenance" and m_action.target:
+            gov_target = m_action.target if m_action.target in _GOVERNANCE_PARAMS else "admin_efficiency"
+            params = params.apply_delta({gov_target: 1.0})
+            targeted_this_turn.add(gov_target)
+            _log("good", f"Governance upkeep: {gov_target} +1.0")
+        elif m_action.type == "maintenance" and m_action.target:
             targeted_this_turn.add(m_action.target)
+            _log("info", f"Maintenance: protecting {m_action.target} from decay")
+        elif m_action.type == "banking":
+            _log("info", "Banking: +₹20 Cr bonus invested")
 
         # ② Parse chosen policy
         if not self._pending_policy_options:
@@ -350,17 +378,37 @@ class GameSession:
         for k in policy.target_effects:
             targeted_this_turn.add(k)
 
+        _log("phase", f"② POLICY SELECTED — \"{policy.name}\" ({policy.portfolio})")
+        _log("calc",  f"Budget cost: ₹{policy.budget_cost:.0f} Cr  |  Time profile: {policy.time_profile or {'turn_0': 1.0}}")
+        _log("info",  f"Targeted params: {', '.join(targeted_this_turn)}")
+        if policy.target_effects:
+            for p, v in policy.target_effects.items():
+                _log("info",  f"  target_effect: {p} {v:+.1f}")
+        if policy.side_effects:
+            for p, v in policy.side_effects.items():
+                _log("info",  f"  side_effect:   {p} {v:+.1f}")
+
         # ③ Interest payment + tax revenue
+        _log("phase", "③ BUDGET & REVENUE")
         interest_paid = process_interest_payment(state.outstanding_debt, state.city_profile.budget.interest_rate)
+        _log("calc",  f"Interest paid: ₹{interest_paid:.1f} Cr  (debt=₹{state.outstanding_debt:.0f}, rate={state.city_profile.budget.interest_rate:.2%})")
         treasury -= interest_paid
         tax_rev = compute_tax_revenue(state.city_params, state.city_profile.budget.base_tax_revenue)
+        _log("calc",  f"Tax revenue: ₹{tax_rev:.1f} Cr")
         treasury += tax_rev
+        _log("calc",  f"Policy cost: -₹{policy.budget_cost:.0f} Cr")
+        _log("calc",  f"Treasury after budget phase: ₹{treasury - policy.budget_cost:.0f} Cr  (before policy deduction)")
 
         # ④ Policy implementation
         # Find minister for this portfolio
         minister = self._find_minister_for_portfolio(policy.portfolio)
         if minister is None:
             raise ValueError("No ministers in cabinet. Call assign_cabinet first.")
+        _log("phase", "④ IMPLEMENTATION ENGINE")
+        _log("info",  f"Assigned minister: {minister.citizen.name}  "
+                      f"(competence={minister.citizen.capability.competence:.0f}, "
+                      f"managerial={minister.citizen.capability.managerial_skill:.0f}, "
+                      f"portfolios={1 + len(minister.extra_portfolios)})")
         crisis_active = bool(state.active_events)
         impl = run_implementation(
             policy, minister,
@@ -369,9 +417,23 @@ class GameSession:
             rng,
             crisis_active,
         )
+        # Log implementation results (engine/implementation.py logs the sub-scores)
+        _log("calc",  f"Final execution score: {impl.execution_score:.3f}")
+        for param, actual in impl.actual_deltas.items():
+            intended = policy.target_effects.get(param, actual)
+            tag = "good" if actual >= 0 else "bad"
+            _log(tag,   f"  {param}: intended {intended:+.1f}  →  actual {actual:+.2f}  (×{impl.execution_score:.3f})")
+        for param, delta in impl.side_effect_deltas.items():
+            tag = "good" if delta >= 0 else "bad"
+            _log(tag,   f"  side-effect {param}: {delta:+.2f}")
+        stolen = impl.corruption.budget_stolen
+        _log("bad" if stolen > 0 else "info",
+             f"Corruption: intent={impl.corruption.intent:.3f}, window={impl.corruption.window:.3f}  "
+             f"→  ₹{stolen:.1f} Cr stolen")
 
         # Deduct budget (full policy cost; stolen is leakage within that)
         treasury -= policy.budget_cost
+        _log("calc",  f"Treasury after policy deduction: ₹{treasury:.0f} Cr")
 
         # Track corruption; exposure grows proportional to leakage rate
         self._total_stolen += impl.corruption.budget_stolen
@@ -379,37 +441,65 @@ class GameSession:
             100.0, minister.state.scandal_exposure + impl.corruption.leakage_rate * 20.0
         )
 
-        # ⑤ Apply immediate deltas (turn_0 fraction)
+        # ⑤ Apply immediate deltas (turn_0 fraction) — both target and side effects share time_profile
+        _log("phase", "⑤ APPLY DELTAS")
         time_profile = policy.time_profile or {"turn_0": 1.0}
         t0_frac = time_profile.get("turn_0", 1.0)
-        immediate_deltas = {k: v * t0_frac for k, v in impl.actual_deltas.items()}
-        # Queue future deltas
+
+        # Merge target + side effects into one combined delta map for time-splitting
+        all_policy_deltas: dict[str, float] = {}
+        for param, val in impl.actual_deltas.items():
+            all_policy_deltas[param] = all_policy_deltas.get(param, 0.0) + val
+        for param, val in impl.side_effect_deltas.items():
+            all_policy_deltas[param] = all_policy_deltas.get(param, 0.0) + val
+
+        immediate_deltas = {k: v * t0_frac for k, v in all_policy_deltas.items()}
+        imm_summary = ", ".join(f"{k} {v:+.2f}" for k, v in immediate_deltas.items())
+        _log("info",  f"Immediate (turn_0={t0_frac:.1f}): {imm_summary}")
+
+        # Queue future fractions for both target + side effects
+        queued_summary = []
         for key, frac in time_profile.items():
             if key == "turn_0":
                 continue
             turn_offset = int(key.replace("turn_", ""))
             apply_turn = state.current_turn + turn_offset
             carry = state.pending_deltas.setdefault(apply_turn, {})
-            for param, val in impl.actual_deltas.items():
+            for param, val in all_policy_deltas.items():
                 carry[param] = carry.get(param, 0.0) + val * frac
+                queued_summary.append(f"{param} {val * frac:+.2f} (turn {apply_turn})")
+                targeted_this_turn.add(param)  # prevent decay on params with queued delivery
+        if queued_summary:
+            _log("info",  f"Queued future deltas: {', '.join(queued_summary)}")
 
-        # Apply immediate deltas + side effects + event deltas
+        # Apply immediate combined deltas (target + side effects)
         params = state.city_params.apply_delta(immediate_deltas)
-        params = params.apply_delta(impl.side_effect_deltas)
 
         # Apply any carry-over deltas due this turn
         pending = state.pending_deltas.pop(state.current_turn, {})
+        if pending:
+            carry_summary = ", ".join(f"{k} {v:+.2f}" for k, v in pending.items())
+            _log("info",  f"Carry-over from previous turns: {carry_summary}")
+        else:
+            _log("info",  "Carry-over from previous turns: (none)")
         params = params.apply_delta(pending)
 
         # ⑥ Events: tick existing, check for new
+        _log("phase", f"⑥ EVENT SYSTEM  ({len(state.active_events)} active)")
         remaining_events, event_deltas = step_events(state.active_events, rng)
+        if event_deltas:
+            ev_d_str = ", ".join(f"{k} {v:+.2f}" for k, v in event_deltas.items())
+            _log("bad",   f"Event deltas applied: {ev_d_str}")
         params = params.apply_delta(event_deltas)
 
         # Track escalations/resolutions
         new_remaining = len(remaining_events)
         old_count = len(state.active_events)
+        resolutions = max(0, old_count - new_remaining)
         self._escalations += sum(1 for e in remaining_events if e.escalation_level > 0)
-        self._resolutions += max(0, old_count - new_remaining)
+        self._resolutions += resolutions
+        if resolutions:
+            _log("good",  f"{resolutions} event(s) resolved this turn")
 
         # New threshold events
         existing_names = {e.name for e in remaining_events}
@@ -417,9 +507,24 @@ class GameSession:
         new_stochastic = check_stochastic_events(params, len(remaining_events), rng)
         newly_triggered = new_threshold + new_stochastic
         self._crises_triggered += sum(1 for e in newly_triggered if e.type == "crisis")
+        for ev in newly_triggered:
+            tag = "bad" if ev.type == "crisis" else "good"
+            kind = "THRESHOLD" if ev in new_threshold else "STOCHASTIC"
+            _log(tag,    f"TRIGGERED [{kind}]: \"{ev.name}\" ({ev.type}, sev={ev.severity}, {ev.turns_remaining} turns)")
+        if not newly_triggered:
+            _log("info",  "No new events triggered")
         state.active_events = remaining_events + newly_triggered
+        _log("info",  f"Active events after: {len(state.active_events)}  (crises: {sum(1 for e in state.active_events if e.type == 'crisis')})")
 
         # ⑦ Maintenance decay
+        _log("phase", "⑦ MAINTENANCE DECAY & CORRUPTION CONSEQUENCES")
+        protected = targeted_this_turn | state.targeted_last_turn
+        all_param_keys = set(params.as_dict().keys())
+        decaying = all_param_keys - protected
+        decay_rate = 1.5 * (1 - params.admin_efficiency / 200.0)
+        _log("info",  f"Protected from decay ({len(protected)}): {', '.join(sorted(protected))}")
+        if decaying:
+            _log("bad",   f"Decaying ({len(decaying)}): {', '.join(sorted(decaying))}  (rate: -{decay_rate:.2f}/param)")
         params = apply_maintenance_decay(
             params,
             targeted_this_turn,
@@ -428,6 +533,11 @@ class GameSession:
         )
 
         # Corruption consequences
+        stolen = impl.corruption.budget_stolen
+        if stolen > 0:
+            max_b = state.city_profile.budget.max_policy_budget
+            ratio = stolen / max(max_b, 1.0)
+            _log("bad",   f"Corruption consequences: anti_corruption -{ratio * 3.0:.2f}, admin_efficiency -{ratio * 1.5:.2f}  (₹{stolen:.1f} Cr stolen)")
         params = apply_corruption_consequences(
             params,
             impl.corruption.budget_stolen,
@@ -435,22 +545,48 @@ class GameSession:
         )
 
         # ⑧ Debt effects
+        _log("phase", "⑧ DEBT EFFECTS")
         debt_fx = debt_political_effects(state.outstanding_debt, state.city_profile.budget.max_debt)
+        debt_ratio = state.outstanding_debt / max(state.city_profile.budget.max_debt, 1.0)
+        _log("calc",  f"Debt ratio: {debt_ratio:.3f}  (₹{state.outstanding_debt:.0f} / ₹{state.city_profile.budget.max_debt:.0f} max)")
         if debt_fx["fiscal_crisis"]:
+            _log("bad",   f"FISCAL CRISIS — admin_efficiency drain: {debt_fx['admin_drain']:.1f}")
             params = params.apply_delta({"admin_efficiency": -debt_fx["admin_drain"]})
+        elif debt_fx["fiscal_warning"]:
+            _log("bad",   "Fiscal WARNING — debt > 50% of max")
+        else:
+            _log("info",  "No fiscal stress")
 
         # Auto-repayment
         treasury, outstanding_debt = process_auto_repayment(treasury, state.outstanding_debt)
+        repaid = state.outstanding_debt - outstanding_debt
+        if repaid > 0:
+            _log("good",  f"Auto-repayment: -₹{repaid:.0f} Cr debt  →  outstanding: ₹{outstanding_debt:.0f} Cr")
+        else:
+            _log("info",  f"No auto-repayment (treasury ≤ 200 or no debt)  |  outstanding: ₹{outstanding_debt:.0f} Cr")
 
         # ⑨ Wellbeing update for all citizens
-        all_deltas = {}
-        all_deltas.update(immediate_deltas)
-        all_deltas.update(impl.side_effect_deltas)
+        _log("phase", f"⑨ CITIZEN WELLBEING  ({len(state.citizens)} citizens)")
+        all_deltas = dict(immediate_deltas)
         all_deltas.update(event_deltas)
+        delta_summary = ", ".join(f"{k} {v:+.2f}" for k, v in sorted(all_deltas.items(), key=lambda x: abs(x[1]), reverse=True)[:6])
+        _log("calc",  f"Combined param deltas (top 6): {delta_summary}")
+        avg_wb_before = sum(c.wellbeing.score() for c in state.citizens) / max(len(state.citizens), 1)
+        # Log one sample citizen's breakdown
+        sample_citizen = state.citizens[0] if state.citizens else None
         for citizen in state.citizens:
             citizen.wellbeing = update_citizen_wellbeing(citizen, all_deltas, state.city_profile)
+        avg_wb_after = sum(c.wellbeing.score() for c in state.citizens) / max(len(state.citizens), 1)
+        wb_delta = avg_wb_after - avg_wb_before
+        _log("calc",  f"Avg wellbeing: {avg_wb_before:.2f} → {avg_wb_after:.2f}  (Δ {wb_delta:+.2f})")
+        if sample_citizen:
+            d = sample_citizen.demographics
+            _log("info",  f"Sample citizen: {sample_citizen.name}  "
+                          f"({d.income_bracket}, {d.location}, {d.religion})")
 
         # ⑩ Scandal check (opposition_pressure estimated as inverse of execution score)
+        _log("phase", f"⑩ SCANDAL CHECK — {minister.citizen.name}  "
+                      f"(exposure={minister.state.scandal_exposure:.0f}, media_freedom={params.media_freedom:.0f})")
         scandal_broke = check_scandal_break(
             minister,
             state.media_outlets,
@@ -462,8 +598,12 @@ class GameSession:
         if scandal_broke:
             self._total_scandals += 1
             scandal_minister_name = minister.citizen.name
+            _log("bad",   f"SCANDAL BROKE for {minister.citizen.name}!")
+        else:
+            _log("info",  "No scandal this turn")
 
         # ⑪ Opposition attack + media
+        _log("phase", "⑪ OPPOSITION ATTACK & COUNTER-FRAME")
         interim_approval = compute_interim_approval(state.citizens, params.media_freedom)
         avg_wb = sum(c.wellbeing.score() for c in state.citizens) / max(len(state.citizens), 1)
         turns_to_election = max(0, state.city_profile.game_config.election_turn - state.current_turn)
@@ -479,6 +619,10 @@ class GameSession:
             max_debt=state.city_profile.budget.max_debt,
             turns_to_election=turns_to_election,
         )
+        _log("info",  f"Attack strategy: \"{attack_strategy}\"  "
+                      f"(scandal={scandal_broke}, crisis={bool(state.active_events)}, "
+                      f"debt_ratio={outstanding_debt / max(state.city_profile.budget.max_debt, 1):.2f}, "
+                      f"turns_to_election={turns_to_election})")
 
         opp_effectiveness = compute_opposition_effectiveness(
             state.opposition_leader,
@@ -503,8 +647,14 @@ class GameSession:
         )
 
         net_opp_impact = opp_effectiveness - counter_eff
+        _log("calc",  f"Opp effectiveness: {opp_effectiveness:.3f}  |  Counter-frame \"{counter_frame_strategy}\": {counter_eff:.3f}")
+        if net_opp_impact > 0:
+            _log("bad",   f"Net opp impact: {net_opp_impact:+.3f}  →  opposition wins this cycle")
+        else:
+            _log("good",  f"Net opp impact: {net_opp_impact:+.3f}  →  counter-frame wins")
 
         # Update opposition credibility
+        old_cred = state.opposition_credibility
         state.opposition_credibility = update_opposition_credibility(
             state.opposition_credibility,
             attack_landed=net_opp_impact > 0,
@@ -513,6 +663,7 @@ class GameSession:
             attack_credibility=0.5,
             attack_relevant=True,
         )
+        _log("info",  f"Opposition credibility: {old_cred:.1f} → {state.opposition_credibility:.1f}")
 
         # Update mayor alignment for each citizen
         for citizen in state.citizens:
@@ -529,6 +680,7 @@ class GameSession:
             )
 
         # ⑫ Communal tension update
+        _log("phase", "⑫ COMMUNAL TENSION")
         delta_community = all_deltas.get("community_and_spaces", 0.0)
         delta_police = all_deltas.get("police_and_emergency", 0.0)
         minority_sensitive = state.city_profile.communal_config.dominant_fault_line in ("ethnic", "religious")
@@ -538,6 +690,9 @@ class GameSession:
         )
         communal_severity = max((e.severity for e in state.active_events), default=0)
         opp_identity_mobilized = (attack_strategy == "Identity Mobilization")
+        _log("calc",  f"delta_community={delta_community:+.2f}, delta_police={delta_police:+.2f}, "
+                      f"minority_sensitive={minority_sensitive}, communal_crisis={communal_crisis}, "
+                      f"opp_identity_mobilized={opp_identity_mobilized}")
         new_tension = update_communal_tension(
             state.communal_tension,
             state.city_profile.communal_config.tension_baseline,
@@ -550,6 +705,9 @@ class GameSession:
             opposition_identity_mobilized=opp_identity_mobilized,
             opposition_effectiveness=opp_effectiveness,
         )
+        tag = "bad" if new_tension > state.communal_tension else "good" if new_tension < state.communal_tension else "info"
+        _log(tag,     f"Communal tension: {state.communal_tension:.1f} → {new_tension:.1f}  "
+                      f"(baseline: {state.city_profile.communal_config.tension_baseline:.1f})")
 
         # Update interim approval after alignment changes
         interim_approval = compute_interim_approval(state.citizens, params.media_freedom)
@@ -577,11 +735,15 @@ class GameSession:
             minister_loyalty_changes[m.citizen.id] = loyalty_delta
 
         # ⑬ LLM-generated narrative and flavour
+        _log("phase", "⑬ LLM NARRATIVE")
+        _log("llm",   "→ generate_delivery_narrative() ...")
         delivery_narrative = generate_delivery_narrative(
             self.llm, policy, impl.execution_score, impl.actual_deltas,
             state.city_profile.city_name, state.current_turn
         )
+        _log("llm",   f"✓ delivery_narrative: {len(delivery_narrative.split())} words")
 
+        _log("llm",   f"→ generate_media_headlines() ({len(state.media_outlets)} outlets) ...")
         media_headlines = generate_media_headlines(
             self.llm,
             state.media_outlets,
@@ -591,14 +753,33 @@ class GameSession:
             scandal_minister_name,
             state.active_events,
         )
+        _log("llm",   f"✓ media_headlines: {len(media_headlines)} headlines")
 
         # Sample 5 citizens for reactions
         sampled = rng.sample(state.citizens, min(5, len(state.citizens)))
         sampled_dicts = [self._citizen_for_reaction(c) for c in sampled]
+        _log("llm",   f"→ sample_citizen_reactions() ({len(sampled)} citizens) ...")
         citizen_voices = sample_citizen_reactions(
             self.llm, policy, impl.execution_score, sampled_dicts,
             state.city_profile.city_name
         )
+        _log("llm",   f"✓ citizen_voices: {len(citizen_voices)} reactions")
+
+        _log("llm",   "→ generate_advisor_summary() ...")
+        worst_side = min(impl.side_effect_deltas.items(), key=lambda x: x[1], default=(None, 0))
+        advisor_summary = generate_advisor_summary(
+            self.llm,
+            policy_name=policy.name,
+            execution_score=impl.execution_score,
+            budget_stolen=impl.corruption.budget_stolen,
+            approval_before=approval_now,
+            approval_after=interim_approval,
+            events_triggered=[e.name for e in newly_triggered],
+            worst_side_effect=worst_side[0],
+            treasury=treasury,
+            city_name=state.city_profile.city_name,
+        )
+        _log("llm",   f"✓ advisor_summary: {len(advisor_summary.split())} words")
 
         # Ward report (aggregate wellbeing changes by group)
         ward_report = self._compute_ward_report(state.citizens, all_deltas)
@@ -629,6 +810,7 @@ class GameSession:
             outstanding_debt_after=outstanding_debt,
             interest_paid=interest_paid,
             tax_revenue=tax_rev,
+            advisor_summary=advisor_summary,
         )
 
         # Persist to game state
@@ -648,6 +830,17 @@ class GameSession:
         # Phase transition
         if state.current_turn > state.city_profile.game_config.election_turn and state.phase == "pre_election":
             state.phase = "legacy"
+
+        # ─── Turn summary footer ──────────────────────────────────────────────
+        approval_delta = interim_approval - approval_now
+        _log("phase", f"══════ TURN {turn_result.turn} COMPLETE ═══════════════════════════════")
+        tag_appr = "good" if approval_delta >= 0 else "bad"
+        _log(tag_appr, f"Approval:      {approval_now:.1f}% → {interim_approval:.1f}%  ({approval_delta:+.1f})")
+        tag_wb = "good" if avg_wb_after >= avg_wb_before else "bad"
+        _log(tag_wb,   f"Avg wellbeing: {avg_wb_before:.2f} → {avg_wb_after:.2f}  ({avg_wb_after - avg_wb_before:+.2f})")
+        _log("calc",   f"Treasury:      ₹{state.treasury:.0f} Cr  |  Debt: ₹{state.outstanding_debt:.0f} Cr")
+        _log("info",   f"Exec score: {impl.execution_score:.3f}  |  Stolen: ₹{impl.corruption.budget_stolen:.1f} Cr  |  Events: {len(state.active_events)} active")
+        _log("phase",  "═" * 54)
 
         return turn_result
 

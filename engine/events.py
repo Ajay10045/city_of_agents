@@ -13,6 +13,14 @@ def _clamp(v: float, lo: float = 0.0, hi: float = 100.0) -> float:
     return max(lo, min(hi, v))
 
 
+# ─── Debug Logger ─────────────────────────────────────────────────────────────
+_RESET = "\033[0m"
+_C = {"good": "\033[0;32m", "bad": "\033[0;31m", "info": "\033[0;37m", "calc": "\033[0;33m"}
+
+def _log(tag: str, msg: str) -> None:
+    print(f"{_C.get(tag, '')  }[{tag.upper():5s}] {msg}{_RESET}", flush=True)
+
+
 # Threshold triggers (Section 12.1)
 THRESHOLD_TRIGGERS: list[dict] = [
     {"condition": lambda p: p.police_and_emergency < 30,
@@ -65,7 +73,7 @@ def check_threshold_events(
     p = params
     for trigger in THRESHOLD_TRIGGERS:
         if trigger["condition"](p) and trigger["name"] not in existing_event_names:
-            triggered.append(ActiveEvent(
+            ev = ActiveEvent(
                 id=str(uuid.uuid4())[:8],
                 name=trigger["name"],
                 type=trigger["type"],  # type: ignore[arg-type]
@@ -73,7 +81,12 @@ def check_threshold_events(
                 turns_remaining=3,
                 city_effects_per_turn=trigger["effects"],
                 portfolio=trigger["portfolio"],
-            ))
+            )
+            triggered.append(ev)
+            tag = "bad" if trigger["type"] == "crisis" else "good"
+            _log(tag, f"  THRESHOLD triggered: \"{trigger['name']}\"  sev={trigger['severity']}  portfolio={trigger['portfolio']}")
+    if not triggered:
+        _log("info", "  No threshold events triggered")
     return triggered
 
 
@@ -94,10 +107,13 @@ def check_stochastic_events(
 
     crisis_chance = 0.15 + max(0, 60 - avg) / 200.0 + active_count * 0.05 - params.admin_efficiency / 400.0
     opp_chance = 0.05 + max(0, avg - 55) / 300.0 + params.admin_efficiency / 500.0 - active_count * 0.03
+    _log("calc", f"  Stochastic: avg_params={avg:.1f}, active={active_count}  "
+                 f"→  crisis_chance={crisis_chance:.3f}, opp_chance={opp_chance:.3f}")
 
     new_events = []
 
-    if rng.random() < crisis_chance:
+    crisis_roll = rng.random()
+    if crisis_roll < crisis_chance:
         spec = rng.choice(STOCHASTIC_CRISES)
         duration = rng.randint(2, 4)
         new_events.append(ActiveEvent(
@@ -110,8 +126,12 @@ def check_stochastic_events(
             city_effects_per_turn=spec["effects"],
             portfolio=spec["portfolio"],
         ))
+        _log("bad",  f"  STOCHASTIC crisis: \"{spec['name']}\"  (roll={crisis_roll:.3f} < {crisis_chance:.3f}), {duration} turns")
+    else:
+        _log("info", f"  No stochastic crisis  (roll={crisis_roll:.3f} ≥ {crisis_chance:.3f})")
 
-    if rng.random() < opp_chance:
+    opp_roll = rng.random()
+    if opp_roll < opp_chance:
         spec = rng.choice(STOCHASTIC_OPPORTUNITIES)
         new_events.append(ActiveEvent(
             id=str(uuid.uuid4())[:8],
@@ -122,6 +142,9 @@ def check_stochastic_events(
             city_effects_per_turn=spec["effects"],
             portfolio=spec["portfolio"],
         ))
+        _log("good", f"  STOCHASTIC opportunity: \"{spec['name']}\"  (roll={opp_roll:.3f} < {opp_chance:.3f})")
+    else:
+        _log("info", f"  No stochastic opportunity  (roll={opp_roll:.3f} ≥ {opp_chance:.3f})")
 
     return new_events
 
@@ -137,16 +160,24 @@ def step_events(
     for ev in events:
         # apply this turn's effects
         for param, delta in ev.city_effects_per_turn.items():
-            combined_deltas[param] = combined_deltas.get(param, 0.0) + delta * (1 + ev.escalation_level * 0.3)
+            scaled = delta * (1 + ev.escalation_level * 0.3)
+            combined_deltas[param] = combined_deltas.get(param, 0.0) + scaled
 
         ev.turns_remaining -= 1
 
         # escalation check
+        escalated = False
         if ev.turns_remaining > 0 and rng.random() < ev.escalation_chance:
             ev.escalation_level = min(ev.escalation_level + 1, 2)
+            escalated = True
 
         if ev.turns_remaining > 0:
             remaining.append(ev)
+            status = f"ESCALATED (level {ev.escalation_level})" if escalated else f"{ev.turns_remaining} turns left"
+            tag = "bad" if ev.type == "crisis" else "good"
+            _log(tag,  f"  \"{ev.name}\" — {status}")
+        else:
+            _log("good", f"  \"{ev.name}\" — RESOLVED")
 
     return remaining, combined_deltas
 

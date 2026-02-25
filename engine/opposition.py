@@ -8,6 +8,13 @@ import random
 
 from .models import Citizen, MediaOutletState
 
+# ─── Debug Logger ─────────────────────────────────────────────────────────────
+_RESET = "\033[0m"
+_C = {"good": "\033[0;32m", "bad": "\033[0;31m", "info": "\033[0;37m", "calc": "\033[0;33m"}
+
+def _log(tag: str, msg: str) -> None:
+    print(f"{_C.get(tag, '')  }[{tag.upper():5s}] {msg}{_RESET}", flush=True)
+
 
 # Impact Matrix row sums (for PublicSalience weights)
 PARAM_SALIENCE: dict[str, float] = {
@@ -102,7 +109,11 @@ def compute_opposition_effectiveness(
     )
     # Scale by opposition credibility
     scaled = raw * (credibility_score / 50.0)
-    return max(0.0, min(1.0, scaled))
+    result = max(0.0, min(1.0, scaled))
+    _log("calc", f"  Opp effectiveness: leader_comp={leader.capability.competence:.0f}×0.30 + cred={attack_credibility:.2f}×0.30 + "
+                 f"media={media_factor:.3f}×0.25 + frust={frustration:.3f}×0.15 = {raw:.3f}  "
+                 f"×(cred_score {credibility_score:.1f}/50) = {result:.3f}")
+    return result
 
 
 COUNTER_FRAME_BASE: dict[str, float] = {
@@ -137,7 +148,9 @@ def counter_effectiveness(
     mayor_media = sum(o.reach * o.trust_rating for o in outlets if o.lean == "mayor")
     total_media = sum(o.reach * o.trust_rating for o in outlets)
     media_amp = mayor_media / max(total_media, 1.0)
-    return max(0.0, min(1.0, base * context * max(0.5, media_amp)))
+    result = max(0.0, min(1.0, base * context * max(0.5, media_amp)))
+    _log("calc", f"  Counter-frame \"{strategy}\": base={base:.2f} × context={context:.3f} × media_amp={media_amp:.3f} = {result:.3f}")
+    return result
 
 
 def update_opposition_credibility(

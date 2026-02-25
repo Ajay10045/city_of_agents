@@ -368,6 +368,7 @@ class TurnResult(BaseModel):
     outstanding_debt_after: float
     interest_paid: float
     tax_revenue: float
+    advisor_summary: str = ""
 
 
 # ---------------------------------------------------------------------------

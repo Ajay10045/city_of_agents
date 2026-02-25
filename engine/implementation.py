@@ -14,6 +14,14 @@ def _clamp(v: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, v))
 
 
+# ─── Debug Logger ─────────────────────────────────────────────────────────────
+_RESET = "\033[0m"
+_C = {"calc": "\033[0;33m", "good": "\033[0;32m", "bad": "\033[0;31m", "info": "\033[0;37m"}
+
+def _log(tag: str, msg: str) -> None:
+    print(f"{_C.get(tag, '')  }[{tag.upper():5s}] {msg}{_RESET}", flush=True)
+
+
 # Portfolios → their param keys (for portfolio scope validation / penalties)
 PORTFOLIO_PARAMS: dict[str, list[str]] = {
     "Finance & Economy": ["jobs_and_commerce"],
@@ -116,10 +124,26 @@ def run_implementation(
 ) -> ImplementationResult:
     """Section 6.3–6.6."""
     m_score = minister_exec_score(minister, active_crisis_in_portfolio)
+    c = minister.citizen.capability
+    p_pers = minister.citizen.personality
+    total_portfolios = 1 + len(minister.extra_portfolios)
+    base_m = (c.competence * 0.35 + c.managerial_skill * 0.30 + p_pers.conscientiousness * 0.20 + c.bureaucratic_navigation * 0.15) / 100.0
+    penalty_str = f"  ×{0.85 if total_portfolios == 2 else 0.75 if total_portfolios >= 3 else 1.0:.2f} portfolio penalty" if total_portfolios > 1 else ""
+    crisis_str = f"  +crisis_handling bonus" if active_crisis_in_portfolio else ""
+    _log("calc", f"  Minister score: {m_score:.3f}  "
+                 f"(comp×0.35={c.competence * 0.35:.1f} + mgr×0.30={c.managerial_skill * 0.30:.1f} + "
+                 f"consc×0.20={p_pers.conscientiousness * 0.20:.1f} + bur×0.15={c.bureaucratic_navigation * 0.15:.1f}){penalty_str}{crisis_str}")
+
     c_score = city_filter_score(params)
+    pp = params
+    inst = (pp.courts_and_legal * 0.40 + pp.schools_and_universities * 0.35 + pp.police_and_emergency * 0.25) / 100.0 * 100.0
+    _log("calc", f"  City filter score: {c_score:.3f}  "
+                 f"(admin×0.40={pp.admin_efficiency * 0.40:.1f} + anti_corr×0.30={pp.anti_corruption * 0.30:.1f} + inst×0.30={inst * 0.30:.1f})")
+
     raw = m_score * 0.55 + c_score * 0.45
     noise = rng.uniform(-0.05, 0.05)
     exec_score = _clamp(raw + noise, lo=0.10, hi=0.95)
+    _log("calc", f"  Raw: 0.55×{m_score:.3f} + 0.45×{c_score:.3f} = {raw:.3f}  |  noise: {noise:+.3f}  →  exec_score: {exec_score:.3f}")
 
     # Section 6.4 — actual deltas
     actual_deltas: dict[str, float] = {}
@@ -153,6 +177,9 @@ def run_implementation(
         })
 
     corruption = compute_corruption(minister, params, policy.budget_cost, max_budget)
+    _log("bad" if corruption.budget_stolen > 0 else "info",
+         f"  Corruption: intent={corruption.intent:.3f}, window={corruption.window:.3f}, "
+         f"leakage={corruption.leakage_rate:.4f}  →  ₹{corruption.budget_stolen:.1f} Cr stolen")
 
     return ImplementationResult(
         execution_score=exec_score,

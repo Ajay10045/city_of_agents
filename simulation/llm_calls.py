@@ -437,6 +437,12 @@ def generate_policy_options(
         options = []
     if not isinstance(options, list):
         options = [options] if isinstance(options, dict) else []
+    # Enforce caps: target_effects ±10, side_effects ±5
+    for opt in options[:3]:
+        for key in opt.get("target_effects", {}):
+            opt["target_effects"][key] = max(-10.0, min(10.0, float(opt["target_effects"][key])))
+        for key in opt.get("side_effects", {}):
+            opt["side_effects"][key] = max(-5.0, min(5.0, float(opt["side_effects"][key])))
     return options[:3]
 
 
@@ -626,3 +632,44 @@ def sample_citizen_reactions(
             sentiment=sentiment,
         ))
     return voices
+
+
+# ---------------------------------------------------------------------------
+# Advisor summary
+# ---------------------------------------------------------------------------
+
+ADVISOR_SYSTEM = (
+    "You are a sharp political advisor to a city mayor. "
+    "After each turn, give a 2-3 sentence debrief: what worked, what didn't, "
+    "and one specific thing the mayor should do differently next turn. "
+    "Be honest, direct, and concrete. No flattery. No bullet points."
+)
+
+
+def generate_advisor_summary(
+    llm: LLMClient,
+    policy_name: str,
+    execution_score: float,
+    budget_stolen: float,
+    approval_before: float,
+    approval_after: float,
+    events_triggered: list[str],
+    worst_side_effect: str | None,
+    treasury: float,
+    city_name: str,
+) -> str:
+    """Generate a 2-3 sentence strategic debrief for the player after each turn."""
+    prompt = (
+        f"City: {city_name}\n"
+        f"Policy enacted: {policy_name} (execution: {execution_score:.0%})\n"
+        f"Approval: {approval_before:.0f}% → {approval_after:.0f}%\n"
+        f"Treasury: ₹{treasury:.0f} Cr\n"
+        f"Corruption leakage: ₹{budget_stolen:.1f} Cr\n"
+        f"Events this turn: {', '.join(events_triggered) or 'none'}\n"
+        f"Worst side effect: {worst_side_effect or 'none'}\n\n"
+        "Give your 2-3 sentence debrief."
+    )
+    try:
+        return llm.chat_text(ADVISOR_SYSTEM, prompt).strip()
+    except Exception:
+        return ""
