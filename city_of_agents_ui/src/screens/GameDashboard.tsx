@@ -1475,7 +1475,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
         <div className="w-[300px] flex flex-col gap-2 shrink-0">
 
           {/* Advisory Chat Panel */}
-          <div className="flex flex-col flex-1 overflow-hidden" style={PANEL}>
+          <div className="flex flex-col" style={PANEL}>
 
             {/* Header */}
             <div className="flex items-center justify-between px-3 py-2"
