@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import random
 
-from .models import Citizen, CityParameters, MediaOutletState
+from .models import Citizen, MediaOutletState
 
 
 # Impact Matrix row sums (for PublicSalience weights)

@@ -4,7 +4,7 @@ Section 17 of v4 spec.
 """
 from __future__ import annotations
 
-from .models import Citizen, GameState, GovernanceScorecard
+from .models import GameState, GovernanceScorecard
 
 
 def _clamp(v: float, lo: float = 0.0, hi: float = 100.0) -> float:
