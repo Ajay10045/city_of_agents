@@ -339,6 +339,7 @@ class WardReportEntry(BaseModel):
     group_name: str
     trend: Literal["up", "flat", "down"]
     avg_wellbeing_delta: float
+    avg_wellbeing: float = 50.0
     hotspot: bool = False
     bright_spot: bool = False
 

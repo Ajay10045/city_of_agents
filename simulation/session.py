@@ -755,13 +755,16 @@ class GameSession:
         )
         _log("llm",   f"✓ media_headlines: {len(media_headlines)} headlines")
 
-        # Sample 5 citizens for reactions
-        sampled = rng.sample(state.citizens, min(5, len(state.citizens)))
+        # Sample 5 citizens for reactions (exclude ministers)
+        minister_ids = {m.citizen.id for m in state.ministers}
+        eligible_citizens = [c for c in state.citizens if c.id not in minister_ids]
+        sampled = rng.sample(eligible_citizens, min(5, len(eligible_citizens)))
         sampled_dicts = [self._citizen_for_reaction(c) for c in sampled]
         _log("llm",   f"→ sample_citizen_reactions() ({len(sampled)} citizens) ...")
+        city_languages = state.city_profile.languages
         citizen_voices = sample_citizen_reactions(
             self.llm, policy, impl.execution_score, sampled_dicts,
-            state.city_profile.city_name
+            state.city_profile.city_name, city_languages
         )
         _log("llm",   f"✓ citizen_voices: {len(citizen_voices)} reactions")
 
@@ -846,6 +849,386 @@ class GameSession:
         return turn_result
 
     # ------------------------------------------------------------------
+    # Streaming turn executor (SSE generator)
+    # ------------------------------------------------------------------
+
+    def execute_turn_streaming(
+        self,
+        policy_index: int,
+        minor_action: dict[str, Any],
+        counter_frame_strategy: str = "Delivery Receipts",
+    ):
+        """Generator version of execute_turn — yields milestone dicts between phases.
+
+        Each yielded dict has a "type" key. Types emitted:
+          policy_start, implementation, events, politics,
+          narrative_chunk (key=delivery|headlines|voices|advisor),
+          complete, error
+        """
+        assert self.state
+        state = self.state
+        rng = random.Random(state.prng_seed + state.current_turn * 1000)
+
+        city = state.city_profile.city_name
+        _log("phase", "═" * 54)
+        _log("phase", f"TURN {state.current_turn}  |  City of {city}  |  STREAMING")
+        _log("phase", "═" * 54)
+        approval_now = sum(c.mayor_alignment for c in state.citizens) / max(len(state.citizens), 1)
+
+        # ① Minor action
+        m_action = MinorAction(**minor_action)
+        treasury = state.treasury
+        treasury = apply_minor_action_budget(treasury, m_action, bonus_banking=20.0)
+        params = state.city_params
+        targeted_this_turn: set[str] = set()
+
+        _GOVERNANCE_PARAMS = {"admin_efficiency", "anti_corruption", "media_freedom"}
+        if m_action.type == "governance_upkeep":
+            gov_target = m_action.target if m_action.target in _GOVERNANCE_PARAMS else "admin_efficiency"
+            params = params.apply_delta({gov_target: 1.0})
+            targeted_this_turn.add(gov_target)
+        elif m_action.type == "maintenance" and m_action.target:
+            targeted_this_turn.add(m_action.target)
+
+        # ② Parse chosen policy
+        if not self._pending_policy_options:
+            raise ValueError("No policy options available. Call get_policy_options first.")
+        raw_policy = self._pending_policy_options[policy_index % len(self._pending_policy_options)]
+        policy = Policy(**{k: v for k, v in raw_policy.items() if k in Policy.model_fields})
+        for k in policy.target_effects:
+            targeted_this_turn.add(k)
+
+        yield {
+            "type": "policy_start",
+            "policy_name": policy.name,
+            "portfolio": policy.portfolio,
+            "budget_cost": policy.budget_cost,
+            "target_effects": policy.target_effects,
+            "time_profile": policy.time_profile or {"turn_0": 1.0},
+        }
+
+        # ③ Interest + tax
+        interest_paid = process_interest_payment(state.outstanding_debt, state.city_profile.budget.interest_rate)
+        treasury -= interest_paid
+        tax_rev = compute_tax_revenue(state.city_params, state.city_profile.budget.base_tax_revenue)
+        treasury += tax_rev
+
+        # ④ Implementation
+        minister = self._find_minister_for_portfolio(policy.portfolio)
+        if minister is None:
+            raise ValueError("No ministers in cabinet.")
+        crisis_active = bool(state.active_events)
+        impl = run_implementation(
+            policy, minister, state.city_params,
+            state.city_profile.budget.max_policy_budget, rng, crisis_active,
+        )
+        self._total_stolen += impl.corruption.budget_stolen
+        minister.state.scandal_exposure = min(
+            100.0, minister.state.scandal_exposure + impl.corruption.leakage_rate * 20.0
+        )
+
+        yield {
+            "type": "implementation",
+            "execution_score": impl.execution_score,
+            "minister_name": minister.citizen.name,
+            "budget_stolen": impl.corruption.budget_stolen,
+            "actual_deltas": impl.actual_deltas,
+            "side_effect_deltas": impl.side_effect_deltas,
+        }
+
+        yield {
+            "type": "phase_reaction",
+            "phase": "implementation",
+            "exec_pct": round(impl.execution_score * 100),
+            "minister_name": minister.citizen.name,
+            "portfolio": policy.portfolio,
+            "policy_name": policy.name,
+            "budget_stolen": round(impl.corruption.budget_stolen, 1),
+        }
+
+        # ⑤ Apply deltas
+        treasury -= policy.budget_cost
+        time_profile = policy.time_profile or {"turn_0": 1.0}
+        t0_frac = time_profile.get("turn_0", 1.0)
+        all_policy_deltas: dict[str, float] = {}
+        for param, val in impl.actual_deltas.items():
+            all_policy_deltas[param] = all_policy_deltas.get(param, 0.0) + val
+        for param, val in impl.side_effect_deltas.items():
+            all_policy_deltas[param] = all_policy_deltas.get(param, 0.0) + val
+        immediate_deltas = {k: v * t0_frac for k, v in all_policy_deltas.items()}
+        for key, frac in time_profile.items():
+            if key == "turn_0":
+                continue
+            turn_offset = int(key.replace("turn_", ""))
+            apply_turn = state.current_turn + turn_offset
+            carry = state.pending_deltas.setdefault(apply_turn, {})
+            for param, val in all_policy_deltas.items():
+                carry[param] = carry.get(param, 0.0) + val * frac
+                targeted_this_turn.add(param)
+        params = state.city_params.apply_delta(immediate_deltas)
+        pending = state.pending_deltas.pop(state.current_turn, {})
+        params = params.apply_delta(pending)
+
+        # ⑥ Events
+        remaining_events, event_deltas = step_events(state.active_events, rng)
+        params = params.apply_delta(event_deltas)
+        new_remaining = len(remaining_events)
+        old_count = len(state.active_events)
+        resolutions = max(0, old_count - new_remaining)
+        self._escalations += sum(1 for e in remaining_events if e.escalation_level > 0)
+        self._resolutions += resolutions
+        existing_names = {e.name for e in remaining_events}
+        new_threshold = check_threshold_events(params, existing_names)
+        new_stochastic = check_stochastic_events(params, len(remaining_events), rng)
+        newly_triggered = new_threshold + new_stochastic
+        self._crises_triggered += sum(1 for e in newly_triggered if e.type == "crisis")
+        state.active_events = remaining_events + newly_triggered
+
+        yield {
+            "type": "events",
+            "events_triggered": [e.model_dump() for e in newly_triggered],
+            "treasury_after": treasury,
+        }
+
+        yield {
+            "type": "phase_reaction",
+            "phase": "events",
+            "events_count": len(newly_triggered),
+            "event_names": [e.name for e in newly_triggered[:2]],
+            "event_types": [e.type for e in newly_triggered[:2]],
+        }
+
+        # ⑦ Decay
+        params = apply_maintenance_decay(
+            params, targeted_this_turn, state.targeted_last_turn, params.admin_efficiency,
+        )
+        stolen = impl.corruption.budget_stolen
+        params = apply_corruption_consequences(
+            params, stolen, state.city_profile.budget.max_policy_budget,
+        )
+
+        # ⑧ Debt
+        debt_fx = debt_political_effects(state.outstanding_debt, state.city_profile.budget.max_debt)
+        if debt_fx["fiscal_crisis"]:
+            params = params.apply_delta({"admin_efficiency": -debt_fx["admin_drain"]})
+        treasury, outstanding_debt = process_auto_repayment(treasury, state.outstanding_debt)
+
+        # ⑨ Wellbeing
+        all_deltas = dict(immediate_deltas)
+        all_deltas.update(event_deltas)
+        avg_wb_before = sum(c.wellbeing.score() for c in state.citizens) / max(len(state.citizens), 1)
+        for citizen in state.citizens:
+            citizen.wellbeing = update_citizen_wellbeing(citizen, all_deltas, state.city_profile)
+        avg_wb_after = sum(c.wellbeing.score() for c in state.citizens) / max(len(state.citizens), 1)
+
+        # ⑩ Scandal
+        scandal_broke = check_scandal_break(
+            minister, state.media_outlets, 1.0 - impl.execution_score,
+            params.media_freedom, rng,
+        )
+        scandal_minister_name: str | None = None
+        if scandal_broke:
+            self._total_scandals += 1
+            scandal_minister_name = minister.citizen.name
+
+        # ⑪ Opposition
+        interim_approval = compute_interim_approval(state.citizens, params.media_freedom)
+        avg_wb = sum(c.wellbeing.score() for c in state.citizens) / max(len(state.citizens), 1)
+        turns_to_election = max(0, state.city_profile.game_config.election_turn - state.current_turn)
+        attack_strategy = pick_attack_strategy(
+            leader=state.opposition_leader,
+            params_before=state.city_params.as_dict(),
+            params_after=params.as_dict(),
+            execution_score=impl.execution_score,
+            scandal_broke=scandal_broke,
+            active_crisis=bool(state.active_events),
+            outstanding_debt=outstanding_debt,
+            max_debt=state.city_profile.budget.max_debt,
+            turns_to_election=turns_to_election,
+        )
+        opp_effectiveness = compute_opposition_effectiveness(
+            state.opposition_leader, attack_strategy, impl.execution_score,
+            state.media_outlets, avg_wb, attack_credibility=0.5,
+            credibility_score=state.opposition_credibility,
+        )
+        counter_eff = counter_effectiveness(
+            strategy=counter_frame_strategy, execution_score=impl.execution_score,
+            avg_wellbeing_of_target=avg_wb, anti_corruption=params.anti_corruption,
+            media_freedom=params.media_freedom,
+            opp_integrity=state.opposition_leader.personality.integrity,
+            turns_since_last_populist=3, outlets=state.media_outlets,
+        )
+        net_opp_impact = opp_effectiveness - counter_eff
+        state.opposition_credibility = update_opposition_credibility(
+            state.opposition_credibility,
+            attack_landed=net_opp_impact > 0,
+            attack_fabricated=(attack_strategy == "Corruption Accusation" and not scandal_broke),
+            media_freedom=params.media_freedom,
+            attack_credibility=0.5,
+            attack_relevant=True,
+        )
+        for citizen in state.citizens:
+            eng = political_engagement(citizen, params.media_freedom)
+            opp_push = opposition_alignment_push(net_opp_impact, eng)
+            citizen.mayor_alignment = update_mayor_alignment(
+                citizen, citizen.wellbeing, state.media_outlets,
+                params.media_freedom, opp_push,
+            )
+
+        # ⑫ Communal tension
+        delta_community = all_deltas.get("community_and_spaces", 0.0)
+        delta_police = all_deltas.get("police_and_emergency", 0.0)
+        minority_sensitive = state.city_profile.communal_config.dominant_fault_line in ("ethnic", "religious")
+        communal_crisis = any("communal" in e.name.lower() or "tension" in e.name.lower() for e in state.active_events)
+        communal_severity = max((e.severity for e in state.active_events), default=0)
+        opp_identity_mobilized = (attack_strategy == "Identity Mobilization")
+        new_tension = update_communal_tension(
+            state.communal_tension, state.city_profile.communal_config.tension_baseline,
+            festival_boost=0.0, delta_community=delta_community, delta_police=delta_police,
+            minority_police_sensitive=minority_sensitive, crisis_communal=communal_crisis,
+            crisis_severity=communal_severity, opposition_identity_mobilized=opp_identity_mobilized,
+            opposition_effectiveness=opp_effectiveness,
+        )
+        interim_approval = compute_interim_approval(state.citizens, params.media_freedom)
+        delta_p13 = params.media_freedom - state.city_params.media_freedom
+        state.media_outlets = apply_media_drift(state.media_outlets, interim_approval, delta_p13, rng)
+        minister_loyalty_changes: dict[str, float] = {}
+        for m in state.ministers:
+            loyalty_delta = 0.0
+            if interim_approval > 60:
+                loyalty_delta += 2.0
+            elif interim_approval < 40:
+                loyalty_delta -= 2.0
+            if debt_fx["fiscal_crisis"]:
+                loyalty_delta += debt_fx["loyalty_drain"]
+            m.state.loyalty = max(0.0, min(100.0, m.state.loyalty + loyalty_delta))
+            minister_loyalty_changes[m.citizen.id] = loyalty_delta
+
+        yield {
+            "type": "politics",
+            "attack": attack_strategy,
+            "counter": counter_frame_strategy,
+            "approval_before": approval_now,
+            "approval_after": interim_approval,
+            "opposition_credibility": state.opposition_credibility,
+        }
+
+        yield {
+            "type": "phase_reaction",
+            "phase": "politics",
+            "approval_before": approval_now,
+            "approval_after": interim_approval,
+            "attack": attack_strategy,
+            "counter": counter_frame_strategy,
+        }
+
+        # ⑬ LLM narrative — yield each chunk individually as it completes
+        _log("llm", "→ [stream] generate_delivery_narrative() ...")
+        delivery_narrative = generate_delivery_narrative(
+            self.llm, policy, impl.execution_score, impl.actual_deltas,
+            state.city_profile.city_name, state.current_turn
+        )
+        yield {"type": "narrative_chunk", "key": "delivery", "value": delivery_narrative}
+
+        _log("llm", "→ [stream] generate_media_headlines() ...")
+        media_headlines = generate_media_headlines(
+            self.llm, state.media_outlets, policy, impl.execution_score,
+            scandal_broke, scandal_minister_name, state.active_events,
+        )
+        yield {"type": "narrative_chunk", "key": "headlines", "value": [h.model_dump() for h in media_headlines]}
+
+        minister_ids = {m.citizen.id for m in state.ministers}
+        eligible_citizens = [c for c in state.citizens if c.id not in minister_ids]
+        sampled = rng.sample(eligible_citizens, min(5, len(eligible_citizens)))
+        sampled_dicts = [self._citizen_for_reaction(c) for c in sampled]
+        _log("llm", "→ [stream] sample_citizen_reactions() ...")
+        city_languages = state.city_profile.languages
+        citizen_voices = sample_citizen_reactions(
+            self.llm, policy, impl.execution_score, sampled_dicts,
+            state.city_profile.city_name, city_languages
+        )
+        yield {"type": "narrative_chunk", "key": "voices", "value": [v.model_dump() for v in citizen_voices]}
+
+        worst_side = min(impl.side_effect_deltas.items(), key=lambda x: x[1], default=(None, 0))
+        _log("llm", "→ [stream] generate_advisor_summary() ...")
+        advisor_summary = generate_advisor_summary(
+            self.llm, policy_name=policy.name, execution_score=impl.execution_score,
+            budget_stolen=impl.corruption.budget_stolen, approval_before=approval_now,
+            approval_after=interim_approval, events_triggered=[e.name for e in newly_triggered],
+            worst_side_effect=worst_side[0], treasury=treasury, city_name=state.city_profile.city_name,
+        )
+        yield {"type": "narrative_chunk", "key": "advisor", "value": advisor_summary}
+
+        # Assemble TurnResult and commit state
+        ward_report = self._compute_ward_report(state.citizens, all_deltas)
+        turn_result = TurnResult(
+            turn=state.current_turn,
+            major_policy=policy,
+            minor_action=m_action,
+            execution_score=impl.execution_score,
+            actual_deltas=impl.actual_deltas,
+            side_effect_deltas=impl.side_effect_deltas,
+            budget_stolen=impl.corruption.budget_stolen,
+            delivery_targets=[DeliveryTarget(**d) for d in impl.delivery_details],
+            delivery_narrative=delivery_narrative,
+            city_params_before=state.city_params.as_dict(),
+            city_params_after=params.as_dict(),
+            media_headlines=media_headlines,
+            citizen_voices=citizen_voices,
+            opposition_attack=attack_strategy,
+            counter_frame=counter_frame_strategy,
+            approval_before=approval_now,
+            interim_approval=interim_approval,
+            ward_report=ward_report,
+            events_triggered=newly_triggered,
+            communal_tension_after=new_tension,
+            minister_loyalty_changes=minister_loyalty_changes,
+            treasury_after=treasury,
+            outstanding_debt_after=outstanding_debt,
+            interest_paid=interest_paid,
+            tax_revenue=tax_rev,
+            advisor_summary=advisor_summary,
+        )
+
+        state.city_params = params
+        state.treasury = treasury
+        state.outstanding_debt = outstanding_debt
+        state.communal_tension = new_tension
+        state.targeted_last_turn = state.targeted_this_turn
+        state.targeted_this_turn = targeted_this_turn
+        state.turn_history.append(turn_result)
+        state.current_turn += 1
+        self._sealed_transcripts = []
+        self._pending_policy_options = []
+        if state.current_turn > state.city_profile.game_config.election_turn and state.phase == "pre_election":
+            state.phase = "legacy"
+
+        # Loss check
+        loss_reason = check_loss_conditions(state)
+        if loss_reason:
+            state.phase = "game_over"
+        is_final = state.phase == "game_over" or (
+            state.current_turn > state.city_profile.game_config.total_turns
+        )
+        scorecard = None
+        if is_final:
+            try:
+                scorecard = self.compute_final_score().model_dump()
+            except Exception:
+                pass
+
+        _log("phase", f"══════ TURN {turn_result.turn} COMPLETE (streamed) ══")
+
+        yield {
+            "type": "complete",
+            "turn_result": turn_result.model_dump(),
+            "state": self.get_state_snapshot(),
+            "game_over": is_final,
+            **({"loss_reason": loss_reason} if loss_reason else {}),
+            **({"scorecard": scorecard} if scorecard else {}),
+        }
+
+    # ------------------------------------------------------------------
     # End-of-game
     # ------------------------------------------------------------------
 
@@ -893,6 +1276,7 @@ class GameSession:
             "avg_wellbeing": sum(c.wellbeing.score() for c in state.citizens) / max(len(state.citizens), 1),
             "turn_history_count": len(state.turn_history),
             "last_turn": state.turn_history[-1].model_dump() if state.turn_history else None,
+            "ward_report": [e.model_dump() for e in self._compute_ward_report(state.citizens, {})],
         }
 
     # ------------------------------------------------------------------
@@ -964,6 +1348,10 @@ class GameSession:
             groups[("income", d.income_bracket)].append(wb)
             groups[("location", d.location)].append(wb)
             groups[("profession", d.profession)].append(wb)
+            if getattr(d, "religion", None):
+                groups[("religion", d.religion)].append(wb)
+            if getattr(d, "ideology_social", None):
+                groups[("ideology", d.ideology_social)].append(wb)
 
         # Compute average deltas approximated from param_deltas (simplified)
         total_delta = sum(abs(v) for v in param_deltas.values())
@@ -985,6 +1373,7 @@ class GameSession:
                 group_name=group_name,
                 trend=trend,  # type: ignore[arg-type]
                 avg_wellbeing_delta=avg_delta,
+                avg_wellbeing=round(avg_wb, 1),
                 hotspot=avg_wb < 30.0,
                 bright_spot=avg_wb > 70.0,
             ))

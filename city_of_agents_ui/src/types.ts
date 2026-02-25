@@ -113,6 +113,7 @@ export interface WardReportEntry {
   group_name: string
   trend: 'up' | 'flat' | 'down'
   avg_wellbeing_delta: number
+  avg_wellbeing: number
   hotspot: boolean
   bright_spot: boolean
 }
@@ -165,6 +166,7 @@ export interface GameState {
   avg_wellbeing: number
   turn_history_count: number
   last_turn: TurnResult | null
+  ward_report: WardReportEntry[]
 }
 
 export interface GovernanceScorecard {

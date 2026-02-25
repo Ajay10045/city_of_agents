@@ -563,10 +563,21 @@ def generate_media_headlines(
 # ---------------------------------------------------------------------------
 
 CITIZEN_VOICES_SYSTEM = textwrap.dedent("""\
-    You are generating authentic citizen reaction quotes for a city governance
-    simulation. Each citizen has a distinct demographic profile and ideology.
-    Write short, authentic first-person reactions (1 sentence each).
-    Match sentiment to the policy outcome and the citizen's personal circumstances.
+    You are generating authentic, casual citizen reaction quotes for a city
+    governance simulation. Citizens are regular people — auto drivers, shopkeepers,
+    students, professionals, homemakers — reacting on WhatsApp groups or in
+    street conversations.
+
+    Rules:
+    - Write in a CASUAL, conversational tone — like real people chatting, not news anchors.
+    - Citizens may mix their mother tongue with English (e.g. Hinglish, Tanglish,
+      Bangla-English mix, etc.) based on their demographics and the city's languages.
+    - Use colloquial expressions, slang, abbreviations when it fits the character
+      (e.g. "govt", "yaar", "bhai", "arey", "kya kar rahe hain ye log",
+      "sahi hai", "waste of money da", "arre baap re", etc.).
+    - Keep reactions to 1-2 short sentences max. Sound human, not formal.
+    - Some citizens can be blunt, sarcastic, hopeful, or resigned — match their personality.
+    - Match sentiment to the policy outcome and the citizen's personal circumstances.
 """)
 
 
@@ -576,10 +587,12 @@ def sample_citizen_reactions(
     execution_score: float,
     sampled_citizens: list[dict[str, Any]],
     city_name: str,
+    languages: list[str] | None = None,
 ) -> list[CitizenVoice]:
     """Generate citizen voice reactions for a sample of citizens.
 
     sampled_citizens: list of dicts with citizen info for the prompt
+    languages: list of city languages for multilingual flavor
     """
     citizens_str = "\n".join(
         f"  {i+1}. {c['name']} — {c['demographics']} | ideology: {c['ideology']} | "
@@ -587,16 +600,22 @@ def sample_citizen_reactions(
         for i, c in enumerate(sampled_citizens)
     )
 
+    lang_note = ""
+    if languages:
+        lang_note = f"\n        City languages: {', '.join(languages)}. Citizens may naturally mix these with English.\n"
+
     prompt = textwrap.dedent(f"""\
         City: {city_name}
         Policy enacted: {policy.name}
         Description: {policy.description[:150]}
         Execution: {execution_score:.0%}
-
+        {lang_note}
         Citizens to react:
         {citizens_str}
 
-        Generate one authentic, in-character reaction quote for each citizen.
+        Generate one authentic, casual, in-character reaction quote for each citizen.
+        They should sound like REAL PEOPLE talking — not formal statements.
+        Citizens can use their mother tongue phrases mixed with English naturally.
         Sentiment must be one of: approve, disapprove, undecided.
 
         Return a JSON array:
@@ -604,7 +623,7 @@ def sample_citizen_reactions(
           {{
             "citizen_id": "string",
             "name": "string",
-            "reaction": "one sentence first-person reaction",
+            "reaction": "one casual sentence — like a WhatsApp message or street conversation",
             "sentiment": "approve|disapprove|undecided"
           }}
         ]

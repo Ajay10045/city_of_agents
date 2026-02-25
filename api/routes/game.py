@@ -19,7 +19,10 @@ from __future__ import annotations
 import traceback
 from typing import Any
 
+import json
+
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from engine.models import CityProfile
@@ -259,6 +262,44 @@ def execute_turn(game_id: str, req: TurnRequest) -> dict[str, Any]:
             pass
 
     return response
+
+
+@router.post("/{game_id}/turn/stream")
+def execute_turn_stream(game_id: str, req: TurnRequest) -> StreamingResponse:
+    """Execute a turn and stream milestone events as SSE.
+
+    Events arrive as `data: <json>\\n\\n` with type:
+      policy_start, implementation, events, politics,
+      narrative_chunk (key=delivery|headlines|voices|advisor),
+      complete, error
+    """
+    session = _get_session(game_id)
+    assert session.state
+
+    loss_reason = session.check_loss()
+    if loss_reason:
+        session.state.phase = "game_over"
+
+        def _lost():
+            yield f"data: {json.dumps({'type': 'game_over', 'loss_reason': loss_reason, 'state': session.get_state_snapshot()})}\n\n"
+
+        return StreamingResponse(_lost(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    def _event_stream():
+        try:
+            for milestone in session.execute_turn_streaming(
+                policy_index=req.policy_index,
+                minor_action=req.minor_action,
+                counter_frame_strategy=req.counter_frame,
+            ):
+                yield f"data: {json.dumps(milestone)}\n\n"
+        except Exception as exc:
+            traceback.print_exc()
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+
+    return StreamingResponse(_event_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @router.get("/{game_id}/state")

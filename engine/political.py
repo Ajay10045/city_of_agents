@@ -98,8 +98,8 @@ def update_mayor_alignment(
 
 
 def compute_interim_approval(citizens: list[Citizen], media_freedom: float) -> float:
-    """Section 9.4 — approval from active citizens (engagement > 0.50)."""
-    threshold = 0.50
+    """Section 9.4 — approval from active citizens (engagement > 0.30)."""
+    threshold = 0.30
     numerator = 0.0
     denominator = 0.0
     for c in citizens:
@@ -110,7 +110,12 @@ def compute_interim_approval(citizens: list[Citizen], media_freedom: float) -> f
         numerator += approval_val * eng * c.population_weight
         denominator += eng * c.population_weight
     if denominator == 0:
-        return 50.0
+        # Fallback: simple population-weighted mean alignment (avoids hardcoded 50%)
+        total_weight = sum(c.population_weight for c in citizens)
+        if total_weight == 0:
+            return 50.0
+        weighted_align = sum(((c.mayor_alignment + 100) / 200.0) * c.population_weight for c in citizens)
+        return (weighted_align / total_weight) * 100.0
     return (numerator / denominator) * 100.0
 
 

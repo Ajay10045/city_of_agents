@@ -1,13 +1,13 @@
 import { useState, useRef, useEffect } from 'react'
 import {
-  ChevronRight, ChevronDown, HelpCircle, Settings, Clock, SkipForward,
+  ChevronRight, ChevronDown, HelpCircle, Settings, Clock,
   Zap, Send, AlertTriangle, TrendingDown, Droplets,
   MapPin, Info,
   Newspaper, MessageCircle, TrendingUp, Loader2,
 } from 'lucide-react'
 import {
   openConsultation, messageMinister, closeConsultation,
-  getPolicies, executeTurn,
+  getPolicies, executeTurnStream,
 } from '../api'
 import type {
   GameState, TurnResult, Policy, Minister, ActiveEvent,
@@ -284,6 +284,7 @@ interface ChatMsg {
   time: string
   ringColor: string
   seed: string
+  isSystem?: boolean
 }
 
 interface TurnEntry {
@@ -348,13 +349,13 @@ const MINISTER_COLORS = ['#7c3aed', '#2563eb', '#0d9488', '#d97706', '#be185d']
 // Detect @mention or direct name reference in a message.
 // ─── Portfolio → keywords that signal relevance to this minister ──────────────
 const PORTFOLIO_KEYWORDS: Record<string, string[]> = {
-  'Finance & Economy':    ['budget', 'tax', 'revenue', 'economy', 'jobs', 'commerce', 'trade', 'fiscal', 'debt', 'spend', 'cost', 'money', 'treasury', 'finance'],
-  'Infrastructure':       ['road', 'transit', 'metro', 'water', 'power', 'sanitation', 'transport', 'infrastructure', 'grid', 'highway', 'bridge', 'rail'],
-  'Health & Education':   ['hospital', 'clinic', 'health', 'school', 'university', 'education', 'doctor', 'teacher', 'student', 'medical', 'healthcare'],
-  'Housing & Community':  ['housing', 'house', 'home', 'community', 'park', 'space', 'affordable', 'rent', 'slum', 'neighbourhood', 'neighborhood'],
-  'Home Affairs':         ['police', 'crime', 'law', 'court', 'legal', 'security', 'enforcement', 'emergency', 'justice', 'arrest', 'order'],
-  'Environment':          ['air', 'pollution', 'environment', 'climate', 'green', 'emission', 'waste', 'clean', 'ecological'],
-  'Governance Reform':    ['corruption', 'reform', 'efficiency', 'media', 'transparency', 'admin', 'governance', 'bureaucracy', 'press', 'freedom'],
+  'Finance & Economy': ['budget', 'tax', 'revenue', 'economy', 'jobs', 'commerce', 'trade', 'fiscal', 'debt', 'spend', 'cost', 'money', 'treasury', 'finance'],
+  'Infrastructure': ['road', 'transit', 'metro', 'water', 'power', 'sanitation', 'transport', 'infrastructure', 'grid', 'highway', 'bridge', 'rail'],
+  'Health & Education': ['hospital', 'clinic', 'health', 'school', 'university', 'education', 'doctor', 'teacher', 'student', 'medical', 'healthcare'],
+  'Housing & Community': ['housing', 'house', 'home', 'community', 'park', 'space', 'affordable', 'rent', 'slum', 'neighbourhood', 'neighborhood'],
+  'Home Affairs': ['police', 'crime', 'law', 'court', 'legal', 'security', 'enforcement', 'emergency', 'justice', 'arrest', 'order'],
+  'Environment': ['air', 'pollution', 'environment', 'climate', 'green', 'emission', 'waste', 'clean', 'ecological'],
+  'Governance Reform': ['corruption', 'reform', 'efficiency', 'media', 'transparency', 'admin', 'governance', 'bureaucracy', 'press', 'freedom'],
 }
 
 // Score how relevant a minister is to the message (higher = more relevant)
@@ -450,9 +451,11 @@ function ExecScoreBadge({ score }: { score: number }) {
   const pct = Math.round(score * 100)
   const color = pct >= 70 ? '#22c55e' : pct >= 45 ? '#e8a030' : '#f87171'
   return (
-    <span style={{ fontSize: 9, fontWeight: 700, fontFamily: "'Share Tech Mono', monospace",
+    <span style={{
+      fontSize: 9, fontWeight: 700, fontFamily: "'Share Tech Mono', monospace",
       color, background: `${color}18`, border: `1px solid ${color}44`,
-      borderRadius: 3, padding: '1px 5px' }}>
+      borderRadius: 3, padding: '1px 5px'
+    }}>
       {pct}% EXEC
     </span>
   )
@@ -474,8 +477,8 @@ function TurnPhaseCard({
   const tr = entry.result
   const paramDeltas = tr.city_params_after && tr.city_params_before
     ? Object.entries(tr.city_params_after)
-        .map(([k, v]) => ({ key: k, diff: Math.round(v - (tr.city_params_before[k] ?? v)) }))
-        .filter(d => Math.abs(d.diff) >= 1)
+      .map(([k, v]) => ({ key: k, diff: Math.round(v - (tr.city_params_before[k] ?? v)) }))
+      .filter(d => Math.abs(d.diff) >= 1)
     : []
 
   return (
@@ -494,9 +497,11 @@ function TurnPhaseCard({
             : <ChevronRight size={12} color="#4b6280" />}
         </div>
         <div className="shrink-0 px-2 py-0.5 rounded"
-          style={{ background: 'rgba(232,160,48,0.12)', border: '1px solid rgba(232,160,48,0.3)',
+          style={{
+            background: 'rgba(232,160,48,0.12)', border: '1px solid rgba(232,160,48,0.3)',
             fontSize: 9, fontWeight: 700, color: '#e8a030',
-            fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em' }}>
+            fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em'
+          }}>
           TURN {tr.turn}
         </div>
         <span style={{ fontSize: 10, fontWeight: 600, color: '#fff', flex: 1, minWidth: 0 }} className="truncate">
@@ -510,7 +515,7 @@ function TurnPhaseCard({
         const execPct = Math.round(tr.execution_score * 100)
         const execColor = tr.execution_score >= 0.7 ? '#22c55e' : tr.execution_score >= 0.45 ? '#e8a030' : '#f87171'
         const netTreasury = (tr.tax_revenue ?? 0) - (tr.major_policy?.budget_cost ?? 0) - (tr.interest_paid ?? 0) - (tr.budget_stolen ?? 0)
-        const sideEffectEntries = Object.entries(tr.side_effect_deltas ?? {}).filter(([,v]) => Math.abs(v) >= 0.5)
+        const sideEffectEntries = Object.entries(tr.side_effect_deltas ?? {}).filter(([, v]) => Math.abs(v) >= 0.5)
         const fmt = (k: string) => k.replace(/_/g, ' ')
 
         // ── Dynamic reasoning helpers ──────────────────────────────────────────
@@ -589,10 +594,10 @@ function TurnPhaseCard({
         const paramReason = (() => {
           const neg = paramDeltas.filter(d => d.diff < 0).map(d => fmt(d.key))
           const pos = paramDeltas.filter(d => d.diff > 0).map(d => fmt(d.key))
-          const negSE = sideEffectEntries.filter(([,v]) => v < 0).map(([k]) => fmt(k))
+          const negSE = sideEffectEntries.filter(([, v]) => v < 0).map(([k]) => fmt(k))
           const policyName = tr.major_policy?.name ?? 'the policy'
           if (pos.length > 0 && negSE.length > 0)
-            return `${policyName} boosted ${pos[0]}, but spilled into ${negSE.slice(0,2).join(', ')} — unintended consequences`
+            return `${policyName} boosted ${pos[0]}, but spilled into ${negSE.slice(0, 2).join(', ')} — unintended consequences`
           if (pos.length > 0 && neg.length === 0)
             return `Clean execution — targeted gains with no adverse side effects this turn`
           if (neg.length > 0 && pos.length === 0)
@@ -662,8 +667,10 @@ function TurnPhaseCard({
               fontSize: 8, fontWeight: 700, color: '#e8a030', fontFamily: "'Rajdhani', sans-serif",
               letterSpacing: '0.12em', minWidth: 14, textAlign: 'right',
             }}>{num}</span>
-            <span style={{ fontSize: 8, fontWeight: 700, color: '#4b6280',
-              fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+            <span style={{
+              fontSize: 8, fontWeight: 700, color: '#4b6280',
+              fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.12em', textTransform: 'uppercase'
+            }}>
               {text}
             </span>
           </div>
@@ -756,8 +763,10 @@ function TurnPhaseCard({
                 <div className="flex items-center gap-2">
                   <span style={{ fontSize: 9, color: '#4b6280', minWidth: 90 }}>Execution</span>
                   <div style={{ flex: 1, height: 5, background: '#0a1a30', borderRadius: 3, overflow: 'hidden', maxWidth: 52 }}>
-                    <div style={{ width: `${execPct}%`, height: '100%', background: execColor,
-                      borderRadius: 3, boxShadow: `0 0 6px ${execColor}66` }} />
+                    <div style={{
+                      width: `${execPct}%`, height: '100%', background: execColor,
+                      borderRadius: 3, boxShadow: `0 0 6px ${execColor}66`
+                    }} />
                   </div>
                   <span style={{ fontSize: 11, fontFamily: "'Share Tech Mono', monospace", color: execColor, fontWeight: 700, minWidth: 34 }}>
                     {execPct}%
@@ -982,7 +991,7 @@ function TurnPhaseCard({
 
                 // Loyalty changes as proxy for scandal
                 const loyaltyChanges = Object.entries(tr.minister_loyalty_changes ?? {})
-                const bigDrops = loyaltyChanges.filter(([,d]) => d < -5)
+                const bigDrops = loyaltyChanges.filter(([, d]) => d < -5)
 
                 const PulseRow = ({ label, before, after, unit = '', higherGood = true }: {
                   label: string; before: number; after: number; unit?: string; higherGood?: boolean
@@ -1064,8 +1073,10 @@ function TurnPhaseCard({
                   background: 'rgba(232,160,48,0.06)', border: '1px solid rgba(232,160,48,0.20)',
                   display: 'flex', gap: 8, alignItems: 'flex-start',
                 }}>
-                  <div style={{ fontSize: 8, fontWeight: 700, color: '#e8a030',
-                    fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.12em', marginTop: 1, whiteSpace: 'nowrap' }}>
+                  <div style={{
+                    fontSize: 8, fontWeight: 700, color: '#e8a030',
+                    fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.12em', marginTop: 1, whiteSpace: 'nowrap'
+                  }}>
                     ADVISOR
                   </div>
                   <div style={{ fontSize: 10, color: '#b8924a', lineHeight: 1.5, fontStyle: 'italic' }}>
@@ -1078,6 +1089,160 @@ function TurnPhaseCard({
           </div>
         )
       })()}
+    </div>
+  )
+}
+
+// ─── Live Milestone Feed ───────────────────────────────────────────────────────
+
+function LiveMilestoneFeed({ milestones, policyName }: { milestones: Record<string, unknown>[]; policyName: string }) {
+  const feedEndRef = useRef<HTMLDivElement>(null)
+  useEffect(() => { feedEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [milestones.length])
+
+  const dot = (color: string) => (
+    <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: color, marginRight: 5, flexShrink: 0 }} />
+  )
+
+  function renderMilestone(m: Record<string, unknown>, i: number) {
+    const base = { display: 'flex', flexDirection: 'column' as const, gap: 2 }
+
+    if (m.type === 'policy_start') {
+      const effects = m.target_effects as Record<string, number> | undefined
+      const topEffect = effects ? Object.entries(effects).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))[0] : null
+      return (
+        <div key={i} style={base}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            {dot('#4ade80')}
+            <span style={{ fontSize: 11, fontWeight: 700, color: '#e2e8f0', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.05em' }}>
+              {m.policy_name as string}
+            </span>
+            <span style={{ fontSize: 9, color: '#64748b', marginLeft: 2 }}>· {m.portfolio as string}</span>
+          </div>
+          <div style={{ paddingLeft: 11, fontSize: 9, color: '#4b6280', display: 'flex', gap: 8 }}>
+            <span>₹{m.budget_cost as number} Cr</span>
+            {topEffect && <span style={{ color: topEffect[1] >= 0 ? '#4ade80' : '#f87171' }}>{topEffect[0].replace(/_/g, ' ')} {topEffect[1] >= 0 ? '+' : ''}{topEffect[1]}</span>}
+          </div>
+        </div>
+      )
+    }
+
+    if (m.type === 'implementation') {
+      const score = (m.execution_score as number) * 100
+      const stolen = m.budget_stolen as number
+      const color = score >= 70 ? '#4ade80' : score >= 40 ? '#f59e0b' : '#f87171'
+      return (
+        <div key={i} style={base}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            {dot(color)}
+            <span style={{ fontSize: 10, color: '#94a3b8' }}>Implementation · <span style={{ color: '#7dd3fc' }}>{m.minister_name as string}</span></span>
+          </div>
+          <div style={{ paddingLeft: 11, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{ width: 60, height: 4, background: '#1c3652', borderRadius: 2, overflow: 'hidden' }}>
+              <div style={{ width: `${score}%`, height: '100%', background: color, borderRadius: 2 }} />
+            </div>
+            <span style={{ fontSize: 9, color }}>  {Math.round(score)}% exec</span>
+            {stolen > 0 && <span style={{ fontSize: 9, color: '#f87171' }}>· ₹{stolen.toFixed(1)} Cr leaked</span>}
+          </div>
+        </div>
+      )
+    }
+
+    if (m.type === 'events') {
+      const triggered = m.events_triggered as { name: string; type: string; severity: number }[]
+      if (triggered.length === 0) {
+        return (
+          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            {dot('#334155')}
+            <span style={{ fontSize: 9, color: '#4b6280', fontStyle: 'italic' }}>No new events</span>
+          </div>
+        )
+      }
+      return (
+        <div key={i} style={base}>
+          {triggered.map((ev, j) => (
+            <div key={j} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ fontSize: 9, color: ev.type === 'crisis' ? '#f87171' : '#4ade80' }}>
+                {ev.type === 'crisis' ? '⚠' : '✦'}
+              </span>
+              <span style={{ fontSize: 9, color: ev.type === 'crisis' ? '#fca5a5' : '#86efac' }}>{ev.name}</span>
+              <span style={{ fontSize: 8, color: '#4b6280' }}>sev {ev.severity}</span>
+            </div>
+          ))}
+        </div>
+      )
+    }
+
+    if (m.type === 'politics') {
+      const aBefore = Math.round(m.approval_before as number)
+      const aAfter = Math.round(m.approval_after as number)
+      const delta = aAfter - aBefore
+      const color = delta >= 0 ? '#4ade80' : '#f87171'
+      return (
+        <div key={i} style={base}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            {dot('#38bdf8')}
+            <span style={{ fontSize: 9, color: '#94a3b8' }}>Politics · <span style={{ color: '#fbbf24' }}>{m.attack as string}</span> vs <span style={{ color: '#34d399' }}>{m.counter as string}</span></span>
+          </div>
+          <div style={{ paddingLeft: 11, fontSize: 9, color }}>
+            Approval {aBefore}% → {aAfter}% ({delta >= 0 ? '+' : ''}{delta}%)
+          </div>
+        </div>
+      )
+    }
+
+    if (m.type === 'narrative_chunk') {
+      const key = m.key as string
+      if (key === 'delivery') {
+        const text = m.value as string
+        return (
+          <div key={i} style={{ paddingLeft: 2, borderLeft: '2px solid #1c3652' }}>
+            <div style={{ fontSize: 9, color: '#4b6280', fontStyle: 'italic', letterSpacing: '0.03em' }}>
+              "{text.slice(0, 120)}{text.length > 120 ? '…' : ''}"
+            </div>
+          </div>
+        )
+      }
+      if (key === 'headlines') {
+        const hs = m.value as { outlet_name: string; headline: string }[]
+        return (
+          <div key={i} style={base}>
+            {hs.slice(0, 2).map((h, j) => (
+              <div key={j} style={{ display: 'flex', alignItems: 'flex-start', gap: 4 }}>
+                <Newspaper size={8} color="#64748b" style={{ marginTop: 2, flexShrink: 0 }} />
+                <span style={{ fontSize: 9, color: '#94a3b8' }}><span style={{ color: '#64748b' }}>{h.outlet_name}:</span> {h.headline}</span>
+              </div>
+            ))}
+          </div>
+        )
+      }
+      if (key === 'advisor') {
+        const text = m.value as string
+        return (
+          <div key={i} style={{ paddingLeft: 2, borderLeft: '2px solid #92400e' }}>
+            <div style={{ fontSize: 9, color: '#d97706', fontStyle: 'italic' }}>
+              ★ {text.slice(0, 100)}{text.length > 100 ? '…' : ''}
+            </div>
+          </div>
+        )
+      }
+      return null
+    }
+
+    return null
+  }
+
+  return (
+    <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ fontFamily: "'Rajdhani', sans-serif", fontSize: 11, fontWeight: 700, letterSpacing: '0.12em', color: '#4ade80', display: 'flex', alignItems: 'center', gap: 6 }}>
+        <Loader2 size={10} className="animate-spin" color="#4ade80" />
+        TURN IN PROGRESS
+        {policyName && <span style={{ color: '#4b6280', fontWeight: 400, fontSize: 9 }}>· {policyName}</span>}
+      </div>
+      {milestones.length === 0 && (
+        <div style={{ color: '#4b6280', fontSize: 9, fontStyle: 'italic' }}>Initialising...</div>
+      )}
+      {milestones.map((m, i) => renderMilestone(m, i))}
+      <div ref={feedEndRef} />
     </div>
   )
 }
@@ -1116,14 +1281,73 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
   // Turn execution
   const [isTurnExecuting, setIsTurnExecuting] = useState(false)
   const [executingPolicyName, setExecutingPolicyName] = useState<string | null>(null)
+  const [executingPolicy, setExecutingPolicy] = useState<Policy | null>(null)
   const [turnError, setTurnError] = useState<string | null>(null)
+  const [liveMilestones, setLiveMilestones] = useState<Record<string, unknown>[]>([])
+
+  // Accumulated feed: voices + media accumulate turn-over-turn with a turn number tag
+  const [allVoices, setAllVoices] = useState<(CitizenVoice & { turnNum: number })[]>([])
+  const [allHeadlines, setAllHeadlines] = useState<(MediaHeadline & { turnNum: number; isBreaking?: boolean })[]>([])
 
   // Game over
   const [gameOver, setGameOver] = useState(false)
   const [scorecard, setScorecard] = useState<GovernanceScorecard | null>(null)
 
+  // Identity groups filter
+  const [identityFilter, setIdentityFilter] = useState<string>('')
+
   const chatEndRef = useRef<HTMLDivElement>(null)
+  const mediaScrollRef = useRef<HTMLDivElement>(null)
+  const chatterScrollRef = useRef<HTMLDivElement>(null)
+  const hasChatThisTurnRef = useRef(false)
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [chatMessages])
+  const mediaHoveredRef = useRef(false)
+  const chatterHoveredRef = useRef(false)
+
+  // Continuous looping ticker scroll for Media
+  useEffect(() => {
+    const id = setInterval(() => {
+      const el = mediaScrollRef.current
+      if (!el || mediaHoveredRef.current) return
+      if (el.scrollTop + el.clientHeight >= el.scrollHeight) {
+        el.scrollTop = 0
+      } else {
+        el.scrollTop += 1
+      }
+    }, 50)
+    return () => clearInterval(id)
+  }, [])
+
+  // Continuous looping ticker scroll for City Chatter
+  useEffect(() => {
+    const id = setInterval(() => {
+      const el = chatterScrollRef.current
+      if (!el || chatterHoveredRef.current) return
+      if (el.scrollTop + el.clientHeight >= el.scrollHeight) {
+        el.scrollTop = 0
+      } else {
+        el.scrollTop += 1
+      }
+    }, 50)
+    return () => clearInterval(id)
+  }, [])
+
+  // Auto-select first filterable identity type when ward report loads
+  const wardReportKey = (gameState.ward_report ?? []).map(e => `${e.group_type}:${e.group_name}`).join(',')
+  useEffect(() => {
+    const source = lastTurn?.ward_report ?? gameState.ward_report ?? []
+    const counts: Record<string, Set<string>> = {}
+    for (const entry of source) {
+      if (!counts[entry.group_type]) counts[entry.group_type] = new Set()
+      counts[entry.group_type].add(entry.group_name)
+    }
+    const types = Object.entries(counts)
+      .filter(([, names]) => names.size >= 2 && names.size <= 8)
+      .map(([type]) => type)
+    if (types.length > 0 && !types.includes(identityFilter)) {
+      setIdentityFilter(types[0])
+    }
+  }, [wardReportKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Consultation helpers ─────────────────────────────────────────────────
 
@@ -1140,14 +1364,22 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
       await openConsultation(gameId, m.id)
       activeConsultRef.current = m.id
     }
-    // Build context message: include recent other ministers' replies so they sound like a real room
-    const recentContext = chatMessages.slice(-6)
-      .filter(msg => !msg.isMayor)
+    // Build context: only include messages from current turn (after last system separator)
+    const lastSysIdx = [...chatMessages].reverse().findIndex(m => m.isSystem)
+    const msgsThisTurn = lastSysIdx >= 0
+      ? chatMessages.slice(chatMessages.length - lastSysIdx)
+      : chatMessages
+    const recentContext = msgsThisTurn.slice(-6)
+      .filter(msg => !msg.isMayor && !msg.isSystem)
       .map(msg => `${msg.sender} (${msg.senderRole}): ${msg.text}`)
       .join('\n')
-    const fullMsg = recentContext
+    // Only include last-turn summary if player has actually chatted this turn
+    const turnCtx = (lastTurn && hasChatThisTurnRef.current)
+      ? `[Last turn: "${lastTurn.major_policy?.name}" · ${Math.round(lastTurn.execution_score * 100)}% exec · approval ${Math.round((lastTurn as any).approval_before ?? 0)}%→${Math.round(lastTurn.interim_approval)}%]\n`
+      : ''
+    const fullMsg = turnCtx + (recentContext
       ? `[Council room context — other ministers said:\n${recentContext}]\n\nMayor: ${mayorMsg}`
-      : mayorMsg
+      : `Mayor: ${mayorMsg}`)
     const res = await messageMinister(gameId, fullMsg)
     return res.reply
   }
@@ -1160,6 +1392,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
     const msg = chatInput.trim()
     setChatInput('')
     setChatError(null)
+    hasChatThisTurnRef.current = true
     const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
     // Add mayor's message
@@ -1219,12 +1452,6 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
     }
   }
 
-  // ── Next Turn (shortcut to Draft Policy) ─────────────────────────────────
-
-  async function handleNextTurn() {
-    if (showPolicyModal || isTurnExecuting || fetchingPolicies) return
-    await handleDraftPolicy()
-  }
 
   // ── Execute Turn ─────────────────────────────────────────────────────────
 
@@ -1232,34 +1459,106 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
     if (isTurnExecuting) return
     setIsTurnExecuting(true)
     setTurnError(null)
+    setLiveMilestones([])
+    hasChatThisTurnRef.current = false
 
-    const selectedPolicy = policyOptions?.[index]
+    const selectedPolicy = policyOptions?.[index] ?? null
     setExecutingPolicyName(selectedPolicy?.name || 'Policy Execution')
+    setExecutingPolicy(selectedPolicy)
     setShowPolicyModal(false)
 
+    // Push a breaking news entry that persists in Media feed after turn completes
+    if (selectedPolicy) {
+      const minister = gameState.ministers.find(m =>
+        m.portfolio === selectedPolicy.portfolio ||
+        (m.extra_portfolios ?? []).includes(selectedPolicy.portfolio)
+      ) ?? gameState.ministers[0]
+      setAllHeadlines(prev => [...prev, {
+        outlet: "MAYOR'S OFFICE",
+        lean: 'mayor',
+        headline: `BREAKING: Mayor announces "${selectedPolicy.name}"${minister ? ` — led by ${minister.name}` : ''}`,
+        turnNum: gameState.current_turn,
+        isBreaking: true,
+      }])
+    }
+
     try {
-      const res = await executeTurn(gameId, index, { type: 'governance_upkeep', budget: 0 }, 'Delivery Receipts')
-      const tr = res.turn_result
-      const newState = res.state
+      for await (const event of executeTurnStream(gameId, index, { type: 'governance_upkeep', budget: 0 }, 'Delivery Receipts')) {
+        if (event.type === 'complete') {
+          const tr = event.turn_result as TurnResult
+          const newState = event.state as GameState
 
-      setGameState(newState)
-      setLastTurn(tr)
+          setGameState(newState)
+          setLastTurn(tr)
+          const newEntry: TurnEntry = { turn: tr.turn, result: tr, expanded: true }
+          setTurnHistory(prev => [newEntry, ...prev.map(e => ({ ...e, expanded: false }))])
+          setPolicyOptions(null)
+          setExecutingPolicyName(null)
+          setExecutingPolicy(null)
+          setPolicyError(null)
 
-      // Add turn to history — latest expanded, collapse all previous
-      const newEntry: TurnEntry = { turn: tr.turn, result: tr, expanded: true }
-      setTurnHistory(prev => [newEntry, ...prev.map(e => ({ ...e, expanded: false }))])
-      setShowPolicyModal(false)
-      setPolicyOptions(null)
-      setExecutingPolicyName(null)
-      setPolicyError(null)
+          // Add turn separator to chat
+          const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          setChatMessages(prev => [...prev, {
+            isMayor: false, sender: 'SYSTEM', senderRole: '',
+            text: `── Turn ${tr.turn} complete · ${tr.major_policy?.name ?? 'Policy'} · Approval ${Math.round((tr as any).approval_before ?? 0)}% → ${Math.round(tr.interim_approval)}% ──`,
+            time: now, ringColor: '#1c3652', seed: 'system', isSystem: true,
+          }])
+          activeConsultRef.current = null
+          setLiveMilestones([])
 
-      // Reset chat for next turn
-      setChatMessages([])
-      activeConsultRef.current = null
+          // Accumulate voices and headlines with turn number tag
+          const turnNum = tr.turn
+          setAllVoices(prev => [...prev, ...(tr.citizen_voices ?? []).map(v => ({ ...v, turnNum }))])
+          setAllHeadlines(prev => [...prev, ...(tr.media_headlines ?? []).map(h => ({ ...h, turnNum }))])
 
-      if (res.game_over) {
-        setGameOver(true)
-        if (res.scorecard) setScorecard(res.scorecard)
+          if (event.game_over) {
+            setGameOver(true)
+            if (event.scorecard) setScorecard(event.scorecard as GovernanceScorecard)
+          }
+          break
+        }
+        if (event.type === 'error') {
+          setTurnError(`Turn error: ${event.message}`)
+          break
+        }
+        if (event.type === 'game_over') {
+          setGameState(event.state as GameState)
+          setGameOver(true)
+          break
+        }
+        // Phase reactions: update Media and City Chatter immediately (before LLM calls complete)
+        if (event.type === 'phase_reaction') {
+          const turnNum = gameState.current_turn
+          if (event.phase === 'implementation') {
+            setAllHeadlines(prev => [...prev, {
+              outlet: 'WIRE SERVICE',
+              lean: 'neutral',
+              headline: `${event.minister_name} begins ${event.portfolio} implementation — ${event.exec_pct}% execution rate`,
+              turnNum,
+            }])
+          }
+          if (event.phase === 'events' && event.events_count > 0) {
+            const evtList = (event.event_names as string[]).join(', ')
+            setAllHeadlines(prev => [...prev, {
+              outlet: 'ALERT',
+              lean: 'opposition',
+              headline: `${event.events_count} event(s) triggered this turn: ${evtList}`,
+              turnNum,
+            }])
+          }
+          if (event.phase === 'politics') {
+            const dir = (event.approval_after as number) >= (event.approval_before as number) ? '↑' : '↓'
+            setAllHeadlines(prev => [...prev, {
+              outlet: 'City Hall Watch',
+              lean: 'neutral' as const,
+              headline: `Approval ${dir} from ${Math.round(event.approval_before as number)}% to ${Math.round(event.approval_after as number)}% after ${event.counter} counter-frame`,
+              turnNum,
+            }])
+          }
+        }
+        // Accumulate live milestone for display
+        setLiveMilestones(prev => [...prev, event])
       }
     } catch (e: unknown) {
       const errMsg = e instanceof Error ? e.message : String(e)
@@ -1337,9 +1636,18 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
       }))
     : []
 
-  const wardReport: WardReportEntry[] = lastTurn?.ward_report ?? []
-  const mediaHeadlines: MediaHeadline[] = lastTurn?.media_headlines ?? []
-  const citizenVoices: CitizenVoice[] = lastTurn?.citizen_voices ?? []
+  // Use last turn's ward report if available, fall back to state snapshot (no-delta baseline)
+  const wardReport: WardReportEntry[] = lastTurn?.ward_report ?? gameState.ward_report ?? []
+
+  // Compute which group types have 2–8 unique values (meaningful to filter on)
+  const groupTypeCounts: Record<string, Set<string>> = {}
+  for (const entry of wardReport) {
+    if (!groupTypeCounts[entry.group_type]) groupTypeCounts[entry.group_type] = new Set()
+    groupTypeCounts[entry.group_type].add(entry.group_name)
+  }
+  const filterableTypes = Object.entries(groupTypeCounts)
+    .filter(([, names]) => names.size >= 2 && names.size <= 8)
+    .map(([type]) => type)
 
   const leanColor = (lean: string) =>
     lean === 'mayor' ? '#22c55e' : lean === 'opposition' ? '#f87171' : '#60a5fa'
@@ -1351,7 +1659,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
   // ─────────────────────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen flex flex-col overflow-hidden"
+    <div className="h-screen flex flex-col overflow-hidden"
       style={{ background: '#050d1b', color: '#fff', fontFamily: "'Inter', 'Segoe UI', sans-serif" }}>
 
       {/* Modals */}
@@ -1496,25 +1804,6 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
               </button>
             ))}
 
-          <button
-            onClick={handleNextTurn}
-            disabled={isTurnExecuting || fetchingPolicies || showPolicyModal}
-            className="flex items-center gap-2 rounded font-bold transition-all"
-            style={{
-              background: (isTurnExecuting || fetchingPolicies || showPolicyModal)
-                ? '#2a3a4a'
-                : 'linear-gradient(135deg, #c47d10, #e8a030, #c47d10)',
-              padding: '7px 14px', fontSize: 12,
-              color: (isTurnExecuting || fetchingPolicies || showPolicyModal) ? '#4b6280' : '#040d1b',
-              fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.1em', fontWeight: 700,
-              boxShadow: '0 0 16px rgba(232,160,48,0.4), inset 0 1px 1px rgba(255,255,255,0.3)',
-              border: '1px solid rgba(255,200,60,0.4)',
-              cursor: (isTurnExecuting || fetchingPolicies || showPolicyModal) ? 'not-allowed' : 'pointer',
-            }}>
-            {(isTurnExecuting || fetchingPolicies)
-              ? <><Loader2 size={13} className="animate-spin" /> LOADING...</>
-              : <><SkipForward size={13} /> NEXT TURN</>}
-          </button>
         </div>
       </div>
 
@@ -1540,7 +1829,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
         <div className="w-[300px] flex flex-col gap-2 shrink-0">
 
           {/* Advisory Chat Panel */}
-          <div className="flex flex-col" style={PANEL}>
+          <div className="flex flex-col" style={{ ...PANEL, minHeight: 500 }}>
 
             {/* Header */}
             <div className="flex items-center justify-between px-3 py-2"
@@ -1557,27 +1846,36 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
 
             {/* Minister List */}
             <div style={{ borderBottom: '1px solid #1c3652' }}>
-              {/* Horizontal avatar strip */}
-              <div className="flex flex-wrap" style={{ borderBottom: expandedMinisterId ? '1px solid rgba(28,54,82,0.5)' : 'none' }}>
-                {gameState.ministers.map((m, idx) => {
+              {/* Minister grid — 3 per row, max 2 rows */}
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(3, 1fr)',
+                borderBottom: expandedMinisterId ? '1px solid rgba(28,54,82,0.5)' : 'none',
+              }}>
+                {gameState.ministers.slice(0, 6).map((m, idx) => {
                   const col = MINISTER_COLORS[idx % MINISTER_COLORS.length]
                   const isExpanded = expandedMinisterId === m.id
                   return (
                     <div
                       key={m.id}
                       onClick={() => setExpandedMinisterId(isExpanded ? null : m.id)}
-                      className="flex flex-col items-center gap-1 cursor-pointer transition-colors"
+                      className="flex flex-col items-center cursor-pointer transition-colors"
                       style={{
-                        padding: '8px 10px 6px',
+                        padding: '7px 6px 5px',
+                        gap: 3,
                         background: isExpanded ? 'rgba(255,255,255,0.05)' : '',
                         borderBottom: isExpanded ? `2px solid ${col}` : '2px solid transparent',
+                        borderRight: (idx % 3 < 2) ? '1px solid rgba(28,54,82,0.3)' : 'none',
                       }}
                       onMouseEnter={e => { if (!isExpanded) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
                       onMouseLeave={e => { if (!isExpanded) e.currentTarget.style.background = '' }}
                     >
-                      <Avatar seed={m.name} size={26} ring={col} />
-                      <span style={{ fontSize: 9, fontWeight: 600, color: isExpanded ? '#fff' : '#94a3b8', whiteSpace: 'nowrap' }}>
-                        {m.name.split(' ')[0]}
+                      <Avatar seed={m.name} size={28} ring={col} />
+                      <span style={{ fontSize: 9, fontWeight: 700, color: isExpanded ? '#fff' : '#94a3b8', textAlign: 'center', lineHeight: 1.2, width: '100%' }}>
+                        {m.name}
+                      </span>
+                      <span style={{ fontSize: 8, color: col, textAlign: 'center', lineHeight: 1.1, opacity: 0.85, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.04em' }}>
+                        {m.portfolio}
                       </span>
                     </div>
                   )
@@ -1595,80 +1893,108 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                         borderLeft: `2px solid ${col}`,
                         borderBottom: '1px solid rgba(28,54,82,0.5)',
                         background: 'rgba(255,255,255,0.02)',
-                        padding: '8px 10px 10px 12px',
+                        padding: '10px 12px 12px 14px',
                       }}>
-                        {/* Stat bars */}
-                        {[
-                          { label: 'Loyalty', value: m.loyalty, color: '#22c55e' },
-                          { label: 'Political Capital', value: m.political_capital ?? 50, color: '#38bdf8' },
-                          { label: 'Scandal Exposure', value: m.scandal_exposure, color: m.scandal_exposure > 50 ? '#f87171' : '#64748b' },
-                        ].map(s => (
-                          <div key={s.label} className="flex items-center gap-2 mb-1.5">
-                            <span style={{ fontSize: 9, color: '#64748b', width: 80, fontFamily: "'Rajdhani', sans-serif",
-                              letterSpacing: '0.06em', fontWeight: 600 }}>{s.label.toUpperCase()}</span>
-                            <div style={{ flex: 1, height: 3, background: '#071018', borderRadius: 2, overflow: 'hidden' }}>
-                              <div style={{ height: '100%', width: `${Math.max(0, Math.min(100, s.value))}%`,
-                                background: s.color, borderRadius: 2, boxShadow: `0 0 4px ${s.color}80` }} />
-                            </div>
-                            <span style={{ fontSize: 9, fontFamily: "'Share Tech Mono', monospace", color: s.color, width: 20, textAlign: 'right' }}>
-                              {Math.round(s.value)}
-                            </span>
-                          </div>
-                        ))}
-
-                        {/* Capability & Alignment */}
-                        <div className="flex gap-4 mt-2 mb-2">
-                          {m.capability?.competence != null && (
-                            <div className="flex items-center gap-1.5">
-                              <span style={{ fontSize: 9, color: '#64748b' }}>Competence</span>
-                              <span style={{ fontSize: 10, ...MONO('#38bdf8'), fontWeight: 700 }}>{Math.round(m.capability.competence)}</span>
-                            </div>
-                          )}
-                          <div className="flex items-center gap-1.5">
-                            <span style={{ fontSize: 9, color: '#64748b' }}>Alignment</span>
-                            <span style={{ fontSize: 10, fontFamily: "'Share Tech Mono', monospace", fontWeight: 700,
-                              color: m.mayor_alignment > 20 ? '#22c55e' : m.mayor_alignment < -20 ? '#f87171' : '#94a3b8' }}>
-                              {m.mayor_alignment > 0 ? '+' : ''}{Math.round(m.mayor_alignment)}
-                            </span>
-                          </div>
+                        {/* ── PROFESSIONAL ─────────────────────────────── */}
+                        <div style={{
+                          fontSize: 8, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.12em',
+                          fontWeight: 700, color: col, marginBottom: 6, opacity: 0.9
+                        }}>
+                          PROFESSIONAL
                         </div>
-
-                        {/* Demographics summary */}
+                        {/* Portfolio + extra */}
+                        <div className="flex items-center gap-2 mb-2 flex-wrap">
+                          <span style={{
+                            fontSize: 9, padding: '2px 6px', borderRadius: 3,
+                            background: `${col}18`, border: `1px solid ${col}44`, color: col,
+                            fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, letterSpacing: '0.06em'
+                          }}>
+                            {m.portfolio}
+                          </span>
+                          {m.extra_portfolios?.map(p => (
+                            <span key={p} style={{
+                              fontSize: 8, padding: '2px 5px', borderRadius: 3,
+                              background: 'rgba(232,160,48,0.08)', border: '1px solid rgba(232,160,48,0.25)',
+                              color: '#e8a030', fontFamily: "'Rajdhani', sans-serif", fontWeight: 600
+                            }}>
+                              +{p}
+                            </span>
+                          ))}
+                        </div>
+                        {/* Demographics */}
                         {m.demographics && (
-                          <div style={{ fontSize: 9, color: '#475569', marginBottom: 6, lineHeight: 1.4 }}>
+                          <div style={{ fontSize: 9, color: '#475569', marginBottom: 8, lineHeight: 1.5 }}>
                             {[m.demographics.profession, m.demographics.age_group, m.demographics.location, m.demographics.income_bracket]
                               .filter(Boolean).join(' · ')}
                           </div>
                         )}
+                        {/* Competence + Alignment + Mayor alignment */}
+                        <div className="flex gap-3 mb-3 flex-wrap">
+                          {m.capability?.competence != null && (
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                              <span style={{ fontSize: 14, fontWeight: 800, fontFamily: "'Share Tech Mono', monospace", color: '#38bdf8' }}>
+                                {Math.round(m.capability.competence)}
+                              </span>
+                              <span style={{ fontSize: 8, color: '#334155', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.06em' }}>COMPETENCE</span>
+                            </div>
+                          )}
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                            <span style={{
+                              fontSize: 14, fontWeight: 800, fontFamily: "'Share Tech Mono', monospace",
+                              color: m.mayor_alignment > 20 ? '#22c55e' : m.mayor_alignment < -20 ? '#f87171' : '#94a3b8'
+                            }}>
+                              {m.mayor_alignment > 0 ? '+' : ''}{Math.round(m.mayor_alignment)}
+                            </span>
+                            <span style={{ fontSize: 8, color: '#334155', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.06em' }}>ALIGNMENT</span>
+                          </div>
+                        </div>
 
+                        {/* ── PERSONAL ─────────────────────────────────── */}
+                        <div style={{
+                          fontSize: 8, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.12em',
+                          fontWeight: 700, color: '#94a3b8', marginBottom: 6, opacity: 0.7
+                        }}>
+                          PERSONAL
+                        </div>
+                        {/* Status bars */}
+                        {[
+                          { label: 'Loyalty', value: m.loyalty, color: '#22c55e' },
+                          { label: 'Pol. Capital', value: m.political_capital ?? 50, color: '#38bdf8' },
+                          { label: 'Scandal Risk', value: m.scandal_exposure, color: m.scandal_exposure > 50 ? '#f87171' : '#475569' },
+                        ].map(s => (
+                          <div key={s.label} className="flex items-center gap-2 mb-1.5">
+                            <span style={{
+                              fontSize: 9, color: '#475569', width: 72, fontFamily: "'Rajdhani', sans-serif",
+                              letterSpacing: '0.04em', fontWeight: 600
+                            }}>{s.label}</span>
+                            <div style={{ flex: 1, height: 4, background: '#0b1929', borderRadius: 2, overflow: 'hidden' }}>
+                              <div style={{
+                                height: '100%', width: `${Math.max(0, Math.min(100, s.value))}%`,
+                                background: s.color, borderRadius: 2, transition: 'width 0.3s ease',
+                                boxShadow: `0 0 6px ${s.color}60`
+                              }} />
+                            </div>
+                            <span style={{ fontSize: 9, fontFamily: "'Share Tech Mono', monospace", color: s.color, width: 22, textAlign: 'right' }}>
+                              {Math.round(s.value)}
+                            </span>
+                          </div>
+                        ))}
                         {/* Personality traits */}
                         {m.personality && Object.keys(m.personality).length > 0 && (
-                          <div className="flex gap-1.5 flex-wrap mb-1.5">
+                          <div className="flex gap-1 flex-wrap mt-2">
                             {Object.entries(m.personality).map(([trait, val]) => {
                               const v = Math.round(val)
-                              const c = v > 65 ? '#38bdf8' : v < 35 ? '#f59e0b' : '#64748b'
+                              const c = v > 65 ? '#22c55e' : v < 35 ? '#f87171' : '#64748b'
                               return (
-                                <span key={trait} style={{ fontSize: 8, padding: '1px 4px', borderRadius: 3,
-                                  background: `${c}14`, border: `1px solid ${c}33`, color: c,
-                                  fontFamily: "'Share Tech Mono', monospace" }}>
-                                  {trait.replace(/_/g, ' ')} {v}
+                                <span key={trait} style={{
+                                  fontSize: 8, padding: '2px 5px', borderRadius: 10,
+                                  background: `${c}14`, border: `1px solid ${c}30`, color: c,
+                                  fontFamily: "'Share Tech Mono', monospace"
+                                }}>
+                                  {trait.replace(/_/g, ' ')} · {v}
                                 </span>
                               )
                             })}
-                          </div>
-                        )}
-
-                        {/* Extra portfolios */}
-                        {m.extra_portfolios?.length > 0 && (
-                          <div className="flex items-center gap-1.5 mt-1">
-                            <span style={{ fontSize: 9, color: '#64748b' }}>Also:</span>
-                            {m.extra_portfolios.map(p => (
-                              <span key={p} style={{ fontSize: 8, padding: '1px 5px', borderRadius: 3,
-                                background: 'rgba(232,160,48,0.08)', border: '1px solid rgba(232,160,48,0.25)',
-                                color: '#e8a030', fontFamily: "'Rajdhani', sans-serif", fontWeight: 600 }}>
-                                {p}
-                              </span>
-                            ))}
                           </div>
                         )}
                       </div>
@@ -1682,13 +2008,20 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
             <div style={{
               padding: '5px 12px', fontSize: 10, color: '#475569',
               background: 'rgba(232,160,48,0.03)', borderBottom: '1px solid rgba(28,54,82,0.4)',
-              fontStyle: 'italic', lineHeight: 1.4 }}>
+              fontStyle: 'italic', lineHeight: 1.4
+            }}>
               Click a minister for full stats. Use @name to address someone directly.
             </div>
 
             {/* Chat Messages */}
-            <div className="overflow-y-auto space-y-2.5" style={{ maxHeight: 280, padding: chatMessages.length > 0 ? '8px' : 0 }}>
-              {chatMessages.map((msg, i) => (
+            <div className="overflow-y-auto space-y-2.5" style={{ height: 280, padding: '8px' }}>
+              {chatMessages.map((msg, i) => msg.isSystem ? (
+                <div key={i} style={{
+                  textAlign: 'center', fontSize: 9, color: '#334155', fontStyle: 'italic',
+                  padding: '4px 0', borderTop: '1px solid #1c3652', borderBottom: '1px solid #1c3652',
+                  letterSpacing: '0.04em', margin: '2px 0',
+                }}>{msg.text}</div>
+              ) : (
                 <div key={i} className="flex gap-2">
                   <div className="shrink-0 mt-0.5" style={{ width: 26, height: 26 }}>
                     {msg.isMayor ? (
@@ -1836,8 +2169,10 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
               <button
                 onClick={() => setShowAllParams(p => !p)}
                 className="flex items-center gap-1.5 px-2 py-1 rounded transition-all"
-                style={{ border: '1px solid #1c3652', fontSize: 10, color: showAllParams ? '#e8a030' : '#4b6280',
-                  fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.05em', background: showAllParams ? 'rgba(232,160,48,0.08)' : 'none', cursor: 'pointer' }}>
+                style={{
+                  border: '1px solid #1c3652', fontSize: 10, color: showAllParams ? '#e8a030' : '#4b6280',
+                  fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.05em', background: showAllParams ? 'rgba(232,160,48,0.08)' : 'none', cursor: 'pointer'
+                }}>
                 {showAllParams ? 'Hide' : 'View All Parameters'} {showAllParams ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
               </button>
             </div>
@@ -1877,8 +2212,10 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                               <MiniBar value={val} color={barColor(val)} width={50} />
                               <span style={{ fontSize: 9, ...MONO('#fff'), width: 20, textAlign: 'right' }}>{Math.round(val)}</span>
                               {roundDelta !== 0 && (
-                                <span style={{ fontSize: 8, fontFamily: "'Share Tech Mono', monospace",
-                                  color: roundDelta > 0 ? '#4ade80' : '#f87171' }}>
+                                <span style={{
+                                  fontSize: 8, fontFamily: "'Share Tech Mono', monospace",
+                                  color: roundDelta > 0 ? '#4ade80' : '#f87171'
+                                }}>
                                   {roundDelta > 0 ? `▲+${roundDelta}` : `▼${roundDelta}`}
                                 </span>
                               )}
@@ -1916,18 +2253,12 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
             {/* Stream Image Banner */}
             <div className="relative shrink-0 overflow-hidden" style={{ height: 185, background: '#050d1b' }}>
               {isTurnExecuting ? (
-                <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  <div className="absolute inset-0 z-0 bg-cover bg-center opacity-30 saturate-50" style={{
+                <div className="absolute inset-0 overflow-y-auto" style={{ background: 'rgba(5,13,27,0.95)' }}>
+                  <div className="absolute inset-0 z-0 bg-cover bg-center opacity-15 saturate-50" style={{
                     backgroundImage: 'url("https://images.unsplash.com/photo-1451187580459-43490279c0fa?q=80&w=1200&auto=format&fit=crop")',
                   }} />
-                  <div className="z-10 flex flex-col items-center gap-3">
-                    <Loader2 className="animate-spin" size={32} color="#4ade80" />
-                    <div style={{ fontFamily: "'Rajdhani', sans-serif", fontSize: 16, fontWeight: 700, letterSpacing: '0.15em', color: '#4ade80' }}>
-                      IMPLEMENTING POLICY...
-                    </div>
-                    <div style={{ fontSize: 13, ...MONO('#fff') }}>
-                      {executingPolicyName}
-                    </div>
+                  <div className="relative z-10">
+                    <LiveMilestoneFeed milestones={liveMilestones} policyName={executingPolicyName ?? ''} />
                   </div>
                 </div>
               ) : (
@@ -1935,15 +2266,6 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                   <img src={streamImg} alt={streamTitle} className="absolute inset-0 w-full h-full object-cover" />
                   <div className="absolute inset-0"
                     style={{ background: 'linear-gradient(to top, rgba(5,13,27,0.97) 0%, rgba(5,13,27,0.3) 55%, transparent 100%)' }} />
-                  <div className="absolute top-2 left-2 px-2 py-0.5 rounded"
-                    style={{ background: 'rgba(5,13,27,0.7)', border: '1px solid rgba(232,160,48,0.3)', backdropFilter: 'blur(4px)' }}>
-                    <span style={{
-                      color: '#e8a030', fontSize: 9, fontFamily: "'Rajdhani', sans-serif",
-                      letterSpacing: '0.12em', fontWeight: 700
-                    }}>
-                      TURN {gameState.current_turn} · {lastTurn ? 'LAST ACTION' : 'OVERVIEW'}
-                    </span>
-                  </div>
                   <div className="absolute bottom-0 left-0 right-0 p-3">
                     <div className="text-white uppercase tracking-wide"
                       style={{ fontSize: 15, fontWeight: 700, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em' }}>
@@ -1985,7 +2307,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
             <div className="flex-1 overflow-y-auto min-h-0">
               {turnHistory.length === 0 && (
                 <div style={{ fontSize: 11, color: '#334155', textAlign: 'center', padding: '16px' }}>
-                  No turns played yet. Press NEXT TURN to begin.
+                  No turns yet. Draft a policy to begin.
                 </div>
               )}
               {turnHistory.map((entry, i) => (
@@ -2003,55 +2325,84 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
         </div>
 
         {/* ── RIGHT: Identity + Media + City Chatter ──────────────────────── */}
-        <div className="w-[280px] flex flex-col gap-2 shrink-0">
+        <div className="w-[280px] flex flex-col gap-2 shrink-0 overflow-hidden min-h-0">
 
           {/* Identity Groups */}
-          <div style={PANEL} className="shrink-0">
-            <div className="flex items-center justify-between px-3 py-2" style={{ borderBottom: '1px solid #1c3652' }}>
+          <div style={{ ...PANEL, maxHeight: 260 }} className="shrink-0 overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between px-3 py-2 shrink-0" style={{ borderBottom: '1px solid #1c3652' }}>
               <div className="flex items-center gap-2">
                 <div className="w-1 h-4 rounded-full" style={{ background: '#a855f7', boxShadow: '0 0 6px #a855f7' }} />
                 <span style={HDR_LABEL}>IDENTITY GROUPS</span>
               </div>
-              <span style={{ fontSize: 9, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em', color: '#4b6280' }}>
-                APPROVAL · TREND
-              </span>
+              <select
+                value={identityFilter}
+                onChange={e => setIdentityFilter(e.target.value)}
+                style={{
+                  fontSize: 9, background: '#071018', border: '1px solid #1c3652',
+                  color: '#a855f7', borderRadius: 3, padding: '2px 5px', cursor: 'pointer',
+                  fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em', fontWeight: 700,
+                }}>
+                {filterableTypes.map(t => (
+                  <option key={t} value={t}>{t.toUpperCase()}</option>
+                ))}
+              </select>
             </div>
-            <div className="px-2 py-1.5 space-y-0.5">
-              {wardReport.length === 0 && (
-                <div style={{ fontSize: 11, color: '#334155', textAlign: 'center', padding: '8px 0' }}>
-                  Data available after first turn
-                </div>
-              )}
-              {wardReport.slice(0, 6).map((entry, i) => {
-                const col = entry.hotspot ? '#f87171' : entry.bright_spot ? '#22c55e' : '#e8a030'
-                const approvalVal = Math.min(100, Math.max(0, 50 + entry.avg_wellbeing_delta * 5))
-                return (
-                  <div key={i}
-                    className="flex items-center gap-2 px-1.5 py-1.5 rounded cursor-pointer transition-all"
-                    onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.04)')}
-                    onMouseLeave={e => (e.currentTarget.style.background = '')}>
-                    <span style={{ fontSize: 11, color: '#94a3b8', width: 14, textAlign: 'center' }}>
-                      {entry.group_type === 'religion' ? '🕉' : entry.group_type === 'profession' ? '⚙' : '⬡'}
-                    </span>
-                    <span className="flex-1 text-gray-300 truncate" style={{ fontSize: 11 }}>{entry.group_name}</span>
-                    <div className="flex items-center gap-1 shrink-0">
-                      <MiniBar value={approvalVal} color={col} width={36} />
-                      <span style={{ fontSize: 10, fontWeight: 700, ...MONO(col), width: 20, textAlign: 'right' }}>
-                        {Math.round(approvalVal)}
+            {/* Column headers */}
+            <div className="flex items-center gap-1.5 px-3 py-1 shrink-0" style={{ borderBottom: '1px solid rgba(28,54,82,0.4)' }}>
+              <span className="flex-1" style={{ fontSize: 8, color: '#334155', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em' }}>GROUP</span>
+              <span style={{ fontSize: 8, color: '#334155', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em', width: 55, textAlign: 'right' }}>WELLBEING</span>
+              <span style={{ fontSize: 8, color: '#334155', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em', width: 14, textAlign: 'right' }}>↕</span>
+            </div>
+            <div className="px-2 py-1 space-y-0.5 overflow-y-auto flex-1">
+              {wardReport
+                .filter(e => e.group_type === identityFilter)
+                .slice(0, 10)
+                .map((entry, i) => {
+                  const delta = entry.avg_wellbeing_delta
+                  const wb = Math.min(100, Math.max(0, entry.avg_wellbeing ?? 50))
+                  // Color: red <40, amber 40-60, green >70, purple for bright_spot
+                  const col = entry.hotspot ? '#f87171'
+                    : entry.bright_spot ? '#a855f7'
+                      : wb >= 70 ? '#22c55e'
+                        : wb >= 45 ? '#e8a030'
+                          : '#f87171'
+                  const hasDelta = lastTurn != null && delta !== 0
+                  const groupIcon: Record<string, string> = {
+                    religion: '☪', ideology: '⚖', profession: '💼',
+                    income: '₹', location: '📍', caste: '◈', age_group: '◑',
+                  }
+                  const icon = groupIcon[entry.group_type] ?? '⬡'
+                  return (
+                    <div key={i}
+                      className="flex items-center gap-1.5 px-1.5 rounded"
+                      style={{ paddingTop: 3, paddingBottom: 3 }}>
+                      <span style={{ fontSize: 10, width: 14, textAlign: 'center', lineHeight: 1 }}>{icon}</span>
+                      <span className="flex-1 truncate" style={{ fontSize: 10, color: '#94a3b8' }}>{entry.group_name}</span>
+                      {hasDelta && (
+                        <span style={{ fontSize: 8, color: delta >= 0 ? '#4ade80' : '#f87171', minWidth: 22, textAlign: 'right', fontFamily: "'Share Tech Mono', monospace" }}>
+                          {delta >= 0 ? '+' : ''}{Math.round(delta)}
+                        </span>
+                      )}
+                      <div className="flex items-center gap-1 shrink-0">
+                        <MiniBar value={wb} color={col} width={34} />
+                        <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "'Share Tech Mono', monospace", color: col, width: 22, textAlign: 'right' }}>
+                          {Math.round(wb)}
+                        </span>
+                      </div>
+                      <span style={{ fontSize: 9, width: 12, textAlign: 'center', color: entry.trend === 'up' ? '#22c55e' : entry.trend === 'down' ? '#f87171' : '#334155' }}>
+                        {entry.trend === 'up' ? '▲' : entry.trend === 'down' ? '▼' : '—'}
                       </span>
                     </div>
-                    <div className="w-px h-3" style={{ background: '#1c3652' }} />
-                    <span style={{ fontSize: 10, color: entry.trend === 'up' ? '#22c55e' : entry.trend === 'down' ? '#f87171' : '#64748b' }}>
-                      {entry.trend === 'up' ? '▲' : entry.trend === 'down' ? '▼' : '—'}
-                    </span>
-                  </div>
-                )
-              })}
+                  )
+                })}
+              {wardReport.filter(e => e.group_type === identityFilter).length === 0 && (
+                <div style={{ fontSize: 10, color: '#334155', textAlign: 'center', paddingTop: 12 }}>No data yet</div>
+              )}
             </div>
           </div>
 
           {/* Media */}
-          <div style={PANEL} className="shrink-0">
+          <div style={PANEL} className="flex-1 overflow-hidden flex flex-col">
             <div className="flex items-center justify-between px-3 py-2" style={{ borderBottom: '1px solid #1c3652' }}>
               <div className="flex items-center gap-2">
                 <Newspaper size={11} color="#e8a030" />
@@ -2062,32 +2413,41 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                 <span style={{ fontSize: 9, fontFamily: "'Rajdhani', sans-serif", color: '#4b6280' }}>Campaign Rate</span>
               </div>
             </div>
-            <div className="p-2 space-y-2">
-              {mediaHeadlines.length === 0 && (
+            <div ref={mediaScrollRef} className="p-2 space-y-2 overflow-y-auto flex-1 min-h-0"
+              onMouseEnter={() => { mediaHoveredRef.current = true }}
+              onMouseLeave={() => { mediaHoveredRef.current = false }}
+            >
+              {allHeadlines.length === 0 && (
                 <div style={{ fontSize: 11, color: '#334155', textAlign: 'center', padding: '8px 0' }}>
                   Headlines appear after first turn
                 </div>
               )}
-              {mediaHeadlines.slice(0, 3).map((item, i) => {
+              {allHeadlines.map((item, i) => {
                 const col = leanColor(item.lean)
                 const bg = leanBg(item.lean)
                 const initials = item.outlet.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
+                const itemBg = item.isBreaking ? 'rgba(232,160,48,0.06)' : 'rgba(255,255,255,0.02)'
+                const itemBorder = item.isBreaking ? '1px solid rgba(232,160,48,0.25)' : '1px solid transparent'
                 return (
-                  <div key={i} className="flex gap-2 p-1.5 rounded cursor-pointer transition-all"
-                    style={{ background: 'rgba(255,255,255,0.02)' }}
-                    onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.05)')}
-                    onMouseLeave={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.02)')}>
+                  <div key={i} className="flex gap-2 p-1.5 rounded"
+                    style={{ background: itemBg, border: itemBorder }}>
                     <div className="shrink-0 rounded flex items-center justify-center"
                       style={{
                         width: 32, height: 32, background: bg,
                         border: `1px solid ${col}44`, fontSize: 9, fontWeight: 700, color: col,
                         fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.05em',
-                        boxShadow: `0 0 8px ${bg}88`
                       }}>
                       {initials}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <span style={{ fontSize: 10, fontWeight: 700, color: col }}>{item.outlet}</span>
+                      <div className="flex items-center gap-1.5">
+                        <span style={{ fontSize: 10, fontWeight: 700, color: col }}>{item.outlet}</span>
+                        <span style={{
+                          fontSize: 8, fontWeight: 700, color: '#4b6280',
+                          background: '#0b1929', border: '1px solid #1c3652',
+                          borderRadius: 3, padding: '0 3px', fontFamily: "'Rajdhani', sans-serif"
+                        }}>T{item.turnNum}</span>
+                      </div>
                       <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 2, lineHeight: 1.45 }}>
                         {item.headline}
                       </div>
@@ -2096,19 +2456,6 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                 )
               })}
             </div>
-            {mediaHeadlines.length > 0 && (
-              <div className="px-2 pb-2">
-                <button className="w-full py-1.5 rounded transition-all"
-                  style={{
-                    border: '1px solid #1c3652', fontSize: 10, color: '#4b6280',
-                    fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.1em', background: 'none', cursor: 'pointer'
-                  }}
-                  onMouseEnter={e => { e.currentTarget.style.borderColor = '#e8a030'; e.currentTarget.style.color = '#e8a030' }}
-                  onMouseLeave={e => { e.currentTarget.style.borderColor = '#1c3652'; e.currentTarget.style.color = '#4b6280' }}>
-                  VIEW ALL MEDIA
-                </button>
-              </div>
-            )}
           </div>
 
           {/* City Chatter */}
@@ -2123,13 +2470,16 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                 <span style={{ fontSize: 9, fontFamily: "'Rajdhani', sans-serif", color: '#4b6280' }}>Sentiment</span>
               </div>
             </div>
-            <div className="p-2 space-y-2.5 overflow-y-auto flex-1">
-              {citizenVoices.length === 0 && (
+            <div ref={chatterScrollRef} className="p-2 space-y-2.5 overflow-y-auto flex-1 min-h-0"
+              onMouseEnter={() => { chatterHoveredRef.current = true }}
+              onMouseLeave={() => { chatterHoveredRef.current = false }}
+            >
+              {allVoices.length === 0 && (
                 <div style={{ fontSize: 11, color: '#334155', textAlign: 'center', padding: '8px 0' }}>
                   Citizen voices appear after first turn
                 </div>
               )}
-              {citizenVoices.slice(0, 4).map((v, i) => {
+              {allVoices.map((v, i) => {
                 const ring = sentimentRing(v.sentiment)
                 return (
                   <div key={i} className="flex gap-2">
@@ -2145,6 +2495,11 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
                         <span style={{ fontSize: 10, fontWeight: 700, color: '#7dd3fc' }}>{v.name}</span>
+                        <span style={{
+                          fontSize: 8, fontWeight: 700, color: '#4b6280',
+                          background: '#0b1929', border: '1px solid #1c3652',
+                          borderRadius: 3, padding: '0 3px', fontFamily: "'Rajdhani', sans-serif"
+                        }}>T{v.turnNum}</span>
                         <span style={{ fontSize: 9, color: '#475569' }}>{v.demographics_summary}</span>
                       </div>
                       <div className="mt-1 px-2 py-1.5 rounded"

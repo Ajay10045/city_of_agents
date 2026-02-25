@@ -98,6 +98,42 @@ export function executeTurn(
   })
 }
 
+// ---- Streaming Turn ----
+
+export async function* executeTurnStream(
+  gameId: string,
+  policyIndex: number,
+  minorAction: { type: string; target?: string; budget?: number },
+  counterFrame: string = 'Delivery Receipts',
+): AsyncGenerator<Record<string, unknown>> {
+  const res = await fetch(`/game/${gameId}/turn/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      policy_index: policyIndex,
+      minor_action: { type: minorAction.type, target: minorAction.target ?? null, budget: minorAction.budget ?? 0 },
+      counter_frame: counterFrame,
+    }),
+  })
+  if (!res.ok) throw new Error(`Stream failed: ${res.status}`)
+  const reader = res.body!.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  while (true) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const parts = buffer.split('\n\n')
+    buffer = parts.pop()!
+    for (const part of parts) {
+      const line = part.trim()
+      if (line.startsWith('data: ')) {
+        yield JSON.parse(line.slice(6)) as Record<string, unknown>
+      }
+    }
+  }
+}
+
 // ---- State ----
 
 export function getState(gameId: string) {
