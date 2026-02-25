@@ -4,6 +4,7 @@ import {
   Zap, Send, AlertTriangle, TrendingDown, Droplets,
   MapPin, Info,
   Newspaper, MessageCircle, TrendingUp, Loader2,
+  Volume2, VolumeX,
 } from 'lucide-react'
 import {
   openConsultation, messageMinister, closeConsultation,
@@ -1300,17 +1301,56 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
   const mediaScrollRef = useRef<HTMLDivElement>(null)
   const chatterScrollRef = useRef<HTMLDivElement>(null)
   const hasChatThisTurnRef = useRef(false)
+
+  // Theme music
+  const audioRef = useRef<HTMLAudioElement>(null)
+  const [isMuted, setIsMuted] = useState(false)
+  const musicStartedRef = useRef(false)
+
+  // Start music on first user interaction (browser autoplay policy)
+  useEffect(() => {
+    const startMusic = () => {
+      if (musicStartedRef.current) return
+      const audio = audioRef.current
+      if (audio) {
+        audio.volume = 0.3
+        audio.play().then(() => {
+          musicStartedRef.current = true
+          setIsMuted(false)
+        }).catch(() => { })
+      }
+    }
+    document.addEventListener('click', startMusic, { once: true })
+    return () => document.removeEventListener('click', startMusic)
+  }, [])
+
+  const toggleMusic = () => {
+    const audio = audioRef.current
+    if (!audio) return
+    if (isMuted) {
+      audio.play().then(() => setIsMuted(false)).catch(() => { })
+    } else {
+      audio.pause()
+      setIsMuted(true)
+    }
+  }
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [chatMessages])
   const mediaHoveredRef = useRef(false)
   const chatterHoveredRef = useRef(false)
+  const mediaInnerRef = useRef<HTMLDivElement>(null)
+  const chatterInnerRef = useRef<HTMLDivElement>(null)
 
-  // Continuous looping ticker scroll for Media
+  // Seamless marquee scroll for Media — content is rendered twice;
+  // when scroll passes the first copy, snap back invisibly
   useEffect(() => {
     const id = setInterval(() => {
       const el = mediaScrollRef.current
-      if (!el || mediaHoveredRef.current) return
-      if (el.scrollTop + el.clientHeight >= el.scrollHeight) {
-        el.scrollTop = 0
+      const inner = mediaInnerRef.current
+      if (!el || !inner || mediaHoveredRef.current) return
+      const oneHeight = inner.offsetHeight
+      if (oneHeight === 0) return
+      if (el.scrollTop >= oneHeight) {
+        el.scrollTop -= oneHeight
       } else {
         el.scrollTop += 1
       }
@@ -1318,13 +1358,16 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
     return () => clearInterval(id)
   }, [])
 
-  // Continuous looping ticker scroll for City Chatter
+  // Seamless marquee scroll for City Chatter
   useEffect(() => {
     const id = setInterval(() => {
       const el = chatterScrollRef.current
-      if (!el || chatterHoveredRef.current) return
-      if (el.scrollTop + el.clientHeight >= el.scrollHeight) {
-        el.scrollTop = 0
+      const inner = chatterInnerRef.current
+      if (!el || !inner || chatterHoveredRef.current) return
+      const oneHeight = inner.offsetHeight
+      if (oneHeight === 0) return
+      if (el.scrollTop >= oneHeight) {
+        el.scrollTop -= oneHeight
       } else {
         el.scrollTop += 1
       }
@@ -1803,6 +1846,19 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                 <Icon size={13} color="#4b6280" />
               </button>
             ))}
+          <button title={isMuted ? 'Play Music' : 'Mute Music'} onClick={toggleMusic}
+            className="flex items-center justify-center rounded transition-all"
+            style={{
+              width: 30, height: 30,
+              background: isMuted ? 'rgba(255,255,255,0.04)' : 'rgba(232,160,48,0.15)',
+              border: isMuted ? '1px solid #1c3652' : '1px solid rgba(232,160,48,0.4)',
+              cursor: 'pointer'
+            }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = '#e8a030'; e.currentTarget.style.background = 'rgba(232,160,48,0.1)' }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = isMuted ? '#1c3652' : 'rgba(232,160,48,0.4)'; e.currentTarget.style.background = isMuted ? 'rgba(255,255,255,0.04)' : 'rgba(232,160,48,0.15)' }}>
+            {isMuted ? <VolumeX size={13} color="#4b6280" /> : <Volume2 size={13} color="#e8a030" />}
+          </button>
+          <audio ref={audioRef} src="/theme.mp3" loop preload="auto" />
 
         </div>
       </div>
@@ -2413,7 +2469,8 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                 <span style={{ fontSize: 9, fontFamily: "'Rajdhani', sans-serif", color: '#4b6280' }}>Campaign Rate</span>
               </div>
             </div>
-            <div ref={mediaScrollRef} className="p-2 space-y-2 overflow-y-auto flex-1 min-h-0"
+            <div ref={mediaScrollRef} className="p-2 overflow-y-auto flex-1 min-h-0"
+              style={{ scrollbarWidth: 'none' }}
               onMouseEnter={() => { mediaHoveredRef.current = true }}
               onMouseLeave={() => { mediaHoveredRef.current = false }}
             >
@@ -2422,39 +2479,43 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                   Headlines appear after first turn
                 </div>
               )}
-              {allHeadlines.map((item, i) => {
-                const col = leanColor(item.lean)
-                const bg = leanBg(item.lean)
-                const initials = item.outlet.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
-                const itemBg = item.isBreaking ? 'rgba(232,160,48,0.06)' : 'rgba(255,255,255,0.02)'
-                const itemBorder = item.isBreaking ? '1px solid rgba(232,160,48,0.25)' : '1px solid transparent'
-                return (
-                  <div key={i} className="flex gap-2 p-1.5 rounded"
-                    style={{ background: itemBg, border: itemBorder }}>
-                    <div className="shrink-0 rounded flex items-center justify-center"
-                      style={{
-                        width: 32, height: 32, background: bg,
-                        border: `1px solid ${col}44`, fontSize: 9, fontWeight: 700, color: col,
-                        fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.05em',
-                      }}>
-                      {initials}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span style={{ fontSize: 10, fontWeight: 700, color: col }}>{item.outlet}</span>
-                        <span style={{
-                          fontSize: 8, fontWeight: 700, color: '#4b6280',
-                          background: '#0b1929', border: '1px solid #1c3652',
-                          borderRadius: 3, padding: '0 3px', fontFamily: "'Rajdhani', sans-serif"
-                        }}>T{item.turnNum}</span>
+              {allHeadlines.length > 0 && [0, 1].map(copy => (
+                <div key={copy} ref={copy === 0 ? mediaInnerRef : undefined} className="space-y-2" style={copy === 1 ? { paddingTop: 8 } : undefined}>
+                  {allHeadlines.map((item, i) => {
+                    const col = leanColor(item.lean)
+                    const bg = leanBg(item.lean)
+                    const initials = item.outlet.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
+                    const itemBg = item.isBreaking ? 'rgba(232,160,48,0.06)' : 'rgba(255,255,255,0.02)'
+                    const itemBorder = item.isBreaking ? '1px solid rgba(232,160,48,0.25)' : '1px solid transparent'
+                    return (
+                      <div key={`${copy}-${i}`} className="flex gap-2 p-1.5 rounded"
+                        style={{ background: itemBg, border: itemBorder }}>
+                        <div className="shrink-0 rounded flex items-center justify-center"
+                          style={{
+                            width: 32, height: 32, background: bg,
+                            border: `1px solid ${col}44`, fontSize: 9, fontWeight: 700, color: col,
+                            fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.05em',
+                          }}>
+                          {initials}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span style={{ fontSize: 10, fontWeight: 700, color: col }}>{item.outlet}</span>
+                            <span style={{
+                              fontSize: 8, fontWeight: 700, color: '#4b6280',
+                              background: '#0b1929', border: '1px solid #1c3652',
+                              borderRadius: 3, padding: '0 3px', fontFamily: "'Rajdhani', sans-serif"
+                            }}>T{item.turnNum}</span>
+                          </div>
+                          <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 2, lineHeight: 1.45 }}>
+                            {item.headline}
+                          </div>
+                        </div>
                       </div>
-                      <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 2, lineHeight: 1.45 }}>
-                        {item.headline}
-                      </div>
-                    </div>
-                  </div>
-                )
-              })}
+                    )
+                  })}
+                </div>
+              ))}
             </div>
           </div>
 
@@ -2470,7 +2531,8 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                 <span style={{ fontSize: 9, fontFamily: "'Rajdhani', sans-serif", color: '#4b6280' }}>Sentiment</span>
               </div>
             </div>
-            <div ref={chatterScrollRef} className="p-2 space-y-2.5 overflow-y-auto flex-1 min-h-0"
+            <div ref={chatterScrollRef} className="p-2 overflow-y-auto flex-1 min-h-0"
+              style={{ scrollbarWidth: 'none' }}
               onMouseEnter={() => { chatterHoveredRef.current = true }}
               onMouseLeave={() => { chatterHoveredRef.current = false }}
             >
@@ -2479,40 +2541,44 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                   Citizen voices appear after first turn
                 </div>
               )}
-              {allVoices.map((v, i) => {
-                const ring = sentimentRing(v.sentiment)
-                return (
-                  <div key={i} className="flex gap-2">
-                    <div className="shrink-0" style={{ position: 'relative', width: 30, height: 30 }}>
-                      <Avatar seed={v.name} size={30} ring={ring} />
-                      <div className="absolute bottom-0 right-0 rounded-full"
-                        style={{
-                          width: 7, height: 7,
-                          background: v.sentiment === 'approve' ? '#22c55e' : v.sentiment === 'disapprove' ? '#f87171' : '#e8a030',
-                          border: '1px solid #050d1b', boxShadow: `0 0 4px ${ring}`
-                        }} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span style={{ fontSize: 10, fontWeight: 700, color: '#7dd3fc' }}>{v.name}</span>
-                        <span style={{
-                          fontSize: 8, fontWeight: 700, color: '#4b6280',
-                          background: '#0b1929', border: '1px solid #1c3652',
-                          borderRadius: 3, padding: '0 3px', fontFamily: "'Rajdhani', sans-serif"
-                        }}>T{v.turnNum}</span>
-                        <span style={{ fontSize: 9, color: '#475569' }}>{v.demographics_summary}</span>
+              {allVoices.length > 0 && [0, 1].map(copy => (
+                <div key={copy} ref={copy === 0 ? chatterInnerRef : undefined} className="space-y-2.5" style={copy === 1 ? { paddingTop: 10 } : undefined}>
+                  {allVoices.map((v, i) => {
+                    const ring = sentimentRing(v.sentiment)
+                    return (
+                      <div key={`${copy}-${i}`} className="flex gap-2">
+                        <div className="shrink-0" style={{ position: 'relative', width: 30, height: 30 }}>
+                          <Avatar seed={v.name} size={30} ring={ring} />
+                          <div className="absolute bottom-0 right-0 rounded-full"
+                            style={{
+                              width: 7, height: 7,
+                              background: v.sentiment === 'approve' ? '#22c55e' : v.sentiment === 'disapprove' ? '#f87171' : '#e8a030',
+                              border: '1px solid #050d1b', boxShadow: `0 0 4px ${ring}`
+                            }} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span style={{ fontSize: 10, fontWeight: 700, color: '#7dd3fc' }}>{v.name}</span>
+                            <span style={{
+                              fontSize: 8, fontWeight: 700, color: '#4b6280',
+                              background: '#0b1929', border: '1px solid #1c3652',
+                              borderRadius: 3, padding: '0 3px', fontFamily: "'Rajdhani', sans-serif"
+                            }}>T{v.turnNum}</span>
+                            <span style={{ fontSize: 9, color: '#475569' }}>{v.demographics_summary}</span>
+                          </div>
+                          <div className="mt-1 px-2 py-1.5 rounded"
+                            style={{
+                              background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(28,54,82,0.6)',
+                              fontSize: 10, color: '#94a3b8', lineHeight: 1.5
+                            }}>
+                            {v.reaction}
+                          </div>
+                        </div>
                       </div>
-                      <div className="mt-1 px-2 py-1.5 rounded"
-                        style={{
-                          background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(28,54,82,0.6)',
-                          fontSize: 10, color: '#94a3b8', lineHeight: 1.5
-                        }}>
-                        {v.reaction}
-                      </div>
-                    </div>
-                  </div>
-                )
-              })}
+                    )
+                  })}
+                </div>
+              ))}
             </div>
           </div>
 
