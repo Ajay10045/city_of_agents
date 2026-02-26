@@ -262,7 +262,8 @@ def select_minister_candidates(
     def score(c: Citizen) -> float:
         return c.capability.competence * 0.5 + c.personality.ambition * 0.3 + c.capability.strategic_thinking * 0.2
 
-    pool_size = min(len(citizens), cabinet_size * 3)
+    # Cap pool size at 10 to match the maximum number of unique portrait assets
+    pool_size = min(len(citizens), min(10, cabinet_size * 3))
     candidates = sorted(citizens, key=score, reverse=True)[:pool_size]
     rng.shuffle(candidates)
     return candidates

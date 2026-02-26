@@ -4,11 +4,11 @@ import {
   Zap, Send, AlertTriangle, TrendingDown, Droplets,
   MapPin, Info,
   Newspaper, MessageCircle, TrendingUp, Loader2,
-  Volume2, VolumeX,
+  Volume2, VolumeX
 } from 'lucide-react'
 import {
   openConsultation, messageMinister, closeConsultation,
-  getPolicies, executeTurnStream,
+  getPolicies, executeTurnStreamV2
 } from '../api'
 import type {
   GameState, TurnResult, Policy, Minister, ActiveEvent,
@@ -27,7 +27,7 @@ const PANEL = {
 const HDR_LABEL = {
   fontFamily: "'Rajdhani', sans-serif",
   fontWeight: 700,
-  fontSize: 11,
+  fontSize: 13,
   letterSpacing: '0.15em',
   color: '#e8a030',
 } as const
@@ -58,63 +58,90 @@ function Avatar({ seed, size = 28, ring = '#1c3652' }: { seed: string; size?: nu
   )
 }
 
+// ─── Agent Avatar (Demographic Match) ────────────────────────────────────────
 
-// ─── WelfareRing ──────────────────────────────────────────────────────────────
+function getPortraitForMinister(name: string, ministers: Minister[]): string {
+  const m = ministers.find(can => can.name === name)
+  if (!m) return '/agents/generic/generic_male_mid_1.png'
+
+  let h = 0
+  for (let i = 0; i < name.length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0
+  h = Math.abs(h)
+
+  const isFemale = h % 2 === 0
+  const genderStr = isFemale ? 'female' : 'male'
+
+  const ageGroup = m.demographics?.age_group || '36-50'
+  let ageStr = 'mid'
+  if (ageGroup.includes('18') || ageGroup.includes('25') || ageGroup.includes('26') || ageGroup.includes('35')) {
+    ageStr = 'young'
+  } else if (ageGroup.includes('51') || ageGroup.includes('65') || ageGroup.includes('+')) {
+    ageStr = 'old'
+  }
+
+  let variant = 1
+  if (ageStr === 'young' || ageStr === 'mid') {
+    variant = ((h >> 1) % 2) + 1
+  }
+
+  return `/agents/generic/generic_${genderStr}_${ageStr}_${variant}.png`
+}
+
+function AgentAvatar({ seed, ministers = [], size = 28, ring = '#1c3652' }: { seed: string; ministers?: Minister[]; size?: number; ring?: string }) {
+  const src = getPortraitForMinister(seed, ministers)
+  return (
+    <img
+      src={src}
+      alt={seed}
+      className="rounded-full object-cover shrink-0"
+      style={{ width: size, height: size, border: `1.5px solid ${ring}`, background: '#0b1929' }}
+    />
+  )
+}
+
+// ─── WelfareCard ──────────────────────────────────────────────────────────────
 
 interface WelfareStat {
   label: string; score: number; delta: number
-  stroke: string; glow: string; trackColor: string
-  gradientId: string; gradientFrom: string; gradientTo: string
-  symbol: string; bg: string
+  color: string; icon: string
 }
 
-function WelfareRing({ stat }: { stat: WelfareStat }) {
-  const R = 30
-  const circ = 2 * Math.PI * R
-  const fill = (Math.max(0, Math.min(100, stat.score)) / 100) * circ
+function WelfareCard({ stat }: { stat: WelfareStat }) {
+  const deltaColor = stat.delta > 0 ? '#4ade80' : stat.delta < 0 ? '#f87171' : '#64748b'
+  const scoreColor = stat.score >= 65 ? '#4ade80' : stat.score >= 40 ? '#f59e0b' : '#f87171'
   return (
-    <div className="flex flex-col items-center gap-1.5 py-3 px-2 rounded-lg relative overflow-hidden"
-      style={{ background: stat.bg, border: `1px solid ${stat.stroke}33`, flex: 1 }}>
-      <div className="absolute top-0 left-0 right-0"
-        style={{ height: 2, background: `linear-gradient(90deg, ${stat.gradientFrom}, ${stat.gradientTo})` }} />
-      <div style={{ position: 'relative', width: 74, height: 74 }}>
-        <svg viewBox="0 0 74 74" width="74" height="74">
-          <defs>
-            <linearGradient id={stat.gradientId} x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor={stat.gradientFrom} />
-              <stop offset="100%" stopColor={stat.gradientTo} />
-            </linearGradient>
-          </defs>
-          <circle cx="37" cy="37" r={R} fill="none" stroke={stat.trackColor} strokeWidth="7" />
-          <circle cx="37" cy="37" r={R} fill="none"
-            stroke={`url(#${stat.gradientId})`} strokeWidth="7"
-            strokeLinecap="round"
-            strokeDasharray={`${fill} ${circ}`}
-            transform="rotate(-90 37 37)"
-            style={{ filter: `drop-shadow(0 0 6px ${stat.glow})` }}
-          />
-          {/* Symbol in center */}
-          <text x="37" y="33" textAnchor="middle" fontSize="14" fill={stat.stroke}>{stat.symbol}</text>
-          {/* Score in center */}
-          <text x="37" y="50" textAnchor="middle" fontSize="14" fontWeight="700"
-            fontFamily="Share Tech Mono" fill="white">{Math.round(stat.score)}</text>
-        </svg>
-      </div>
-      <div className="flex items-center gap-1">
+    <div style={{
+      flex: 1, padding: '12px 14px', borderRadius: 8,
+      background: 'rgba(255,255,255,0.025)',
+      border: `1px solid ${stat.color}28`,
+      display: 'flex', flexDirection: 'column', gap: 8,
+    }}>
+      {/* Header row: icon + label + delta */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span style={{
-          fontSize: 11, fontWeight: 700, fontFamily: "'Share Tech Mono', monospace",
-          color: stat.delta >= 0 ? '#22c55e' : '#f87171'
-        }}>
-          {stat.delta >= 0 ? `▲ +${Math.round(stat.delta)}` : `▼ ${Math.round(stat.delta)}`}
-        </span>
+          fontSize: 11, fontWeight: 700, color: '#64748b',
+          fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.12em', textTransform: 'uppercase',
+        }}>{stat.icon} {stat.label}</span>
+        {stat.delta !== 0 && (
+          <span style={{ fontSize: 10, fontWeight: 700, color: deltaColor, fontFamily: "'Share Tech Mono', monospace" }}>
+            {stat.delta > 0 ? `▲+${Math.round(stat.delta)}` : `▼${Math.round(stat.delta)}`}
+          </span>
+        )}
       </div>
-      <span className="text-gray-400"
-        style={{
-          fontSize: 10, fontWeight: 600, letterSpacing: '0.1em',
-          fontFamily: "'Rajdhani', sans-serif", textTransform: 'uppercase'
-        }}>
-        {stat.label}
-      </span>
+      {/* Score number */}
+      <div style={{
+        fontSize: 36, fontWeight: 700, lineHeight: 1,
+        fontFamily: "'Share Tech Mono', monospace", color: scoreColor,
+      }}>{Math.round(stat.score)}</div>
+      {/* Bar */}
+      <div style={{ height: 5, background: 'rgba(255,255,255,0.06)', borderRadius: 3, overflow: 'hidden' }}>
+        <div style={{
+          height: '100%', width: `${Math.max(0, Math.min(100, stat.score))}%`,
+          background: scoreColor, borderRadius: 3,
+          boxShadow: `0 0 6px ${scoreColor}60`,
+          transition: 'width 0.7s ease',
+        }} />
+      </div>
     </div>
   )
 }
@@ -179,6 +206,154 @@ function ScorecardOverlay({ sc }: { sc: GovernanceScorecard }) {
         </div>
         <div style={{ fontSize: 11, color: '#64748b', lineHeight: 1.6, textAlign: 'center' }}>
           {sc.summary}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Minister Picker Modal ────────────────────────────────────────────────────
+
+function MinisterPickerModal({
+  policy, ministers, onSelect, onBack,
+}: {
+  policy: Policy
+  ministers: Minister[]
+  onSelect: (ministerId: string) => void
+  onBack: () => void
+}) {
+  const MINISTER_COLORS = ['#38bdf8', '#22c55e', '#f59e0b', '#a855f7', '#f87171', '#34d399']
+
+  // Sort: portfolio match first, then by competence desc
+  const sorted = [...ministers].sort((a, b) => {
+    const aMatch = a.portfolio === policy.portfolio || (a.extra_portfolios ?? []).includes(policy.portfolio)
+    const bMatch = b.portfolio === policy.portfolio || (b.extra_portfolios ?? []).includes(policy.portfolio)
+    if (aMatch && !bMatch) return -1
+    if (!aMatch && bMatch) return 1
+    return (b.capability?.competence ?? 50) - (a.capability?.competence ?? 50)
+  })
+  const recommended = sorted[0]?.id
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 200,
+      background: 'rgba(0,0,0,0.75)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+    }}>
+      <div style={{
+        background: 'linear-gradient(180deg, #071320 0%, #050d1b 100%)',
+        border: '1px solid #1c3652',
+        borderRadius: 10, width: 420,
+        boxShadow: '0 0 60px rgba(56,189,248,0.08)',
+        overflow: 'hidden',
+      }}>
+        {/* Header */}
+        <div style={{ padding: '14px 18px 12px', borderBottom: '1px solid #1c3652' }}>
+          <div style={{ fontSize: 9, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.12em', color: '#4b6280', marginBottom: 4 }}>
+            ASSIGN MINISTER
+          </div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: '#fff' }}>{policy.name}</div>
+          <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>{policy.portfolio} · ₹{policy.budget_cost} Cr</div>
+        </div>
+
+        {/* Minister list */}
+        <div style={{ padding: '10px 14px', maxHeight: 420, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {sorted.map((m, idx) => {
+            const col = MINISTER_COLORS[idx % MINISTER_COLORS.length]
+            const competence = m.capability?.competence ?? 50
+            const loyalty = m.loyalty ?? 50
+            const scandalRisk = m.scandal_exposure ?? 0
+            const isRecommended = m.id === recommended
+            const portfolioMatch = m.portfolio === policy.portfolio || (m.extra_portfolios ?? []).includes(policy.portfolio)
+
+            return (
+              <div key={m.id} style={{
+                background: 'rgba(255,255,255,0.03)',
+                border: `1px solid ${isRecommended ? col + '55' : '#1c3652'}`,
+                borderRadius: 8, padding: '10px 12px',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <Avatar seed={m.name} size={36} ring={col} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: '#e2e8f0' }}>{m.name}</span>
+                      {isRecommended && (
+                        <span style={{
+                          fontSize: 8, padding: '1px 5px', borderRadius: 10,
+                          background: `${col}22`, border: `1px solid ${col}44`, color: col,
+                          fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, letterSpacing: '0.06em',
+                        }}>★ BEST FIT</span>
+                      )}
+                      {!portfolioMatch && (
+                        <span style={{
+                          fontSize: 8, padding: '1px 5px', borderRadius: 10,
+                          background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)',
+                          color: '#f59e0b', fontFamily: "'Rajdhani', sans-serif", fontWeight: 700,
+                        }}>OUT OF PORTFOLIO</span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 9, color: '#475569' }}>{m.portfolio}</div>
+                  </div>
+                </div>
+
+                {/* Stats */}
+                <div style={{ display: 'flex', gap: 12, marginTop: 10, flexWrap: 'wrap' }}>
+                  {[
+                    { label: 'Competence', value: competence, color: '#38bdf8' },
+                    { label: 'Loyalty', value: loyalty, color: '#22c55e' },
+                    { label: 'Scandal Risk', value: scandalRisk, color: scandalRisk > 50 ? '#f87171' : '#475569' },
+                  ].map(s => (
+                    <div key={s.label} style={{ flex: 1, minWidth: 80 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                        <span style={{ fontSize: 8, color: '#475569', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.06em' }}>{s.label.toUpperCase()}</span>
+                        <span style={{ fontSize: 9, fontWeight: 700, color: s.color, fontFamily: "'Share Tech Mono', monospace" }}>{Math.round(s.value)}</span>
+                      </div>
+                      <div style={{ height: 3, background: '#0b1929', borderRadius: 2, overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${s.value}%`, background: s.color, borderRadius: 2 }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Personality hint */}
+                {m.personality && (
+                  <div style={{ marginTop: 8, fontSize: 9, color: '#334155', lineHeight: 1.4, fontStyle: 'italic' }}>
+                    {[
+                      m.personality.integrity < 35 && 'Low integrity — watch for leakage',
+                      m.personality.corruption_tolerance > 65 && 'High corruption tolerance',
+                      m.personality.empathy > 65 && 'High empathy — community-focused',
+                      competence < 40 && 'May underdeliver',
+                      loyalty < 40 && 'Loyalty risk — may defect',
+                    ].filter(Boolean).slice(0, 2).join(' · ')}
+                  </div>
+                )}
+
+                <button
+                  onClick={() => onSelect(m.id)}
+                  style={{
+                    marginTop: 10, width: '100%',
+                    background: `linear-gradient(90deg, ${col}22, ${col}11)`,
+                    border: `1px solid ${col}44`, borderRadius: 5,
+                    color: col, fontSize: 10, fontWeight: 700,
+                    fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.1em',
+                    padding: '6px 0', cursor: 'pointer',
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.background = `${col}33` }}
+                  onMouseLeave={e => { e.currentTarget.style.background = `linear-gradient(90deg, ${col}22, ${col}11)` }}
+                >
+                  ASSIGN {m.name.split(' ')[0].toUpperCase()}
+                </button>
+              </div>
+            )
+          })}
+        </div>
+
+        <div style={{ padding: '10px 18px', borderTop: '1px solid #1c3652' }}>
+          <button onClick={onBack} style={{
+            background: 'none', border: '1px solid #1c3652', borderRadius: 5,
+            color: '#475569', fontSize: 10, fontFamily: "'Rajdhani', sans-serif",
+            letterSpacing: '0.08em', padding: '5px 14px', cursor: 'pointer',
+          }}>← BACK TO POLICIES</button>
         </div>
       </div>
     </div>
@@ -286,6 +461,13 @@ interface ChatMsg {
   ringColor: string
   seed: string
   isSystem?: boolean
+  isSystemFallback?: boolean
+}
+
+interface RoundReply {
+  name: string
+  portfolio: string
+  text: string
 }
 
 interface TurnEntry {
@@ -406,18 +588,18 @@ function parseMentioned(msg: string, ministers: Minister[]): number[] {
   return mentioned
 }
 
-const BROADCAST_RE = /\b(@all|@everyone|@ all|@ everyone)\b/i
+const BROADCAST_RE = /(?:^|\s)@\s*(?:all|everyone)(?:\s|$)/i
 
 /**
  * Select which ministers should respond.
  *
  * Modes:
- *  - Direct @name  → that minister always replies; up to 1 highly-relevant
- *    other may naturally jump in (score ≥ 3)
- *  - @all / @everyone  → top 3 by relevance (never all of them)
- *  - No mention  → top 2 by relevance; minimum 1 (most relevant)
+ *  - Direct @name  → only that minister replies (ends cabinet session)
+ *  - @all / @everyone  → all ministers respond, ordered by relevance
+ *  - Cabinet in session (cabinetHot) → top 2-3 relevant ministers jump in
+ *  - No session, no mention → most relevant minister; 40% chance second joins
  */
-function selectResponders(msg: string, ministers: Minister[]): number[] {
+function selectResponders(msg: string, ministers: Minister[], cabinetHot = false): number[] {
   const lower = msg.toLowerCase()
   const directMentions = parseMentioned(msg, ministers)
   const isBroadcast = BROADCAST_RE.test(msg)
@@ -426,25 +608,37 @@ function selectResponders(msg: string, ministers: Minister[]): number[] {
   const scored = ministers.map((m, i) => ({ i, score: relevanceScore(m, lower) }))
   scored.sort((a, b) => b.score - a.score)
 
+  // Direct @name → only that minister (closes cabinet session)
   if (directMentions.length > 0) {
-    // Directly addressed ministers always respond
-    const result = [...new Set(directMentions)]
-    // One naturally-relevant minister may jump in if their score is strong enough
-    // and they weren't already addressed
-    const topOther = scored.find(s => !result.includes(s.i) && s.score >= 3)
-    if (topOther && ministers.length > result.length) result.push(topOther.i)
+    return [...new Set(directMentions)]
+  }
+
+  // @all → everyone speaks
+  if (isBroadcast) {
+    return scored.map(s => s.i)
+  }
+
+  // Cabinet still in session from a prior @all → relevant ministers stay engaged
+  if (cabinetHot) {
+    // Always include the top scorer; others join if score ≥ 2 (loosely relevant)
+    const result = [scored[0].i]
+    for (let k = 1; k < scored.length && result.length < 3; k++) {
+      if (scored[k].score >= 2) result.push(scored[k].i)
+    }
+    // Guarantee at least 2 so the room feels active
+    if (result.length < 2 && scored.length > 1) result.push(scored[1].i)
     return result
   }
 
-  if (isBroadcast) {
-    // @all → top 3 most relevant; minimum 2 (cabinet-wide question still needs substance)
-    const cap = Math.min(3, Math.max(2, ministers.length - 1))
-    return scored.slice(0, cap).map(s => s.i)
+  // No session, no mention → most relevant minister; second joins rarely
+  const first = scored[0]
+  if (!first) return []
+  const result = [first.i]
+  const second = scored[1]
+  if (second && second.score >= 3 && Math.random() < 0.4) {
+    result.push(second.i)
   }
-
-  // No explicit address → top 2 most relevant, minimum 1
-  const cap = Math.min(2, ministers.length)
-  return scored.slice(0, cap).map(s => s.i)
+  return result
 }
 
 
@@ -511,443 +705,234 @@ function TurnPhaseCard({
         <ExecScoreBadge score={tr.execution_score} />
       </div>
 
-      {/* Expanded numbered sections */}
+      {/* Expanded — narrative-first v2 layout */}
       {entry.expanded && (() => {
         const execPct = Math.round(tr.execution_score * 100)
         const execColor = tr.execution_score >= 0.7 ? '#22c55e' : tr.execution_score >= 0.45 ? '#e8a030' : '#f87171'
+        const execLabel = tr.execution_score >= 0.7 ? 'STRONG DELIVERY' : tr.execution_score >= 0.45 ? 'PARTIAL DELIVERY' : 'POOR DELIVERY'
+        const execMinister = findMinisterForPortfolio(ministers, tr.major_policy?.portfolio ?? '')
+        const fmt = (k: string) => k.replace(/_/g, ' ')
         const netTreasury = (tr.tax_revenue ?? 0) - (tr.major_policy?.budget_cost ?? 0) - (tr.interest_paid ?? 0) - (tr.budget_stolen ?? 0)
         const sideEffectEntries = Object.entries(tr.side_effect_deltas ?? {}).filter(([, v]) => Math.abs(v) >= 0.5)
-        const fmt = (k: string) => k.replace(/_/g, ' ')
+        const approvalBefore = Math.round(tr.approval_before ?? tr.interim_approval)
+        const approvalAfter = Math.round(tr.interim_approval)
+        const approvalDelta = approvalAfter - approvalBefore
+        const approvalColor = approvalDelta > 0 ? '#22c55e' : approvalDelta < 0 ? '#f87171' : '#64748b'
 
-        // ── Dynamic reasoning helpers ──────────────────────────────────────────
-        const execMinister = findMinisterForPortfolio(ministers, tr.major_policy?.portfolio ?? '')
-        const cap = execMinister?.capability as Record<string, number> | undefined
-        const pers = execMinister?.personality as Record<string, number> | undefined
-        const p = tr.city_params_before ?? {}
-
-        // Approximate minister score (mirrors engine formula)
-        const portfolioCount = 1 + (execMinister?.extra_portfolios?.length ?? 0)
-        const mScoreRaw = execMinister && cap && pers
-          ? ((cap.competence ?? 50) * 0.35 + (cap.managerial_skill ?? 50) * 0.30
-            + (pers.conscientiousness ?? 50) * 0.20 + (cap.bureaucratic_navigation ?? 50) * 0.15) / 100
-          : null
-        const mPenalty = portfolioCount >= 3 ? 0.75 : portfolioCount === 2 ? 0.85 : 1.0
-        const mScore = mScoreRaw !== null ? mScoreRaw * mPenalty : null
-
-        // Approximate city filter score
-        const instBase = ((p.courts_and_legal ?? 50) * 0.40 + (p.schools_and_universities ?? 50) * 0.35
-          + (p.police_and_emergency ?? 50) * 0.25) / 100 * 100
-        const cScore = ((p.admin_efficiency ?? 50) * 0.40 + (p.anti_corruption ?? 50) * 0.30 + instBase * 0.30) / 100
-
-        const execReason = (() => {
-          const pct = Math.round(tr.execution_score * 100)
-          const name = execMinister?.name?.split(' ')[0] ?? 'Minister'
-          const comp = Math.round(cap?.competence ?? 50)
-          const adminEff = Math.round(p.admin_efficiency ?? 50)
-
-          if (pct >= 75) {
-            if (mScore && mScore > 0.7 && cScore > 0.6)
-              return `${name} (competence ${comp}) and strong city institutions aligned — smooth delivery`
-            return `${name}'s solid capabilities overcame moderate city constraints`
-          }
-          if (portfolioCount >= 3)
-            return `${name} is juggling ${portfolioCount} portfolios — 25% penalty applied`
-          if (portfolioCount === 2)
-            return `${name} managing two portfolios took a 15% efficiency hit this turn`
-          if (mScore && mScore < 0.5 && cScore > 0.6)
-            return `City institutions were ready, but ${name}'s capability (competence ${comp}) was the bottleneck`
-          if (mScore && mScore > 0.6 && cScore < 0.45)
-            return `${name} was capable, but admin efficiency (${adminEff}) and weak institutions slowed delivery`
-          if (adminEff < 35)
-            return `Bureaucratic breakdown — admin efficiency at ${adminEff} made every step harder`
-          if (mScore && mScore < 0.45)
-            return `${name}'s competence (${comp}) couldn't overcome the policy complexity`
-          return `Moderate delivery — both ${name} and city systems had room to improve`
-        })()
-
-        const budgetReason = (() => {
-          const stolen = tr.budget_stolen ?? 0
-          const taxRev = tr.tax_revenue ?? 0
-          const policyCost = tr.major_policy?.budget_cost ?? 0
-          const intPaid = tr.interest_paid ?? 0
-          const net = taxRev - policyCost - intPaid - stolen
-          const intPct = taxRev > 0 ? Math.round((intPaid / taxRev) * 100) : 0
-
-          if (stolen > 10) {
-            const integrity = Math.round(pers?.integrity ?? 50)
-            const antiCorr = Math.round(p.anti_corruption ?? 50)
-            return `₹${fmtNum(stolen)} Cr leaked — ${execMinister?.name?.split(' ')[0] ?? 'minister'} integrity (${integrity}) + anti-corruption at ${antiCorr} opened the window`
-          }
-          if (stolen > 2) {
-            const hints: string[] = []
-            if ((pers?.integrity ?? 100) < 50) hints.push('low integrity')
-            if ((p.police_and_emergency ?? 100) < 45) hints.push('weak enforcement')
-            if ((p.anti_corruption ?? 100) < 45) hints.push('poor oversight')
-            return `Minor leakage — ${hints.join(', ')} created a small corruption window`
-          }
-          if (intPaid > 0 && intPct > 40)
-            return `Debt servicing consumed ${intPct}% of tax revenue — outstanding debt is straining the treasury`
-          if (net >= 0)
-            return `Revenue covered all costs — net gain of ₹${fmtNum(net)} Cr this turn`
-          return `Policy cost exceeded revenue — treasury drew down by ₹${fmtNum(Math.abs(net))} Cr`
-        })()
-
-        const paramReason = (() => {
-          const neg = paramDeltas.filter(d => d.diff < 0).map(d => fmt(d.key))
-          const pos = paramDeltas.filter(d => d.diff > 0).map(d => fmt(d.key))
-          const negSE = sideEffectEntries.filter(([, v]) => v < 0).map(([k]) => fmt(k))
-          const policyName = tr.major_policy?.name ?? 'the policy'
-          if (pos.length > 0 && negSE.length > 0)
-            return `${policyName} boosted ${pos[0]}, but spilled into ${negSE.slice(0, 2).join(', ')} — unintended consequences`
-          if (pos.length > 0 && neg.length === 0)
-            return `Clean execution — targeted gains with no adverse side effects this turn`
-          if (neg.length > 0 && pos.length === 0)
-            return `${neg[0]} resisted improvement — city conditions in this sector are entrenched`
-          return `Mixed impact — some parameters moved, others absorbed the intervention`
-        })()
-
-        const attackDetail = (() => {
-          const attack = tr.opposition_attack ?? ''
-          const pct = Math.round(tr.execution_score * 100)
-          const tension = Math.round(tr.communal_tension_after ?? 0)
-          const debtAfter = tr.outstanding_debt_after ?? 0
-          const stolen = tr.budget_stolen ?? 0
-          const crises = tr.events_triggered?.filter(e => e.type === 'crisis').length ?? 0
-          if (attack.toLowerCase().includes('delivery') || attack.toLowerCase().includes('failure'))
-            return `Execution was ${pct}% — opposition citing poor delivery`
-          if (attack.toLowerCase().includes('corruption'))
-            return stolen > 0 ? `Corruption window: ₹${fmtNum(stolen)} Cr leaked this turn` : `Corruption window opened — cabinet integrity under scrutiny`
-          if (attack.toLowerCase().includes('crisis') || attack.toLowerCase().includes('blame'))
-            return `${crises > 0 ? crises : 'Active'} crisis${crises !== 1 ? 'es' : ''} this turn — opposition demanding accountability`
-          if (attack.toLowerCase().includes('fiscal') || attack.toLowerCase().includes('debt'))
-            return `Outstanding debt ₹${fmtNum(debtAfter)} Cr — opposition calling it reckless`
-          if (attack.toLowerCase().includes('populist') || attack.toLowerCase().includes('promise'))
-            return `Opposition bypassing policy debate with direct voter promises`
-          if (attack.toLowerCase().includes('identity') || attack.toLowerCase().includes('mobiliz'))
-            return `Communal tension at ${tension} — opposition exploiting divisions`
-          return `Opposition adapted their strategy to current city vulnerabilities`
-        })()
-
-        const counterDetail = (() => {
-          const cur = Math.round(tr.interim_approval)
-          const prev = Math.round(tr.approval_before ?? tr.interim_approval)
-          const delta = cur - prev
-          const sign = delta > 0 ? '+' : ''
-          if (delta > 2) return `approval ${sign}${delta}% — framing resonated with voters`
-          if (delta >= 0) return `approval ${sign}${delta}% — holding ground`
-          return `approval ${sign}${delta}% — facing pushback despite counter-narrative`
-        })()
-
-        const approvalReason = (() => {
-          const cur = Math.round(tr.interim_approval)
-          const prev = Math.round(tr.approval_before ?? tr.interim_approval)
-          const delta = cur - prev
-          const ward = tr.ward_report ?? []
-          const hotspots = ward.filter(w => w.hotspot).map(w => w.group_name)
-          const brightSpots = ward.filter(w => w.bright_spot).map(w => w.group_name)
-          if (delta > 3 && brightSpots.length > 0)
-            return `${brightSpots[0]} and ${brightSpots.length - 1 > 0 ? `${brightSpots.length - 1} other group${brightSpots.length > 2 ? 's' : ''}` : 'others'} responded positively — approval up ${delta}%`
-          if (delta > 1) return `Modest approval gain of +${delta}% — delivery is building credibility`
-          if (delta < -2 && hotspots.length > 0)
-            return `${hotspots[0]} dissatisfied — this turn's trade-offs hit them hardest`
-          if (delta < 0) return `Slight approval dip of ${delta}% — some demographics feel the costs`
-          return `Approval held steady — no major wins or losses in public perception`
-        })()
-
-        // Decay: params not in actualDeltas nor sideEffects are decaying
-        const protectedParams = new Set([
-          ...Object.keys(tr.actual_deltas ?? {}),
-          ...Object.keys(tr.side_effect_deltas ?? {}),
-        ])
-        const allParams = Object.keys(tr.city_params_before ?? {})
-        const decayingParams = allParams.filter(k => !protectedParams.has(k))
-
-        const SectionLabel = ({ num, text }: { num: string; text: string }) => (
-          <div className="flex items-center gap-1.5" style={{ marginBottom: 5 }}>
-            <span style={{
-              fontSize: 8, fontWeight: 700, color: '#e8a030', fontFamily: "'Rajdhani', sans-serif",
-              letterSpacing: '0.12em', minWidth: 14, textAlign: 'right',
-            }}>{num}</span>
-            <span style={{
-              fontSize: 8, fontWeight: 700, color: '#4b6280',
-              fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.12em', textTransform: 'uppercase'
-            }}>
-              {text}
-            </span>
-          </div>
-        )
-
-        const Reason = ({ text }: { text: string }) => (
-          <div style={{ fontSize: 9, color: '#4b6280', fontStyle: 'italic', marginTop: 3 }}>{text}</div>
-        )
-
-        // Score bar row helper
-        const ScoreRow = ({ label, value, max = 1, color, note }: { label: string; value: number; max?: number; color: string; note?: string }) => (
-          <div className="flex items-center gap-2">
-            <span style={{ fontSize: 9, color: '#4b6280', minWidth: 90 }}>{label}</span>
-            <MiniBar value={(value / max) * 100} color={color} width={52} />
-            <span style={{ fontSize: 9, fontFamily: "'Share Tech Mono', monospace", color, fontWeight: 700, minWidth: 30 }}>
-              {value < 1 && max === 1 ? value.toFixed(3) : `${Math.round(value)}%`}
-            </span>
-            {note && <span style={{ fontSize: 8, color: '#4b6280', fontStyle: 'italic' }}>{note}</span>}
-          </div>
+        const SLabel = ({ text, color = '#4b6280' }: { text: string; color?: string }) => (
+          <div style={{
+            fontSize: 8, fontWeight: 700, color, fontFamily: "'Rajdhani', sans-serif",
+            letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 5,
+          }}>{text}</div>
         )
 
         return (
-          <div style={{ padding: '8px 12px 12px', paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ padding: '10px 14px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
 
-            {/* ① MINOR ACTION */}
-            {tr.minor_action && (() => {
-              const ma = tr.minor_action
-              const typeLabels: Record<string, string> = {
-                governance_upkeep: '⚙ Governance Upkeep',
-                banking: '◈ Budget Banking',
-                maintenance: '⛏ Sector Maintenance',
-                press_conference: '◉ Press Conference',
-                emergency_fund: '⚡ Emergency Fund',
-                reshuffle: '⟲ Cabinet Reshuffle',
-              }
-              const typeEffects: Record<string, string> = {
-                governance_upkeep: 'admin efficiency, anti-corruption & media freedom each +1.0',
-                banking: `+₹20 Cr banked — skipped policy spend this turn`,
-                maintenance: ma.target ? `${fmt(ma.target)} protected from decay` : 'sector shielded from decay',
-                press_conference: ma.target ? `${ma.target} group alignment boosted` : 'public outreach executed',
-                emergency_fund: ma.budget > 0 ? `₹${fmtNum(ma.budget)} Cr emergency allocation` : 'crisis funds deployed',
-                reshuffle: 'cabinet restructured — loyalty and portfolios updated',
-              }
-              const label = typeLabels[ma.type] ?? ma.type.replace(/_/g, ' ')
-              const effect = typeEffects[ma.type] ?? ''
-              return (
-                <div>
-                  <SectionLabel num="①" text="Minor Action" />
-                  <div className="flex items-center gap-2">
-                    <span style={{ fontSize: 10, color: '#c4a35a', fontWeight: 700, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.05em' }}>
-                      {label}
-                    </span>
-                    <span style={{ fontSize: 9, color: '#4b6280' }}>→</span>
-                    <span style={{ fontSize: 9, color: '#64748b', fontStyle: 'italic' }}>{effect}</span>
+            {/* ── EXECUTION HERO ─────────────────────────────────────────── */}
+            <div style={{
+              padding: '8px 12px', borderRadius: 6,
+              background: `linear-gradient(135deg, ${execColor}0d, transparent)`,
+              border: `1px solid ${execColor}33`,
+            }}>
+              {/* Top row: minister avatar + name (prominent) + exec % */}
+              <div className="flex items-center gap-3" style={{ marginBottom: 6 }}>
+                {execMinister && <Avatar seed={execMinister.name} size={30} ring={execColor} />}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, color: '#e2e8f0', fontWeight: 700, lineHeight: 1.2 }}>
+                    {execMinister?.name ?? 'Minister'}
+                  </div>
+                  <div style={{ fontSize: 9, color: '#4b6280', marginTop: 1 }}>
+                    {tr.major_policy?.portfolio}
                   </div>
                 </div>
-              )
-            })()}
-
-            {/* ② IMPLEMENTATION ENGINE */}
-            <div>
-              <SectionLabel num="②" text="Implementation" />
-              {/* Minister header */}
-              {execMinister && (
-                <div className="flex items-center gap-2" style={{ marginBottom: 6 }}>
-                  <span style={{ fontSize: 10, color: '#cbd5e1', fontWeight: 600 }}>{execMinister.name}</span>
-                  <span style={{ fontSize: 8, color: '#4b6280' }}>|</span>
-                  <span style={{ fontSize: 9, color: '#4b6280' }}>{tr.major_policy?.portfolio}</span>
-                  {portfolioCount > 1 && (
-                    <span style={{
-                      fontSize: 8, padding: '1px 5px', borderRadius: 3,
-                      background: 'rgba(251,146,60,0.12)', border: '1px solid rgba(251,146,60,0.3)',
-                      color: '#fb923c', fontWeight: 600,
-                    }}>{portfolioCount} portfolios</span>
-                  )}
-                </div>
-              )}
-              {/* Score breakdown */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginBottom: 6 }}>
-                {mScoreRaw !== null && (
-                  <ScoreRow
-                    label="Minister score"
-                    value={mScoreRaw}
-                    color="#60a5fa"
-                    note={mPenalty < 1 ? `×${mPenalty} overload penalty` : undefined}
-                  />
-                )}
-                <ScoreRow label="City capacity" value={cScore} color="#818cf8" />
-                <div style={{ height: 1, background: '#1c3652', margin: '2px 0' }} />
-                <div className="flex items-center gap-2">
-                  <span style={{ fontSize: 9, color: '#4b6280', minWidth: 90 }}>Execution</span>
-                  <div style={{ flex: 1, height: 5, background: '#0a1a30', borderRadius: 3, overflow: 'hidden', maxWidth: 52 }}>
-                    <div style={{
-                      width: `${execPct}%`, height: '100%', background: execColor,
-                      borderRadius: 3, boxShadow: `0 0 6px ${execColor}66`
-                    }} />
-                  </div>
-                  <span style={{ fontSize: 11, fontFamily: "'Share Tech Mono', monospace", color: execColor, fontWeight: 700, minWidth: 34 }}>
-                    {execPct}%
-                  </span>
-                  {mScoreRaw !== null && (
-                    <span style={{ fontSize: 8, color: '#4b6280', fontStyle: 'italic' }}>
-                      0.55×M + 0.45×C
-                    </span>
-                  )}
+                {/* Execution % */}
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{
+                    fontSize: 24, fontFamily: "'Share Tech Mono', monospace",
+                    color: execColor, fontWeight: 700, lineHeight: 1,
+                  }}>{execPct}%</div>
+                  <div style={{
+                    fontSize: 7, color: execColor, fontFamily: "'Rajdhani', sans-serif",
+                    letterSpacing: '0.12em', fontWeight: 700,
+                  }}>{execLabel}</div>
                 </div>
               </div>
-              <Reason text={execReason} />
-              {/* Delivery targets */}
-              {((tr as any).delivery_details ?? tr.delivery_targets ?? []).length > 0 && (
-                <div style={{ marginTop: 5, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  {((tr as any).delivery_details ?? tr.delivery_targets ?? [] as any[]).map((d: any, i: number) => {
-                    const ratio = d.completion_ratio ?? 1
-                    const col = ratio >= 0.8 ? '#22c55e' : ratio >= 0.5 ? '#e8a030' : '#f87171'
-                    return (
-                      <div key={i} className="flex items-center justify-between" style={{ fontSize: 9, color: '#64748b' }}>
-                        <span>{d.label ?? d.key}</span>
-                        <span style={{ color: col, fontFamily: "'Share Tech Mono', monospace", fontWeight: 600 }}>
-                          {Math.round(d.delivered ?? 0)}{d.unit ? ` ${d.unit}` : ''} / {Math.round(d.proposed ?? 0)}{d.unit ? ` ${d.unit}` : ''}
-                        </span>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-              {/* Side effects */}
-              {sideEffectEntries.length > 0 && (
-                <div style={{ marginTop: 5, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                  {sideEffectEntries.map(([k, v]) => (
-                    <span key={k} style={{
-                      fontSize: 9, padding: '1px 6px', borderRadius: 3,
-                      background: v < 0 ? 'rgba(248,113,113,0.10)' : 'rgba(34,197,94,0.10)',
-                      color: v < 0 ? '#fca5a5' : '#86efac',
-                      border: `1px solid ${v < 0 ? '#7f1d1d44' : '#14532d44'}`,
-                    }}>
-                      {fmt(k)} {v > 0 ? '+' : ''}{Math.round(v)}
-                    </span>
-                  ))}
-                  <Reason text={paramReason} />
+              {/* Execution bar */}
+              <div style={{ height: 4, background: '#0a1a30', borderRadius: 2, overflow: 'hidden', marginBottom: 7 }}>
+                <div style={{
+                  width: `${execPct}%`, height: '100%', background: execColor,
+                  borderRadius: 2, boxShadow: `0 0 8px ${execColor}88`,
+                  transition: 'width 0.6s ease',
+                }} />
+              </div>
+              {/* On The Ground Narrative */}
+              {tr.delivery_narrative && (
+                <div style={{ padding: '8px 10px', background: 'rgba(56,189,248,0.06)', borderRadius: 4, border: '1px solid rgba(56,189,248,0.15)', marginTop: 8 }}>
+                  <div style={{ fontSize: 7, color: '#38bdf8', letterSpacing: '0.12em', fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, marginBottom: 4 }}>ON THE GROUND</div>
+                  <div style={{ fontSize: 10, color: '#e0f2fe', lineHeight: 1.6, fontStyle: 'italic' }}>
+                    "{tr.delivery_narrative}"
+                  </div>
                 </div>
               )}
             </div>
 
-            {/* ③ BUDGET */}
-            <div>
-              <SectionLabel num="③" text="Budget" />
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '3px 12px' }}>
-                {[
-                  { label: 'Tax Revenue', value: `+₹${fmtNum(tr.tax_revenue ?? 0)} Cr`, color: '#4ade80' },
-                  { label: 'Policy Cost', value: `-₹${fmtNum(tr.major_policy?.budget_cost ?? 0)} Cr`, color: '#f87171' },
-                  tr.interest_paid > 0 ? { label: 'Interest', value: `-₹${fmtNum(tr.interest_paid)} Cr`, color: '#fb923c' } : null,
-                  tr.budget_stolen > 0 ? { label: 'Leaked', value: `-₹${fmtNum(tr.budget_stolen)} Cr`, color: '#fb923c' } : null,
-                  { label: 'Treasury', value: `₹${fmtNum(tr.treasury_after ?? 0)} Cr`, color: '#f0c040' },
-                  {
-                    label: 'Net this turn',
-                    value: netTreasury >= 0 ? `+₹${fmtNum(netTreasury)} Cr` : `-₹${fmtNum(Math.abs(netTreasury))} Cr`,
-                    color: netTreasury >= 0 ? '#4ade80' : '#f87171',
-                  },
-                ].filter(Boolean).map((row, i) => (
-                  <div key={i} className="flex items-center justify-between">
-                    <span style={{ fontSize: 9, color: '#4b6280' }}>{row!.label}</span>
-                    <span style={{ fontSize: 9, fontFamily: "'Share Tech Mono', monospace", color: row!.color, fontWeight: 600 }}>{row!.value}</span>
-                  </div>
-                ))}
-              </div>
-              {/* Time profile split */}
-              {tr.major_policy?.time_profile && Object.keys(tr.major_policy.time_profile).length > 1 && (() => {
-                const cost = tr.major_policy.budget_cost ?? 0
-                const entries = Object.entries(tr.major_policy.time_profile)
-                return (
-                  <div style={{ marginTop: 5, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                    {entries.map(([turn, frac]) => {
-                      const turnNum = parseInt(turn.replace('turn_', ''))
-                      const amt = Math.round(cost * frac)
-                      const isNow = turnNum === 0
-                      return (
-                        <span key={turn} style={{
-                          fontSize: 8, padding: '1px 6px', borderRadius: 3,
-                          background: isNow ? 'rgba(240,192,64,0.08)' : 'rgba(75,98,128,0.12)',
-                          color: isNow ? '#f0c040' : '#4b6280',
-                          border: `1px solid ${isNow ? 'rgba(240,192,64,0.25)' : 'rgba(75,98,128,0.3)'}`,
-                        }}>
-                          {isNow ? 'Now' : `+${turnNum}t`} · {Math.round(frac * 100)}% · ₹{fmtNum(amt)} Cr
-                        </span>
-                      )
-                    })}
-                  </div>
-                )
-              })()}
-              <Reason text={budgetReason} />
-            </div>
-
-            {/* ④ PARAMETER CHANGES + DECAY */}
-            {(paramDeltas.length > 0 || decayingParams.length > 0) && (
+            {/* ── CITY IMPACT ─────────────────────────────────────────────── */}
+            {(paramDeltas.length > 0 || sideEffectEntries.length > 0) && (
               <div>
-                <SectionLabel num="④" text="City Parameters" />
-                {/* Policy effects */}
-                {paramDeltas.length > 0 && (
-                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 5 }}>
+                <SLabel text="City Impact" />
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(180px, 3fr) minmax(200px, 4fr)', gap: 16, alignItems: 'flex-start' }}>
+
+                  {/* Left Column: Parameter Deltas */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                     {paramDeltas.map(d => (
-                      <span key={d.key} style={{
-                        fontSize: 9, padding: '1px 6px', borderRadius: 3,
-                        background: d.diff > 0 ? 'rgba(34,197,94,0.10)' : 'rgba(248,113,113,0.10)',
-                        color: d.diff > 0 ? '#86efac' : '#fca5a5',
-                        border: `1px solid ${d.diff > 0 ? '#14532d44' : '#7f1d1d44'}`,
-                      }}>
-                        {fmt(d.key)} {d.diff > 0 ? '+' : ''}{d.diff}
-                      </span>
+                      <div key={d.key} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'center', gap: 6, padding: '2px 0' }}>
+                        <span style={{ fontSize: 9, color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fmt(d.key)}</span>
+                        <span style={{
+                          fontSize: 10, fontFamily: "'Share Tech Mono', monospace", fontWeight: 700,
+                          color: d.diff > 0 ? '#86efac' : '#fca5a5',
+                          minWidth: 32, textAlign: 'right',
+                        }}>{d.diff > 0 ? '+' : ''}{d.diff}</span>
+                        <span style={{ fontSize: 8, color: d.diff > 0 ? '#22c55e' : '#ef4444', width: 10, textAlign: 'center' }}>{d.diff > 0 ? '↑' : '↓'}</span>
+                      </div>
                     ))}
+                    {sideEffectEntries.length > 0 && (
+                      <>
+                        <div style={{ height: 1, background: '#1c3652', margin: '2px 0' }} />
+                        {sideEffectEntries.map(([k, v]) => (
+                          <div key={k} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'center', gap: 6, padding: '2px 0' }}>
+                            <span style={{ fontSize: 9, color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fmt(k)}</span>
+                            <span style={{
+                              fontSize: 10, fontFamily: "'Share Tech Mono', monospace", fontWeight: 700,
+                              color: v < 0 ? '#fca5a5' : '#86efac',
+                              minWidth: 32, textAlign: 'right',
+                            }}>{v > 0 ? '+' : ''}{Math.round(v * 10) / 10}</span>
+                            <span style={{ fontSize: 7, color: '#475569', width: 10, textAlign: 'center' }}>SE</span>
+                          </div>
+                        ))}
+                      </>
+                    )}
                   </div>
-                )}
-                {/* Decay */}
-                {decayingParams.length > 0 && (
-                  <div>
-                    <div style={{ fontSize: 8, color: '#4b6280', marginBottom: 3 }}>
-                      <span style={{ color: '#f87171' }}>{decayingParams.length} decaying</span>
-                      {protectedParams.size > 0 && (
-                        <span style={{ color: '#22c55e', marginLeft: 6 }}>{protectedParams.size} protected</span>
-                      )}
+
+                  {/* Right Column: Spanning Analysis */}
+                  {tr.evaluator_reasoning && (
+                    <div style={{ paddingLeft: 12, borderLeft: '1px solid #1c3652', height: '100%' }}>
+                      <div style={{ fontSize: 7, color: '#94a3b8', letterSpacing: '0.12em', fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, marginBottom: 4 }}>IMPLEMENTATION ANALYSIS</div>
+                      <div style={{ fontSize: 9, color: '#cbd5e1', lineHeight: 1.5, fontStyle: 'italic' }}>
+                        "{tr.evaluator_reasoning}"
+                      </div>
                     </div>
-                    <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
-                      {decayingParams.slice(0, 8).map(k => (
-                        <span key={k} style={{
-                          fontSize: 8, padding: '1px 5px', borderRadius: 3,
-                          background: 'rgba(248,113,113,0.06)', color: '#94a3b8',
-                          border: '1px solid rgba(248,113,113,0.15)',
-                        }}>
-                          {fmt(k)}
-                        </span>
-                      ))}
-                      {decayingParams.length > 8 && (
-                        <span style={{ fontSize: 8, color: '#4b6280' }}>+{decayingParams.length - 8} more</span>
-                      )}
-                    </div>
-                  </div>
-                )}
-                <Reason text={paramReason} />
+                  )}
+                </div>
               </div>
             )}
 
-            {/* ⑤ EVENTS */}
+            {/* ── APPROVAL VERDICT ─────────────────────────────────────────── */}
+            <div style={{
+              padding: '8px 12px', borderRadius: 6,
+              background: 'rgba(255,255,255,0.02)', border: '1px solid #1c3652',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ fontSize: 9, color: '#4b6280', letterSpacing: '0.08em', fontFamily: "'Rajdhani', sans-serif", fontWeight: 700 }}>APPROVAL</div>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                    <span style={{ fontSize: 18, fontFamily: "'Share Tech Mono', monospace", color: '#fff', fontWeight: 700 }}>{approvalAfter}%</span>
+                  </div>
+                  <div style={{ fontSize: 11, fontFamily: "'Share Tech Mono', monospace", color: approvalColor, fontWeight: 700 }}>
+                    {approvalDelta > 0 ? '↑' : approvalDelta < 0 ? '↓' : '─'} {Math.abs(approvalDelta)}%
+                  </div>
+                </div>
+              </div>
+              {(() => {
+                if (!tr.ward_report || tr.ward_report.length === 0) return null;
+                const sorted = [...tr.ward_report].sort((a, b) => b.avg_wellbeing_delta - a.avg_wellbeing_delta);
+                const best = sorted[0];
+                const worst = sorted[sorted.length - 1];
+                return (
+                  <div style={{ display: 'flex', gap: 12, marginTop: 4 }}>
+                    {best && best.avg_wellbeing_delta > 0 && (
+                      <div style={{ flex: 1, padding: '4px 8px', background: 'rgba(34,197,94,0.05)', borderRadius: 4, border: '1px solid rgba(34,197,94,0.1)' }}>
+                        <div style={{ fontSize: 7, color: '#22c55e', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Most Excited</div>
+                        <div style={{ fontSize: 10, color: '#e2e8f0', display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
+                          <span>{best.group_name}</span>
+                          <span style={{ color: '#4ade80', fontFamily: "'Share Tech Mono', monospace" }}>+{best.avg_wellbeing_delta.toFixed(1)}</span>
+                        </div>
+                      </div>
+                    )}
+                    {worst && worst.avg_wellbeing_delta < 0 && (
+                      <div style={{ flex: 1, padding: '4px 8px', background: 'rgba(248,113,113,0.05)', borderRadius: 4, border: '1px solid rgba(248,113,113,0.1)' }}>
+                        <div style={{ fontSize: 7, color: '#ef4444', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Most Angry</div>
+                        <div style={{ fontSize: 10, color: '#e2e8f0', display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
+                          <span>{worst.group_name}</span>
+                          <span style={{ color: '#f87171', fontFamily: "'Share Tech Mono', monospace" }}>{worst.avg_wellbeing_delta.toFixed(1)}</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
+            </div>
+
+            {/* ── BUDGET SNAPSHOT ─────────────────────────────────────────── */}
+            <div>
+              <SLabel text="Treasury Ledger" />
+              <div style={{ background: 'rgba(15,23,42,0.4)', borderRadius: 6, padding: '8px 12px', border: '1px solid #1e293b', fontFamily: "'Share Tech Mono', monospace", fontSize: 11, color: '#cbd5e1' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: 4 }}>
+                  <span style={{ color: '#94a3b8' }}>Starting Treasury</span>
+                  <span>₹{fmtNum((tr.treasury_after ?? 0) - netTreasury)} Cr</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: 4 }}>
+                  <span style={{ color: '#4ade80' }}>(+) Tax Revenue</span>
+                  <span style={{ color: '#4ade80' }}>+₹{fmtNum(tr.tax_revenue ?? 0)} Cr</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: 4 }}>
+                  <span style={{ color: '#f87171' }}>(-) Policy Cost</span>
+                  <span style={{ color: '#f87171' }}>-₹{fmtNum(tr.major_policy?.budget_cost ?? 0)} Cr</span>
+                </div>
+                {tr.budget_stolen > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: 4, fontSize: 9, fontStyle: 'italic' }}>
+                    <span style={{ color: '#fb923c', paddingLeft: 12 }}>↳ Includes Leakage</span>
+                    <span style={{ color: '#fb923c' }}>₹{fmtNum(tr.budget_stolen)} Cr</span>
+                  </div>
+                )}
+                {tr.interest_paid > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: 4 }}>
+                    <span style={{ color: '#f87171' }}>(-) Debt Interest</span>
+                    <span style={{ color: '#f87171' }}>-₹{fmtNum(tr.interest_paid ?? 0)} Cr</span>
+                  </div>
+                )}
+                <div style={{ height: 1, background: '#334155', margin: '4px 0' }} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 2, fontWeight: 700, fontSize: 13, color: '#f0c040' }}>
+                  <span>Final Treasury</span>
+                  <span>₹{fmtNum(tr.treasury_after ?? 0)} Cr</span>
+                </div>
+              </div>
+            </div>
+
+            {/* ── EVENTS ──────────────────────────────────────────────────── */}
             {tr.events_triggered?.length > 0 && (
               <div>
-                <SectionLabel num="⑤" text="Events" />
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                <SLabel text="Events" />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                   {tr.events_triggered.map(ev => {
                     const isCrisis = ev.type === 'crisis'
-                    const portfolioParamMap: Record<string, string> = {
-                      'Infrastructure': 'transit and roads', 'Health & Education': 'hospitals and clinics',
-                      'Environment': 'air quality and pollution', 'Home Affairs': 'police and emergency',
-                      'Finance & Economy': 'jobs and commerce', 'Housing & Community': 'affordable housing',
-                      'Governance Reform': 'admin efficiency',
-                    }
-                    const paramHint = portfolioParamMap[ev.portfolio ?? ''] ?? ev.portfolio ?? 'city conditions'
-                    const paramVal = ev.portfolio && p
-                      ? Math.round((p as Record<string, number>)[paramHint.replace(/ /g, '_')] ?? 0) : null
-                    const sevDots = Array.from({ length: ev.severity ?? 1 }).map((_, i) => (
-                      <span key={i} style={{ fontSize: 7, color: isCrisis ? '#f87171' : '#4ade80' }}>●</span>
-                    ))
                     return (
                       <div key={ev.id} style={{
-                        padding: '4px 8px', borderRadius: 4,
+                        display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 4,
                         background: isCrisis ? 'rgba(248,113,113,0.07)' : 'rgba(34,197,94,0.07)',
-                        border: `1px solid ${isCrisis ? '#7f1d1d44' : '#14532d44'}`,
+                        border: `1px solid ${isCrisis ? '#7f1d1d55' : '#14532d55'}`,
                       }}>
-                        <div className="flex items-center gap-1.5">
-                          <div style={{ fontSize: 10, fontWeight: 700, color: isCrisis ? '#fca5a5' : '#86efac' }}>
-                            {isCrisis ? '⚠' : '✦'} {ev.name}
+                        <div style={{ fontSize: 14, color: isCrisis ? '#ef4444' : '#22c55e', alignSelf: 'flex-start', marginTop: 2 }}>{isCrisis ? '⚠' : '✦'}</div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: isCrisis ? '#fca5a5' : '#86efac' }}>{ev.name}</div>
+                            <div style={{ fontSize: 7, color: isCrisis ? '#f87171' : '#4ade80', letterSpacing: '0.1em', fontFamily: "'Rajdhani', sans-serif", fontWeight: 700 }}>
+                              {isCrisis ? 'CRISIS' : 'OPPORTUNITY'}
+                            </div>
                           </div>
-                          <div className="flex items-center gap-0.5">{sevDots}</div>
-                          <span style={{ fontSize: 8, color: '#4b6280', marginLeft: 2 }}>sev {ev.severity}</span>
-                        </div>
-                        <div style={{ fontSize: 9, color: '#4b6280', marginTop: 1, fontStyle: 'italic' }}>
-                          {isCrisis
-                            ? `${ev.portfolio ?? 'sector'} was vulnerable${paramVal !== null && paramVal > 0 ? ` — ${paramHint} at ${paramVal}` : ''} when this crisis hit`
-                            : `strong city performance in ${ev.portfolio ?? 'this sector'} attracted this opportunity${paramVal !== null && paramVal > 0 ? ` — ${paramHint} at ${paramVal}` : ''}`}
+                          <div style={{ fontSize: 9, color: '#94a3b8', marginTop: 2, lineHeight: 1.4 }}>
+                            {isCrisis ? `Severity ${ev.severity} · Due to poor city metrics · ${ev.turns_remaining} turn${ev.turns_remaining !== 1 ? 's' : ''} remaining` : `A positive momentum event in ${ev.portfolio ?? 'the city'}`}
+                          </div>
                         </div>
                       </div>
                     )
@@ -956,136 +941,67 @@ function TurnPhaseCard({
               </div>
             )}
 
-            {/* ⑥ OPPOSITION */}
-            {tr.opposition_attack && (
-              <div>
-                <SectionLabel num="⑥" text="Opposition" />
-                <div className="flex items-start gap-2">
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 9, color: '#4b6280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 }}>Attack</div>
-                    <div style={{ fontSize: 10, color: '#f87171', fontWeight: 700 }}>{tr.opposition_attack}</div>
-                    <Reason text={attackDetail} />
-                  </div>
-                  {tr.counter_frame && (
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 9, color: '#4b6280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 }}>Counter</div>
-                      <div style={{ fontSize: 10, color: '#22c55e', fontWeight: 700 }}>{tr.counter_frame}</div>
-                      <Reason text={counterDetail} />
+            {/* ── OPPOSITION & TENSION ────────────────────────────────────── */}
+            {(() => {
+              const oppositionHeadline = (tr.media_headlines ?? [])
+                .find(h => h.lean === 'opposition')
+                ?.headline ?? null
+              const hasOpposition = !!(tr.opposition_attack || oppositionHeadline)
+              const hasTension = (tr.communal_tension_after ?? 0) > 0
+              if (!hasOpposition && !hasTension) return null
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {hasOpposition && (
+                    <div style={{ padding: '8px 10px', borderRadius: 6, background: 'linear-gradient(135deg, rgba(248,113,113,0.08), rgba(248,113,113,0.02))', border: '1px solid rgba(248,113,113,0.2)' }}>
+                      <div style={{ fontSize: 7, color: '#ef4444', letterSpacing: '0.1em', fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, marginBottom: 6 }}>POLITICAL ATTACK</div>
+
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                        <div style={{ fontSize: 20, color: '#7f1d1d', lineHeight: 1 }}>"</div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 10, color: '#cbd5e1', lineHeight: 1.5, fontStyle: 'italic', marginBottom: 6 }}>
+                            {oppositionHeadline || tr.opposition_attack}
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid rgba(248,113,113,0.1)', paddingTop: 6 }}>
+                            <div style={{ fontSize: 8, color: '#f87171', fontWeight: 600 }}>— Opposition Quote</div>
+                            {tr.counter_frame && (
+                              <div style={{ fontSize: 8, color: '#94a3b8' }}>
+                                Mayor's PR Defense: <span style={{ color: '#60a5fa', fontWeight: 600 }}>{tr.counter_frame}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {hasTension && (
+                    <div style={{ padding: '5px 8px', borderRadius: 4, background: 'rgba(251,146,60,0.06)', border: '1px solid rgba(251,146,60,0.2)' }}>
+                      <div style={{ fontSize: 7, color: '#64748b', letterSpacing: '0.1em', fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, marginBottom: 3 }}>COMMUNAL TENSION</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <div style={{ flex: 1, height: 4, background: '#0a1a30', borderRadius: 2, overflow: 'hidden' }}>
+                          <div style={{ width: `${Math.min(100, tr.communal_tension_after ?? 0)}%`, height: '100%', background: '#fb923c', borderRadius: 2 }} />
+                        </div>
+                        <span style={{ fontSize: 9, color: '#fb923c', fontFamily: "'Share Tech Mono', monospace", fontWeight: 700 }}>{Math.round(tr.communal_tension_after ?? 0)}</span>
+                      </div>
                     </div>
                   )}
                 </div>
+              )
+            })()}
+
+            {/* ── ADVISOR DEBRIEF ─────────────────────────────────────────── */}
+            {tr.advisor_summary && (
+              <div style={{
+                padding: '8px 10px', borderRadius: 5,
+                background: 'rgba(232,160,48,0.05)', border: '1px solid rgba(232,160,48,0.18)',
+                display: 'flex', gap: 8, alignItems: 'flex-start',
+              }}>
+                <div style={{ fontSize: 16, marginTop: -1 }}>📋</div>
+                <div>
+                  <div style={{ fontSize: 7, fontWeight: 700, color: '#e8a030', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.12em', marginBottom: 3 }}>ADVISOR DEBRIEF</div>
+                  <div style={{ fontSize: 10, color: '#b8924a', lineHeight: 1.6 }}>{tr.advisor_summary}</div>
+                </div>
               </div>
             )}
-
-            {/* ⑦ CITY PULSE */}
-            <div>
-              <SectionLabel num="⑦" text="City Pulse" />
-              {(() => {
-                const approvalBefore = Math.round(tr.approval_before ?? tr.interim_approval)
-                const approvalAfter = Math.round(tr.interim_approval)
-
-                const tensionBefore = tr.city_params_before
-                  ? Math.round((tr.city_params_before as Record<string, number>).communal_tension ?? tr.communal_tension_after ?? 0)
-                  : Math.round(tr.communal_tension_after ?? 0)
-                const tensionAfter = Math.round(tr.communal_tension_after ?? 0)
-                const tensionDelta = tensionAfter - tensionBefore
-
-                // Loyalty changes as proxy for scandal
-                const loyaltyChanges = Object.entries(tr.minister_loyalty_changes ?? {})
-                const bigDrops = loyaltyChanges.filter(([, d]) => d < -5)
-
-                const PulseRow = ({ label, before, after, unit = '', higherGood = true }: {
-                  label: string; before: number; after: number; unit?: string; higherGood?: boolean
-                }) => {
-                  const delta = after - before
-                  const isGood = higherGood ? delta >= 0 : delta <= 0
-                  const isNeutral = Math.abs(delta) < 0.5
-                  const deltaColor = isNeutral ? '#4b6280' : isGood ? '#22c55e' : '#f87171'
-                  const arrow = isNeutral ? '─' : delta > 0 ? '↑' : '↓'
-                  return (
-                    <div className="flex items-center" style={{ gap: 8 }}>
-                      <span style={{ fontSize: 9, color: '#4b6280', minWidth: 72 }}>{label}</span>
-                      <span style={{ fontSize: 9, fontFamily: "'Share Tech Mono', monospace", color: '#64748b' }}>{before.toFixed(before < 10 ? 1 : 0)}{unit}</span>
-                      <span style={{ fontSize: 8, color: '#4b6280' }}>→</span>
-                      <span style={{ fontSize: 10, fontFamily: "'Share Tech Mono', monospace", color: '#cbd5e1', fontWeight: 700 }}>{after.toFixed(after < 10 ? 1 : 0)}{unit}</span>
-                      <span style={{ fontSize: 9, fontFamily: "'Share Tech Mono', monospace", color: deltaColor, fontWeight: 600, minWidth: 32 }}>
-                        {delta > 0 ? '+' : ''}{delta.toFixed(Math.abs(delta) < 2 ? 1 : 0)}{unit}
-                      </span>
-                      <span style={{ fontSize: 10, color: deltaColor }}>{arrow}</span>
-                    </div>
-                  )
-                }
-
-                return (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    <PulseRow label="Approval" before={approvalBefore} after={approvalAfter} unit="%" />
-                    <PulseRow label="Tension" before={tensionBefore} after={tensionAfter} higherGood={false} />
-                    {bigDrops.length > 0 && (
-                      <div className="flex items-center" style={{ gap: 8 }}>
-                        <span style={{ fontSize: 9, color: '#f87171', minWidth: 72 }}>Scandal risk</span>
-                        <span style={{ fontSize: 9, color: '#4b6280', fontStyle: 'italic' }}>
-                          {bigDrops.map(([id]) => ministers.find(m => m.id === id)?.name ?? id.slice(0, 8)).join(', ')} loyalty dropped sharply
-                        </span>
-                      </div>
-                    )}
-                    <Reason text={approvalReason} />
-                    {tensionDelta !== 0 && (
-                      <Reason text={tensionDelta > 0
-                        ? `Communal tension rose — ${tr.opposition_attack?.toLowerCase().includes('identity') ? 'opposition mobilized divisions' : 'community spaces impact'}`
-                        : `Tension eased — community stability holding`}
-                      />
-                    )}
-                  </div>
-                )
-              })()}
-            </div>
-
-            {/* ⑧ NARRATIVE */}
-            {tr.delivery_narrative && (() => {
-              const bullets = tr.delivery_narrative
-                .split(/(?<=\.)\s+/)
-                .map(s => s.trim().replace(/\.$/, ''))
-                .filter(s => s.length > 12)
-                .slice(0, 3)
-              return (
-                <div>
-                  <SectionLabel num="⑧" text="Narrative" />
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                    {bullets.map((b, i) => (
-                      <div key={i} className="flex items-start gap-1.5">
-                        <span style={{ fontSize: 8, color: '#e8a030', marginTop: 1 }}>•</span>
-                        <span style={{ fontSize: 10, color: '#64748b', lineHeight: 1.5, fontStyle: 'italic' }}>{b}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )
-            })()}
-
-            {/* ADVISOR */}
-            {tr.advisor_summary && (() => {
-              const line = tr.advisor_summary
-                .split(/(?<=\.)\s+/)
-                .filter(s => s.length > 10)
-                .slice(0, 1)[0] ?? tr.advisor_summary
-              return (
-                <div style={{
-                  padding: '6px 10px', borderRadius: 5,
-                  background: 'rgba(232,160,48,0.06)', border: '1px solid rgba(232,160,48,0.20)',
-                  display: 'flex', gap: 8, alignItems: 'flex-start',
-                }}>
-                  <div style={{
-                    fontSize: 8, fontWeight: 700, color: '#e8a030',
-                    fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.12em', marginTop: 1, whiteSpace: 'nowrap'
-                  }}>
-                    ADVISOR
-                  </div>
-                  <div style={{ fontSize: 10, color: '#b8924a', lineHeight: 1.5, fontStyle: 'italic' }}>
-                    {line}
-                  </div>
-                </div>
-              )
-            })()}
 
           </div>
         )
@@ -1096,7 +1012,12 @@ function TurnPhaseCard({
 
 // ─── Live Milestone Feed ───────────────────────────────────────────────────────
 
-function LiveMilestoneFeed({ milestones, policyName }: { milestones: Record<string, unknown>[]; policyName: string }) {
+function LiveMilestoneFeed({ milestones, policyName, approvalVotes, evalReasoning }: {
+  milestones: Record<string, unknown>[]
+  policyName: string
+  approvalVotes?: { sentiment: string; weight: number }[]
+  evalReasoning?: string | null
+}) {
   const feedEndRef = useRef<HTMLDivElement>(null)
   useEffect(() => { feedEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [milestones.length])
 
@@ -1173,6 +1094,34 @@ function LiveMilestoneFeed({ milestones, policyName }: { milestones: Record<stri
       )
     }
 
+    if (m.type === 'wellbeing_update') {
+      const ward = (m.ward_report ?? []) as { group_type: string; avg_wellbeing: number; trend: string }[]
+      const avgWb = ward.length > 0
+        ? Math.round(ward.reduce((s, w) => s + w.avg_wellbeing, 0) / ward.length)
+        : null
+      const upCount = ward.filter(w => w.trend === 'up').length
+      const downCount = ward.filter(w => w.trend === 'down').length
+      const netTrend = upCount > downCount ? '↑' : upCount < downCount ? '↓' : '─'
+      const trendColor = netTrend === '↑' ? '#4ade80' : netTrend === '↓' ? '#f87171' : '#64748b'
+      return (
+        <div key={i} style={{
+          background: 'rgba(255,255,255,0.02)', borderRadius: 4,
+          padding: '5px 8px', border: '1px solid #1c3652',
+        }}>
+          <div style={{ fontSize: 8, color: '#4b6280', letterSpacing: '0.1em', fontFamily: "'Rajdhani', sans-serif", marginBottom: 4 }}>WELLBEING UPDATE</div>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            {avgWb !== null && (
+              <span style={{ fontSize: 11, color: trendColor, fontWeight: 700, fontFamily: "'Share Tech Mono', monospace" }}>
+                {netTrend} avg {avgWb}
+              </span>
+            )}
+            <span style={{ fontSize: 9, color: '#22c55e' }}>↑ {upCount} groups</span>
+            <span style={{ fontSize: 9, color: '#f87171' }}>↓ {downCount} groups</span>
+          </div>
+        </div>
+      )
+    }
+
     if (m.type === 'politics') {
       const aBefore = Math.round(m.approval_before as number)
       const aAfter = Math.round(m.approval_after as number)
@@ -1196,21 +1145,22 @@ function LiveMilestoneFeed({ milestones, policyName }: { milestones: Record<stri
       if (key === 'delivery') {
         const text = m.value as string
         return (
-          <div key={i} style={{ paddingLeft: 2, borderLeft: '2px solid #1c3652' }}>
-            <div style={{ fontSize: 9, color: '#4b6280', fontStyle: 'italic', letterSpacing: '0.03em' }}>
-              "{text.slice(0, 120)}{text.length > 120 ? '…' : ''}"
+          <div key={i} style={{ padding: '8px 10px', background: 'rgba(56,189,248,0.06)', borderRadius: 4, border: '1px solid rgba(56,189,248,0.15)', marginTop: 8 }}>
+            <div style={{ fontSize: 7, color: '#38bdf8', letterSpacing: '0.12em', fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, marginBottom: 4 }}>ON THE GROUND</div>
+            <div style={{ fontSize: 10, color: '#e0f2fe', lineHeight: 1.6, fontStyle: 'italic' }}>
+              "{text}"
             </div>
           </div>
         )
       }
       if (key === 'headlines') {
-        const hs = m.value as { outlet_name: string; headline: string }[]
+        const hs = m.value as { outlet: string; headline: string }[]
         return (
           <div key={i} style={base}>
             {hs.slice(0, 2).map((h, j) => (
               <div key={j} style={{ display: 'flex', alignItems: 'flex-start', gap: 4 }}>
                 <Newspaper size={8} color="#64748b" style={{ marginTop: 2, flexShrink: 0 }} />
-                <span style={{ fontSize: 9, color: '#94a3b8' }}><span style={{ color: '#64748b' }}>{h.outlet_name}:</span> {h.headline}</span>
+                <span style={{ fontSize: 9, color: '#94a3b8' }}><span style={{ color: '#64748b' }}>{h.outlet || (h as any).outlet_name}:</span> {h.headline}</span>
               </div>
             ))}
           </div>
@@ -1243,6 +1193,45 @@ function LiveMilestoneFeed({ milestones, policyName }: { milestones: Record<stri
         <div style={{ color: '#4b6280', fontSize: 9, fontStyle: 'italic' }}>Initialising...</div>
       )}
       {milestones.map((m, i) => renderMilestone(m, i))}
+
+      {/* AI Evaluation reasoning */}
+      {evalReasoning && (
+        <div style={{ marginBottom: 10, paddingLeft: 8, borderLeft: '2px solid #334155', marginTop: 8 }}>
+          <div style={{ fontSize: 7, color: '#94a3b8', letterSpacing: '0.12em', fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, marginBottom: 2 }}>IMPLEMENTATION ANALYSIS</div>
+          <div style={{ fontSize: 10, color: '#cbd5e1', lineHeight: 1.5 }}>
+            {evalReasoning}
+          </div>
+        </div>
+      )}
+
+      {/* Live approval bar */}
+      {approvalVotes && approvalVotes.length > 0 && (() => {
+        const total = approvalVotes.length
+        const approveW = approvalVotes.filter(v => v.sentiment === 'approve').reduce((s, v) => s + v.weight, 0)
+        const totalW = approvalVotes.reduce((s, v) => s + v.weight, 0)
+        const approvalPct = totalW > 0 ? Math.round((approveW / totalW) * 100) : 50
+        const approveCt = approvalVotes.filter(v => v.sentiment === 'approve').length
+        const disapproveCt = approvalVotes.filter(v => v.sentiment === 'disapprove').length
+        const undecidedCt = approvalVotes.filter(v => v.sentiment === 'undecided').length
+        const col = approvalPct >= 50 ? '#22c55e' : '#f87171'
+        return (
+          <div style={{ marginTop: 2 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+              <span style={{ fontSize: 8, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.1em', color: '#4b6280' }}>CITIZEN POLL ({total} voted)</span>
+              <span style={{ fontSize: 12, fontWeight: 800, color: col, fontFamily: "'Share Tech Mono', monospace" }}>{approvalPct}%</span>
+            </div>
+            <div style={{ height: 6, background: '#0b1929', borderRadius: 3, overflow: 'hidden', position: 'relative' }}>
+              <div style={{ position: 'absolute', left: 0, top: 0, height: '100%', width: `${approvalPct}%`, background: col, borderRadius: 3, transition: 'width 0.4s ease' }} />
+            </div>
+            <div style={{ display: 'flex', gap: 10, marginTop: 5 }}>
+              <span style={{ fontSize: 9, color: '#22c55e' }}>✓ {approveCt}</span>
+              <span style={{ fontSize: 9, color: '#f87171' }}>✗ {disapproveCt}</span>
+              <span style={{ fontSize: 9, color: '#64748b' }}>~ {undecidedCt}</span>
+            </div>
+          </div>
+        )
+      })()}
+
       <div ref={feedEndRef} />
     </div>
   )
@@ -1279,12 +1268,22 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
   const [fetchingPolicies, setFetchingPolicies] = useState(false)
   const [policyError, setPolicyError] = useState<string | null>(null)
 
+  // Minister picker (v2 flow)
+  const [pendingPolicyIndex, setPendingPolicyIndex] = useState<number | null>(null)
+  const [showMinisterPicker, setShowMinisterPicker] = useState(false)
+
   // Turn execution
   const [isTurnExecuting, setIsTurnExecuting] = useState(false)
   const [executingPolicyName, setExecutingPolicyName] = useState<string | null>(null)
   const [executingPolicy, setExecutingPolicy] = useState<Policy | null>(null)
   const [turnError, setTurnError] = useState<string | null>(null)
   const [liveMilestones, setLiveMilestones] = useState<Record<string, unknown>[]>([])
+
+  // Live approval poll tracking
+  const [liveApprovalVotes, setLiveApprovalVotes] = useState<{ sentiment: string; weight: number }[]>([])
+  const [liveEvalReasoning, setLiveEvalReasoning] = useState<string | null>(null)
+  // Live approval — updated from approval_final event so top bar updates before complete
+  const [liveApproval, setLiveApproval] = useState<number | null>(null)
 
   // Accumulated feed: voices + media accumulate turn-over-turn with a turn number tag
   const [allVoices, setAllVoices] = useState<(CitizenVoice & { turnNum: number })[]>([])
@@ -1294,17 +1293,24 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
   const [gameOver, setGameOver] = useState(false)
   const [scorecard, setScorecard] = useState<GovernanceScorecard | null>(null)
 
-  // Identity groups filter
+  // Identity groups filter + expansion
   const [identityFilter, setIdentityFilter] = useState<string>('')
+  const [expandedGroup, setExpandedGroup] = useState<string | null>(null)
 
   const chatEndRef = useRef<HTMLDivElement>(null)
   const mediaScrollRef = useRef<HTMLDivElement>(null)
   const chatterScrollRef = useRef<HTMLDivElement>(null)
   const hasChatThisTurnRef = useRef(false)
+  // Cabinet is "in session" after @all — stays open until mayor addresses someone directly
+  const cabinetInSessionRef = useRef(false)
 
   // Theme music
+  const TRACKS = ['/theme.mp3', '/theme2.mp3']
   const audioRef = useRef<HTMLAudioElement>(null)
   const [isMuted, setIsMuted] = useState(false)
+
+  // Initialize with a random track
+  const [currentTrackIndex, setCurrentTrackIndex] = useState(() => Math.floor(Math.random() * TRACKS.length))
   const musicStartedRef = useRef(false)
 
   // Start music on first user interaction (browser autoplay policy)
@@ -1334,6 +1340,28 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
       setIsMuted(true)
     }
   }
+
+  const nextTrack = () => {
+    // Pick a random track that isn't the current one
+    let nextIdx;
+    if (TRACKS.length > 1) {
+      do {
+        nextIdx = Math.floor(Math.random() * TRACKS.length)
+      } while (nextIdx === currentTrackIndex)
+    } else {
+      nextIdx = 0
+    }
+
+    setCurrentTrackIndex(nextIdx)
+    const audio = audioRef.current
+    if (audio) {
+      audio.src = TRACKS[nextIdx]
+      if (!isMuted && musicStartedRef.current) {
+        audio.play().catch(() => { })
+      }
+    }
+  }
+
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [chatMessages])
   const mediaHoveredRef = useRef(false)
   const chatterHoveredRef = useRef(false)
@@ -1354,9 +1382,21 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
       } else {
         el.scrollTop += 1
       }
-    }, 50)
+    }, 40)
     return () => clearInterval(id)
   }, [])
+
+  // When new headlines arrive, snap to just before the end of the first copy
+  // so the newest item scrolls into view quickly (marquee will carry it forward)
+  useEffect(() => {
+    const el = mediaScrollRef.current
+    const inner = mediaInnerRef.current
+    if (!el || !inner || mediaHoveredRef.current) return
+    // Snap to near-end of first copy so new item is immediately visible
+    requestAnimationFrame(() => {
+      if (el && inner) el.scrollTop = inner.offsetHeight - el.clientHeight - 4
+    })
+  }, [allHeadlines.length])
 
   // Seamless marquee scroll for City Chatter
   useEffect(() => {
@@ -1371,9 +1411,19 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
       } else {
         el.scrollTop += 1
       }
-    }, 50)
+    }, 40)
     return () => clearInterval(id)
   }, [])
+
+  // When new voices arrive, snap to near-end of first copy
+  useEffect(() => {
+    const el = chatterScrollRef.current
+    const inner = chatterInnerRef.current
+    if (!el || !inner || chatterHoveredRef.current) return
+    requestAnimationFrame(() => {
+      if (el && inner) el.scrollTop = inner.offsetHeight - el.clientHeight - 4
+    })
+  }, [allVoices.length])
 
   // Auto-select first filterable identity type when ward report loads
   const wardReportKey = (gameState.ward_report ?? []).map(e => `${e.group_type}:${e.group_name}`).join(',')
@@ -1395,23 +1445,35 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
   // ── Consultation helpers ─────────────────────────────────────────────────
 
   // Send message through one minister's consultation, get reply.
-  // Builds context from all prior chat messages so the minister sees the full room discussion.
-  async function getMinisterReply(m: Minister, mayorMsg: string): Promise<string> {
+  // priorRoundReplies: replies already collected in THIS send-round (so each minister
+  // can genuinely build on what their colleagues just said, not hallucinate).
+  async function getMinisterReply(
+    m: Minister,
+    mayorMsg: string,
+    isBroadcast: boolean = false,
+    priorRoundReplies: RoundReply[] = []
+  ): Promise<string> {
     // Close any different minister that's currently open
     if (activeConsultRef.current && activeConsultRef.current !== m.id) {
-      await closeConsultation(gameId).catch(() => { })
+      console.log(`[getMinisterReply] Closing consultation with ${activeConsultRef.current} before opening ${m.name}`)
+      await closeConsultation(gameId).catch((e) => { console.warn('[getMinisterReply] Close failed:', e) })
       activeConsultRef.current = null
     }
-    // Open this minister's consultation if not already open
+    // Open this minister's consultation if not already open.
+    // For broadcast @all: skip the LLM opening statement (silent=true) — saves
+    // one full LLM call per minister and avoids serial timeout chains.
     if (activeConsultRef.current !== m.id) {
-      await openConsultation(gameId, m.id)
+      console.log(`[getMinisterReply] Opening consultation with ${m.name} (silent=${isBroadcast})`)
+      await openConsultation(gameId, m.id, isBroadcast)
       activeConsultRef.current = m.id
+      console.log(`[getMinisterReply] Opened. Sending message...`)
     }
     // Build context: only include messages from current turn (after last system separator)
     const lastSysIdx = [...chatMessages].reverse().findIndex(m => m.isSystem)
     const msgsThisTurn = lastSysIdx >= 0
       ? chatMessages.slice(chatMessages.length - lastSysIdx)
       : chatMessages
+    // stale React state — only used for minister 1 (when no round replies yet)
     const recentContext = msgsThisTurn.slice(-6)
       .filter(msg => !msg.isMayor && !msg.isSystem)
       .map(msg => `${msg.sender} (${msg.senderRole}): ${msg.text}`)
@@ -1420,9 +1482,31 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
     const turnCtx = (lastTurn && hasChatThisTurnRef.current)
       ? `[Last turn: "${lastTurn.major_policy?.name}" · ${Math.round(lastTurn.execution_score * 100)}% exec · approval ${Math.round((lastTurn as any).approval_before ?? 0)}%→${Math.round(lastTurn.interim_approval)}%]\n`
       : ''
-    const fullMsg = turnCtx + (recentContext
-      ? `[Council room context — other ministers said:\n${recentContext}]\n\nMayor: ${mayorMsg}`
-      : `Mayor: ${mayorMsg}`)
+    const mediaCtx = allHeadlines.slice(-3)
+      .map(h => `[${h.outlet}: "${h.headline}"]`)
+      .join('\n')
+    const cityChatterCtx = allVoices.slice(-5)
+      .map(v => `[${v.name} (${v.sentiment ?? 'neutral'}): "${v.reaction}"]`)
+      .join('\n')
+
+    // Replies already collected THIS round — always fresh, no React state staleness
+    // Frame as a live discussion thread so each minister feels they're jumping into a debate
+    const thisRoundCtx = priorRoundReplies.length > 0
+      ? priorRoundReplies.map(r => `${r.name} (${r.portfolio}): "${r.text}"`).join('\n')
+      : ''
+    // Only fall back to stale React context for the first minister (when no round replies yet)
+    const priorSessionCtx = priorRoundReplies.length === 0 ? recentContext : ''
+    // Label the mayor's message differently for cabinet-wide questions
+    const mayorBlock = isBroadcast
+      ? `[Cabinet Meeting, Turn ${gameState.current_turn} — The Mayor addresses the full cabinet:]\nMayor: ${mayorMsg}`
+      : `Mayor: ${mayorMsg}`
+
+    const fullMsg = turnCtx
+      + (mediaCtx ? `[Recent media coverage:\n${mediaCtx}]\n` : '')
+      + (cityChatterCtx ? `[What citizens are saying:\n${cityChatterCtx}]\n` : '')
+      + (priorSessionCtx ? `[Council room — earlier this session:\n${priorSessionCtx}]\n\n` : '')
+      + (thisRoundCtx ? `[Cabinet discussion so far — respond to these colleagues, don't just agree:\n${thisRoundCtx}]\n\n` : '')
+      + mayorBlock
     const res = await messageMinister(gameId, fullMsg)
     return res.reply
   }
@@ -1447,25 +1531,72 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
 
     try {
       const ministers = gameState.ministers
-      const responderIndices = selectResponders(msg, ministers)
+      const isBroadcast = BROADCAST_RE.test(msg)
+      const directMentions = parseMentioned(msg, ministers)
 
-      for (const idx of responderIndices) {
+      // Cabinet session state:
+      // - @all opens the session → all ministers engage
+      // - Follow-up generic messages (no @name) → top 2-3 relevant ministers stay engaged
+      // - @name closes the session → only addressed minister responds
+      if (isBroadcast) {
+        cabinetInSessionRef.current = true
+      } else if (directMentions.length > 0) {
+        cabinetInSessionRef.current = false
+      }
+
+      const cabinetHot = cabinetInSessionRef.current && !isBroadcast
+      const responderIndices = selectResponders(msg, ministers, cabinetHot)
+
+      console.log(`[Advisory Chat] Broadcast=${isBroadcast}, CabinetSession=${cabinetInSessionRef.current}, Responders=${responderIndices.length}:`, responderIndices.map(i => ministers[i]?.name))
+
+      // Accumulate replies from this round so each minister genuinely sees
+      // what colleagues already said — prevents hallucination of prior remarks
+      const roundReplies: RoundReply[] = []
+
+      for (let ri = 0; ri < responderIndices.length; ri++) {
+        const idx = responderIndices[ri]
         const m = ministers[idx]
+        if (!m) { console.warn(`[Advisory Chat] No minister at index ${idx}`); continue }
         const mColor = MINISTER_COLORS[idx % MINISTER_COLORS.length]
+
+        // Staggered delay between ministers (skipped for the first one)
+        if (roundReplies.length > 0) {
+          const delay = 600 + Math.floor(Math.random() * 900) // 600–1500ms
+          await new Promise(resolve => setTimeout(resolve, delay))
+        }
+
+        console.log(`[Advisory Chat] Requesting reply ${ri + 1}/${responderIndices.length} from ${m.name} (${m.portfolio})`)
+
         try {
-          const reply = await getMinisterReply(m, msg)
+          const reply = await getMinisterReply(m, msg, isBroadcast, roundReplies)
+
+          // Push BEFORE next iteration so the next minister sees this reply
+          roundReplies.push({ name: m.name, portfolio: m.portfolio, text: reply })
+
           const replyTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
           setChatMessages(prev => [...prev, {
             isMayor: false, sender: m.name, senderRole: m.portfolio,
             text: reply, time: replyTime,
             ringColor: mColor, seed: m.name,
           }])
+          console.log(`[Advisory Chat] Got reply from ${m.name}`)
         } catch (e) {
-          console.error(`Reply from ${m.name} failed:`, e)
+          console.error(`[Advisory Chat] Reply from ${m.name} failed:`, e)
+          // Show a subtle "unavailable" message so user knows this minister tried
+          const failTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          setChatMessages(prev => [...prev, {
+            isMayor: false, sender: m.name, senderRole: m.portfolio,
+            text: '(unavailable right now)', time: failTime,
+            ringColor: '#334155', seed: m.name,
+            isSystemFallback: true,
+          }])
+          // Don't push to roundReplies — next minister must not reference a ghost reply
         }
       }
+      console.log(`[Advisory Chat] Loop complete. ${roundReplies.length} replies collected.`)
     } catch (e: unknown) {
       const errMsg = e instanceof Error ? e.message : String(e)
+      console.error(`[Advisory Chat] OUTER catch:`, e)
       setChatError(`Chat failed: ${errMsg}`)
     } finally {
       setConsultLoading(false)
@@ -1498,35 +1629,38 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
 
   // ── Execute Turn ─────────────────────────────────────────────────────────
 
-  async function handleSelectPolicy(index: number) {
+  // Policy selected from modal → open minister picker
+  function handleSelectPolicy(index: number) {
     if (isTurnExecuting) return
+    setPendingPolicyIndex(index)
+    setShowPolicyModal(false)
+    setShowMinisterPicker(true)
+  }
+
+  // Minister chosen → execute turn v2
+  async function handleSelectMinister(ministerId: string) {
+    console.log('[handleSelectMinister] called', { ministerId, isTurnExecuting, pendingPolicyIndex })
+    if (isTurnExecuting || pendingPolicyIndex === null) {
+      console.warn('[handleSelectMinister] blocked — isTurnExecuting:', isTurnExecuting, 'pendingPolicyIndex:', pendingPolicyIndex)
+      return
+    }
+    const index = pendingPolicyIndex
+    setShowMinisterPicker(false)
+    setPendingPolicyIndex(null)
     setIsTurnExecuting(true)
     setTurnError(null)
     setLiveMilestones([])
+    setLiveApprovalVotes([])
+    setLiveEvalReasoning(null)
+    setLiveApproval(null)
     hasChatThisTurnRef.current = false
 
     const selectedPolicy = policyOptions?.[index] ?? null
     setExecutingPolicyName(selectedPolicy?.name || 'Policy Execution')
     setExecutingPolicy(selectedPolicy)
-    setShowPolicyModal(false)
-
-    // Push a breaking news entry that persists in Media feed after turn completes
-    if (selectedPolicy) {
-      const minister = gameState.ministers.find(m =>
-        m.portfolio === selectedPolicy.portfolio ||
-        (m.extra_portfolios ?? []).includes(selectedPolicy.portfolio)
-      ) ?? gameState.ministers[0]
-      setAllHeadlines(prev => [...prev, {
-        outlet: "MAYOR'S OFFICE",
-        lean: 'mayor',
-        headline: `BREAKING: Mayor announces "${selectedPolicy.name}"${minister ? ` — led by ${minister.name}` : ''}`,
-        turnNum: gameState.current_turn,
-        isBreaking: true,
-      }])
-    }
 
     try {
-      for await (const event of executeTurnStream(gameId, index, { type: 'governance_upkeep', budget: 0 }, 'Delivery Receipts')) {
+      for await (const event of executeTurnStreamV2(gameId, index, ministerId, { type: 'governance_upkeep', budget: 0 })) {
         if (event.type === 'complete') {
           const tr = event.turn_result as TurnResult
           const newState = event.state as GameState
@@ -1539,6 +1673,8 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
           setExecutingPolicyName(null)
           setExecutingPolicy(null)
           setPolicyError(null)
+          setLiveApprovalVotes([])
+          setLiveEvalReasoning(null)
 
           // Add turn separator to chat
           const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -1548,12 +1684,18 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
             time: now, ringColor: '#1c3652', seed: 'system', isSystem: true,
           }])
           activeConsultRef.current = null
-          setLiveMilestones([])
+          // NOTE: liveMilestones are NOT cleared here — they persist until the next turn starts
+          // (cleared on turn start at line ~1407). This prevents the flash-disappear issue.
 
-          // Accumulate voices and headlines with turn number tag
+          // For v2: citizen_voices come in via streaming events, not the complete payload
+          // Only accumulate media headlines from complete (voices already streamed)
           const turnNum = tr.turn
-          setAllVoices(prev => [...prev, ...(tr.citizen_voices ?? []).map(v => ({ ...v, turnNum }))])
-          setAllHeadlines(prev => [...prev, ...(tr.media_headlines ?? []).map(h => ({ ...h, turnNum }))])
+          if ((tr.media_headlines ?? []).length > 0) {
+            setAllHeadlines(prev => [...prev, ...(tr.media_headlines ?? []).map(h => ({ ...h, turnNum }))])
+          }
+          if ((tr.citizen_voices ?? []).length > 0 && allVoices.filter(v => (v as any).turnNum === turnNum).length === 0) {
+            setAllVoices(prev => [...prev, ...(tr.citizen_voices ?? []).map(v => ({ ...v, turnNum }))])
+          }
 
           if (event.game_over) {
             setGameOver(true)
@@ -1570,41 +1712,81 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
           setGameOver(true)
           break
         }
-        // Phase reactions: update Media and City Chatter immediately (before LLM calls complete)
-        if (event.type === 'phase_reaction') {
-          const turnNum = gameState.current_turn
-          if (event.phase === 'implementation') {
-            setAllHeadlines(prev => [...prev, {
-              outlet: 'WIRE SERVICE',
-              lean: 'neutral',
-              headline: `${event.minister_name} begins ${event.portfolio} implementation — ${event.exec_pct}% execution rate`,
-              turnNum,
-            }])
-          }
-          if (event.phase === 'events' && event.events_count > 0) {
-            const evtList = (event.event_names as string[]).join(', ')
+
+        // ── V2 agentic events ─────────────────────────────────────────────────
+        const turnNum = gameState.current_turn
+
+        if (event.type === 'announcement') {
+          const pol = event.policy as Policy
+          setAllHeadlines(prev => [...prev, {
+            outlet: "MAYOR'S OFFICE",
+            lean: 'mayor' as const,
+            headline: `BREAKING: Mayor announces "${pol.name}" — led by ${event.minister_name}`,
+            turnNum,
+            isBreaking: true,
+          }])
+        }
+
+        if (event.type === 'announcement_voices' || event.type === 'implementation_voices') {
+          const voices = event.voices as (CitizenVoice & { turnNum?: number })[]
+          setAllVoices(prev => [...prev, ...voices.map(v => ({ ...v, turnNum }))])
+        }
+
+        if (event.type === 'evaluation') {
+          setLiveEvalReasoning(event.reasoning as string)
+          setAllHeadlines(prev => [...prev, {
+            outlet: 'WIRE SERVICE',
+            lean: 'neutral' as const,
+            headline: `Implementation: ${event.execution_pct}% delivered${(event.leakage_cr as number) > 1 ? ` · ₹${(event.leakage_cr as number).toFixed(1)}Cr leaked` : ''}`,
+            turnNum,
+          }])
+        }
+
+        if (event.type === 'approval_vote') {
+          const voice = event.voice as CitizenVoice
+          const weight = event.population_weight as number
+          setAllVoices(prev => [...prev, { ...voice, turnNum }])
+          setLiveApprovalVotes(prev => [...prev, { sentiment: voice.sentiment, weight }])
+        }
+
+        if (event.type === 'approval_final') {
+          const before = Math.round(event.approval_before as number)
+          const after = Math.round(event.approval as number)
+          const dir = after >= before ? '↑' : '↓'
+          const bd = event.breakdown as { approve: number; disapprove: number; undecided: number; total: number }
+          // Update live approval so top bar reflects result before complete event fires
+          setLiveApproval(after)
+          setAllHeadlines(prev => [...prev, {
+            outlet: 'PULSE',
+            lean: after >= before ? 'mayor' as const : 'opposition' as const,
+            headline: `Approval ${dir} ${before}% → ${after}% | ${bd.approve} approve · ${bd.disapprove} disapprove · ${bd.undecided} undecided (${bd.total} polled)`,
+            turnNum,
+          }])
+        }
+
+        if (event.type === 'events') {
+          const evts = event.events_triggered as { name: string; type: string }[]
+          if (evts.length > 0) {
             setAllHeadlines(prev => [...prev, {
               outlet: 'ALERT',
-              lean: 'opposition',
-              headline: `${event.events_count} event(s) triggered this turn: ${evtList}`,
-              turnNum,
-            }])
-          }
-          if (event.phase === 'politics') {
-            const dir = (event.approval_after as number) >= (event.approval_before as number) ? '↑' : '↓'
-            setAllHeadlines(prev => [...prev, {
-              outlet: 'City Hall Watch',
-              lean: 'neutral' as const,
-              headline: `Approval ${dir} from ${Math.round(event.approval_before as number)}% to ${Math.round(event.approval_after as number)}% after ${event.counter} counter-frame`,
+              lean: 'opposition' as const,
+              headline: `${evts.length} event(s): ${evts.map(e => e.name).join(', ')}`,
               turnNum,
             }])
           }
         }
+
+        if (event.type === 'narrative_chunk' && event.key === 'headlines') {
+          const headlines = event.value as { outlet: string; lean: string; headline: string }[]
+          setAllHeadlines(prev => [...prev, ...headlines.map(h => ({ ...h, lean: h.lean as 'mayor' | 'opposition' | 'neutral', turnNum }))])
+        }
+
         // Accumulate live milestone for display
         setLiveMilestones(prev => [...prev, event])
       }
     } catch (e: unknown) {
       const errMsg = e instanceof Error ? e.message : String(e)
+      console.error('[handleSelectMinister] Turn failed:', e)
       setTurnError(`Turn execution failed: ${errMsg}`)
     } finally {
       setIsTurnExecuting(false)
@@ -1620,30 +1802,10 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
     : { health: 0, wealth: 0, safety: 0, social: 0 }
 
   const welfareStats: WelfareStat[] = [
-    {
-      label: 'Health', score: wf.health, delta: wd.health,
-      stroke: '#22c55e', glow: '#16a34a', trackColor: '#0a2010',
-      gradientId: 'healthG', gradientFrom: '#22c55e', gradientTo: '#86efac',
-      symbol: '♥', bg: 'rgba(34,197,94,0.08)'
-    },
-    {
-      label: 'Wealth', score: wf.wealth, delta: wd.wealth,
-      stroke: '#38bdf8', glow: '#0284c7', trackColor: '#071a28',
-      gradientId: 'wealthG', gradientFrom: '#38bdf8', gradientTo: '#7dd3fc',
-      symbol: '◈', bg: 'rgba(56,189,248,0.08)'
-    },
-    {
-      label: 'Safety', score: wf.safety, delta: wd.safety,
-      stroke: '#f59e0b', glow: '#d97706', trackColor: '#1a1000',
-      gradientId: 'safetyG', gradientFrom: '#f59e0b', gradientTo: '#fcd34d',
-      symbol: '⬡', bg: 'rgba(245,158,11,0.08)'
-    },
-    {
-      label: 'Society', score: wf.social, delta: wd.social,
-      stroke: '#f87171', glow: '#dc2626', trackColor: '#200a0a',
-      gradientId: 'socialG', gradientFrom: '#f87171', gradientTo: '#fca5a5',
-      symbol: '✦', bg: 'rgba(248,113,113,0.08)'
-    },
+    { label: 'Health', score: wf.health, delta: wd.health, color: '#22c55e', icon: '♥' },
+    { label: 'Wealth', score: wf.wealth, delta: wd.wealth, color: '#38bdf8', icon: '◈' },
+    { label: 'Safety', score: wf.safety, delta: wd.safety, color: '#f59e0b', icon: '⬡' },
+    { label: 'Society', score: wf.social, delta: wd.social, color: '#f87171', icon: '✦' },
   ]
 
   const treasury = gameState.treasury
@@ -1651,12 +1813,10 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
   const spent = Math.max(0, initTreasury - treasury)
   const spentPct = initTreasury > 0 ? Math.min(100, (spent / initTreasury) * 100) : 0
 
-  const approval = gameState.interim_approval
-  const prevApproval = lastTurn ? lastTurn.approval_before : approval
+  // Use liveApproval (from approval_final event) when available for real-time top bar update
+  const approval = liveApproval ?? gameState.interim_approval
+  const prevApproval = lastTurn ? lastTurn.approval_before : gameState.interim_approval
   const approvalDelta = approval - prevApproval
-  const approvalCirc = 2 * Math.PI * 16
-  const approvalFill = (Math.max(0, Math.min(100, approval)) / 100) * approvalCirc
-
   const crises = gameState.active_events.filter(e => e.type === 'crisis')
   const opportunities = gameState.active_events.filter(e => e.type === 'opportunity')
   const allCrises: ActiveEvent[] = [...crises, ...opportunities]
@@ -1707,6 +1867,121 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
 
       {/* Modals */}
       {gameOver && scorecard && <ScorecardOverlay sc={scorecard} />}
+
+      {/* Minister Info Popup — rendered as fixed overlay but visually near left panel */}
+      {expandedMinisterId && (() => {
+        const mIdx = gameState.ministers.findIndex(m => m.id === expandedMinisterId)
+        const m = gameState.ministers[mIdx]
+        if (!m) return null
+        const col = MINISTER_COLORS[mIdx % MINISTER_COLORS.length]
+        return (
+          <div
+            onClick={() => setExpandedMinisterId(null)}
+            style={{
+              position: 'fixed', inset: 0, zIndex: 300,
+              // No full backdrop — just a very subtle dim so the panel stays visible
+              background: 'rgba(5,13,27,0.35)',
+            }}
+          >
+            <div
+              onClick={e => e.stopPropagation()}
+              style={{
+                position: 'absolute',
+                // Anchor left panel width (380px) + 8px gap + 8px outer padding
+                left: 396, top: 60,
+                width: 300, maxHeight: 'calc(100vh - 80px)', overflowY: 'auto',
+                background: '#0a1929', border: `1px solid ${col}55`,
+                borderTop: `3px solid ${col}`, borderRadius: 8,
+                boxShadow: `0 0 40px ${col}25, 0 12px 40px rgba(0,0,0,0.7)`,
+                padding: '14px 16px 16px',
+                display: 'flex', flexDirection: 'column', gap: 14,
+              }}
+            >
+              {/* Header: avatar + name + close */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <AgentAvatar seed={m.name} ministers={gameState?.ministers || []} size={44} ring={col} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: '#f1f5f9', letterSpacing: '0.01em', lineHeight: 1.2 }}>{m.name}</div>
+                  <div style={{ fontSize: 10, color: col, fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, letterSpacing: '0.06em', marginTop: 2 }}>{m.portfolio}</div>
+                  {m.extra_portfolios?.map(p => (
+                    <span key={p} style={{ fontSize: 8, color: '#e8a030', marginRight: 4, background: 'rgba(232,160,48,0.1)', padding: '1px 5px', borderRadius: 3, border: '1px solid rgba(232,160,48,0.25)' }}>+{p}</span>
+                  ))}
+                </div>
+                <button
+                  onClick={() => setExpandedMinisterId(null)}
+                  style={{ fontSize: 16, color: '#475569', background: 'none', border: 'none', cursor: 'pointer', lineHeight: 1, padding: '2px 6px' }}
+                >✕</button>
+              </div>
+
+              {/* Demographics */}
+              {m.demographics && (
+                <div style={{ fontSize: 10, color: '#64748b', lineHeight: 1.6, background: 'rgba(255,255,255,0.02)', borderRadius: 5, padding: '7px 10px', border: '1px solid #1c3652' }}>
+                  {[m.demographics.profession, m.demographics.age_group, m.demographics.location, m.demographics.income_bracket].filter(Boolean).join('  ·  ')}
+                </div>
+              )}
+
+              {/* ── CORE STATS ── */}
+              <div>
+                <div style={{ fontSize: 8, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.12em', fontWeight: 700, color: col, marginBottom: 8 }}>CORE ATTRIBUTES</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
+                  {[
+                    { label: 'COMPETENCE', value: m.capability?.competence != null ? Math.round(m.capability.competence) : '—', color: '#38bdf8' },
+                    { label: 'ALIGNMENT', value: (m.mayor_alignment > 0 ? '+' : '') + Math.round(m.mayor_alignment), color: m.mayor_alignment > 20 ? '#22c55e' : m.mayor_alignment < -20 ? '#f87171' : '#94a3b8' },
+                    { label: 'INTEGRITY', value: m.personality?.['integrity'] != null ? Math.round(m.personality['integrity']) : '—', color: '#a78bfa' },
+                  ].map(s => (
+                    <div key={s.label} style={{ textAlign: 'center', background: 'rgba(255,255,255,0.03)', borderRadius: 5, padding: '8px 4px', border: '1px solid #1c3652' }}>
+                      <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'Share Tech Mono', monospace", color: s.color }}>{s.value}</div>
+                      <div style={{ fontSize: 7, color: '#475569', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em', marginTop: 3 }}>{s.label}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* ── DERIVED STATUS ── */}
+              <div>
+                <div style={{ fontSize: 8, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.12em', fontWeight: 700, color: '#94a3b8', marginBottom: 8 }}>POLITICAL STATUS</div>
+                {[
+                  { label: 'Loyalty', value: m.loyalty, color: '#22c55e' },
+                  { label: 'Political Capital', value: m.political_capital ?? 50, color: '#38bdf8' },
+                  { label: 'Scandal Exposure', value: m.scandal_exposure, color: m.scandal_exposure > 50 ? '#f87171' : '#fb923c' },
+                ].map(s => (
+                  <div key={s.label} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                    <span style={{ fontSize: 10, color: '#94a3b8', width: 120, flexShrink: 0, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.04em' }}>{s.label}</span>
+                    <div style={{ flex: 1, height: 5, background: '#071422', borderRadius: 3, overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${Math.max(0, Math.min(100, s.value))}%`, background: s.color, borderRadius: 3, transition: 'width 0.3s ease', boxShadow: `0 0 8px ${s.color}50` }} />
+                    </div>
+                    <span style={{ fontSize: 11, fontFamily: "'Share Tech Mono', monospace", color: s.color, width: 26, textAlign: 'right', fontWeight: 700 }}>{Math.round(s.value)}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* ── PERSONALITY TRAITS ── */}
+              {m.personality && Object.keys(m.personality).length > 0 && (
+                <div>
+                  <div style={{ fontSize: 8, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.12em', fontWeight: 700, color: '#94a3b8', marginBottom: 8 }}>PERSONALITY</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                    {Object.entries(m.personality).filter(([t]) => t !== 'integrity').map(([trait, val]) => {
+                      const v = Math.round(val as number)
+                      const barColor = v > 65 ? '#22c55e' : v < 35 ? '#f87171' : '#60a5fa'
+                      return (
+                        <div key={trait} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <span style={{ fontSize: 10, color: '#94a3b8', width: 120, flexShrink: 0, textTransform: 'capitalize' }}>{trait.replace(/_/g, ' ')}</span>
+                          <div style={{ flex: 1, height: 4, background: '#071422', borderRadius: 2, overflow: 'hidden' }}>
+                            <div style={{ height: '100%', width: `${v}%`, background: barColor, borderRadius: 2 }} />
+                          </div>
+                          <span style={{ fontSize: 10, fontFamily: "'Share Tech Mono', monospace", color: barColor, width: 26, textAlign: 'right', fontWeight: 700 }}>{v}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <div style={{ fontSize: 9, color: '#334155', textAlign: 'center', fontStyle: 'italic' }}>Click outside to close</div>
+            </div>
+          </div>
+        )
+      })()}
       {showPolicyModal && policyOptions && (
         <PolicyModal
           options={policyOptions}
@@ -1714,6 +1989,14 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
           onClose={() => { if (!isTurnExecuting) { setShowPolicyModal(false); setPolicyOptions(null); setPolicyError(null) } }}
           loading={isTurnExecuting}
           error={turnError}
+        />
+      )}
+      {showMinisterPicker && pendingPolicyIndex !== null && policyOptions && (
+        <MinisterPickerModal
+          policy={policyOptions[pendingPolicyIndex]}
+          ministers={gameState.ministers}
+          onSelect={handleSelectMinister}
+          onBack={() => { setShowMinisterPicker(false); setShowPolicyModal(true) }}
         />
       )}
 
@@ -1794,38 +2077,33 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
         <div className="h-8 w-px" style={{ background: '#1c3652' }} />
 
         {/* Mayor Approval */}
-        <div className="flex items-center gap-3 shrink-0">
-          <div className="relative flex items-center justify-center rounded-full" style={{ width: 38, height: 38 }}>
-            <svg viewBox="0 0 38 38" width="38" height="38" style={{ position: 'absolute', top: 0, left: 0 }}>
-              <circle cx="19" cy="19" r="16" fill="none" stroke="#0a1a30" strokeWidth="4" />
-              <circle cx="19" cy="19" r="16" fill="none" stroke="#22c55e" strokeWidth="4"
-                strokeLinecap="round"
-                strokeDasharray={`${approvalFill} ${approvalCirc}`}
-                transform="rotate(-90 19 19)"
-                style={{ filter: 'drop-shadow(0 0 4px #16a34a)' }} />
-            </svg>
-            <span style={{ fontSize: 9, fontWeight: 700, ...MONO('#4ade80'), position: 'relative', zIndex: 1 }}>
+        <div className="flex flex-col gap-1 shrink-0" style={{ minWidth: 120 }}>
+          <div style={{
+            fontSize: 9, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.15em',
+            color: '#4b6280', fontWeight: 700,
+          }}>MAYOR APPROVAL</div>
+          <div className="flex items-center gap-2">
+            <span style={{ fontSize: 20, fontWeight: 700, ...MONO('#f0c040'), lineHeight: 1 }}>
               {Math.round(approval)}%
             </span>
-          </div>
-          <div>
-            <div style={{
-              fontSize: 9, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.15em',
-              color: '#4b6280', fontWeight: 700
-            }}>MAYOR APPROVAL</div>
-            <div className="flex items-center gap-1.5 mt-0.5">
-              <span style={{ fontSize: 18, fontWeight: 700, ...MONO('#f0c040'), lineHeight: 1 }}>
-                {Math.round(approval)}%
+            {approvalDelta !== 0 && (
+              <span style={{
+                fontSize: 10, fontWeight: 700,
+                color: approvalDelta >= 0 ? '#4ade80' : '#f87171',
+                fontFamily: "'Share Tech Mono', monospace",
+              }}>
+                {approvalDelta >= 0 ? '▲+' : '▼'}{Math.round(approvalDelta)}%
               </span>
-              {approvalDelta !== 0 && (
-                <span style={{
-                  fontSize: 10, fontWeight: 700,
-                  color: approvalDelta >= 0 ? '#4ade80' : '#f87171'
-                }}>
-                  {approvalDelta >= 0 ? '▲' : '▼'} {approvalDelta >= 0 ? '+' : ''}{Math.round(approvalDelta)}%
-                </span>
-              )}
-            </div>
+            )}
+          </div>
+          <div style={{ height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 2, overflow: 'hidden' }}>
+            <div style={{
+              height: '100%',
+              width: `${Math.max(0, Math.min(100, approval))}%`,
+              background: approval >= 50 ? '#22c55e' : approval >= 35 ? '#f59e0b' : '#f87171',
+              borderRadius: 2,
+              transition: 'width 0.7s ease',
+            }} />
           </div>
         </div>
 
@@ -1858,8 +2136,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
             onMouseLeave={e => { e.currentTarget.style.borderColor = isMuted ? '#1c3652' : 'rgba(232,160,48,0.4)'; e.currentTarget.style.background = isMuted ? 'rgba(255,255,255,0.04)' : 'rgba(232,160,48,0.15)' }}>
             {isMuted ? <VolumeX size={13} color="#4b6280" /> : <Volume2 size={13} color="#e8a030" />}
           </button>
-          <audio ref={audioRef} src="/theme.mp3" loop preload="auto" />
-
+          <audio ref={audioRef} src={TRACKS[currentTrackIndex]} onEnded={nextTrack} preload="auto" />
         </div>
       </div>
 
@@ -1882,7 +2159,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
       <div className="flex flex-1 gap-2 p-2 overflow-hidden min-h-0">
 
         {/* ── LEFT: Advisory Chat + Crises ───────────────────────────────── */}
-        <div className="w-[300px] flex flex-col gap-2 shrink-0">
+        <div className="w-[380px] flex flex-col gap-2 shrink-0" style={{ position: 'relative' }}>
 
           {/* Advisory Chat Panel */}
           <div className="flex flex-col" style={{ ...PANEL, minHeight: 500 }}>
@@ -1906,7 +2183,6 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
               <div style={{
                 display: 'grid',
                 gridTemplateColumns: 'repeat(3, 1fr)',
-                borderBottom: expandedMinisterId ? '1px solid rgba(28,54,82,0.5)' : 'none',
               }}>
                 {gameState.ministers.slice(0, 6).map((m, idx) => {
                   const col = MINISTER_COLORS[idx % MINISTER_COLORS.length]
@@ -1917,8 +2193,8 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                       onClick={() => setExpandedMinisterId(isExpanded ? null : m.id)}
                       className="flex flex-col items-center cursor-pointer transition-colors"
                       style={{
-                        padding: '7px 6px 5px',
-                        gap: 3,
+                        padding: '10px 8px 8px',
+                        gap: 4,
                         background: isExpanded ? 'rgba(255,255,255,0.05)' : '',
                         borderBottom: isExpanded ? `2px solid ${col}` : '2px solid transparent',
                         borderRight: (idx % 3 < 2) ? '1px solid rgba(28,54,82,0.3)' : 'none',
@@ -1926,138 +2202,17 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                       onMouseEnter={e => { if (!isExpanded) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
                       onMouseLeave={e => { if (!isExpanded) e.currentTarget.style.background = '' }}
                     >
-                      <Avatar seed={m.name} size={28} ring={col} />
-                      <span style={{ fontSize: 9, fontWeight: 700, color: isExpanded ? '#fff' : '#94a3b8', textAlign: 'center', lineHeight: 1.2, width: '100%' }}>
+                      <AgentAvatar seed={m.name} ministers={gameState?.ministers || []} size={36} ring={col} />
+                      <span style={{ fontSize: 10, fontWeight: 700, color: isExpanded ? '#fff' : '#94a3b8', textAlign: 'center', lineHeight: 1.2, width: '100%' }}>
                         {m.name}
                       </span>
-                      <span style={{ fontSize: 8, color: col, textAlign: 'center', lineHeight: 1.1, opacity: 0.85, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.04em' }}>
+                      <span style={{ fontSize: 9, color: col, textAlign: 'center', lineHeight: 1.1, opacity: 0.85, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.04em' }}>
                         {m.portfolio}
                       </span>
                     </div>
                   )
                 })}
               </div>
-              {/* Expanded detail — full width below the strip */}
-              {gameState.ministers.map((m, idx) => {
-                const col = MINISTER_COLORS[idx % MINISTER_COLORS.length]
-                const isExpanded = expandedMinisterId === m.id
-                return isExpanded ? (
-                  <div key={m.id}>
-                    {/* Expanded inline detail */}
-                    {isExpanded && (
-                      <div style={{
-                        borderLeft: `2px solid ${col}`,
-                        borderBottom: '1px solid rgba(28,54,82,0.5)',
-                        background: 'rgba(255,255,255,0.02)',
-                        padding: '10px 12px 12px 14px',
-                      }}>
-                        {/* ── PROFESSIONAL ─────────────────────────────── */}
-                        <div style={{
-                          fontSize: 8, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.12em',
-                          fontWeight: 700, color: col, marginBottom: 6, opacity: 0.9
-                        }}>
-                          PROFESSIONAL
-                        </div>
-                        {/* Portfolio + extra */}
-                        <div className="flex items-center gap-2 mb-2 flex-wrap">
-                          <span style={{
-                            fontSize: 9, padding: '2px 6px', borderRadius: 3,
-                            background: `${col}18`, border: `1px solid ${col}44`, color: col,
-                            fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, letterSpacing: '0.06em'
-                          }}>
-                            {m.portfolio}
-                          </span>
-                          {m.extra_portfolios?.map(p => (
-                            <span key={p} style={{
-                              fontSize: 8, padding: '2px 5px', borderRadius: 3,
-                              background: 'rgba(232,160,48,0.08)', border: '1px solid rgba(232,160,48,0.25)',
-                              color: '#e8a030', fontFamily: "'Rajdhani', sans-serif", fontWeight: 600
-                            }}>
-                              +{p}
-                            </span>
-                          ))}
-                        </div>
-                        {/* Demographics */}
-                        {m.demographics && (
-                          <div style={{ fontSize: 9, color: '#475569', marginBottom: 8, lineHeight: 1.5 }}>
-                            {[m.demographics.profession, m.demographics.age_group, m.demographics.location, m.demographics.income_bracket]
-                              .filter(Boolean).join(' · ')}
-                          </div>
-                        )}
-                        {/* Competence + Alignment + Mayor alignment */}
-                        <div className="flex gap-3 mb-3 flex-wrap">
-                          {m.capability?.competence != null && (
-                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-                              <span style={{ fontSize: 14, fontWeight: 800, fontFamily: "'Share Tech Mono', monospace", color: '#38bdf8' }}>
-                                {Math.round(m.capability.competence)}
-                              </span>
-                              <span style={{ fontSize: 8, color: '#334155', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.06em' }}>COMPETENCE</span>
-                            </div>
-                          )}
-                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-                            <span style={{
-                              fontSize: 14, fontWeight: 800, fontFamily: "'Share Tech Mono', monospace",
-                              color: m.mayor_alignment > 20 ? '#22c55e' : m.mayor_alignment < -20 ? '#f87171' : '#94a3b8'
-                            }}>
-                              {m.mayor_alignment > 0 ? '+' : ''}{Math.round(m.mayor_alignment)}
-                            </span>
-                            <span style={{ fontSize: 8, color: '#334155', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.06em' }}>ALIGNMENT</span>
-                          </div>
-                        </div>
-
-                        {/* ── PERSONAL ─────────────────────────────────── */}
-                        <div style={{
-                          fontSize: 8, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.12em',
-                          fontWeight: 700, color: '#94a3b8', marginBottom: 6, opacity: 0.7
-                        }}>
-                          PERSONAL
-                        </div>
-                        {/* Status bars */}
-                        {[
-                          { label: 'Loyalty', value: m.loyalty, color: '#22c55e' },
-                          { label: 'Pol. Capital', value: m.political_capital ?? 50, color: '#38bdf8' },
-                          { label: 'Scandal Risk', value: m.scandal_exposure, color: m.scandal_exposure > 50 ? '#f87171' : '#475569' },
-                        ].map(s => (
-                          <div key={s.label} className="flex items-center gap-2 mb-1.5">
-                            <span style={{
-                              fontSize: 9, color: '#475569', width: 72, fontFamily: "'Rajdhani', sans-serif",
-                              letterSpacing: '0.04em', fontWeight: 600
-                            }}>{s.label}</span>
-                            <div style={{ flex: 1, height: 4, background: '#0b1929', borderRadius: 2, overflow: 'hidden' }}>
-                              <div style={{
-                                height: '100%', width: `${Math.max(0, Math.min(100, s.value))}%`,
-                                background: s.color, borderRadius: 2, transition: 'width 0.3s ease',
-                                boxShadow: `0 0 6px ${s.color}60`
-                              }} />
-                            </div>
-                            <span style={{ fontSize: 9, fontFamily: "'Share Tech Mono', monospace", color: s.color, width: 22, textAlign: 'right' }}>
-                              {Math.round(s.value)}
-                            </span>
-                          </div>
-                        ))}
-                        {/* Personality traits */}
-                        {m.personality && Object.keys(m.personality).length > 0 && (
-                          <div className="flex gap-1 flex-wrap mt-2">
-                            {Object.entries(m.personality).map(([trait, val]) => {
-                              const v = Math.round(val)
-                              const c = v > 65 ? '#22c55e' : v < 35 ? '#f87171' : '#64748b'
-                              return (
-                                <span key={trait} style={{
-                                  fontSize: 8, padding: '2px 5px', borderRadius: 10,
-                                  background: `${c}14`, border: `1px solid ${c}30`, color: c,
-                                  fontFamily: "'Share Tech Mono', monospace"
-                                }}>
-                                  {trait.replace(/_/g, ' ')} · {v}
-                                </span>
-                              )
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                ) : null
-              })}
             </div>
 
             {/* Council hint */}
@@ -2066,11 +2221,11 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
               background: 'rgba(232,160,48,0.03)', borderBottom: '1px solid rgba(28,54,82,0.4)',
               fontStyle: 'italic', lineHeight: 1.4
             }}>
-              Click a minister for full stats. Use @name to address someone directly.
+              Click a minister to view their full profile. Use @name to address someone directly.
             </div>
 
             {/* Chat Messages */}
-            <div className="overflow-y-auto space-y-2.5" style={{ height: 280, padding: '8px' }}>
+            <div className="overflow-y-auto space-y-2.5" style={{ height: 320, padding: '10px' }}>
               {chatMessages.map((msg, i) => msg.isSystem ? (
                 <div key={i} style={{
                   textAlign: 'center', fontSize: 9, color: '#334155', fontStyle: 'italic',
@@ -2088,7 +2243,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                           fontSize: 9, fontWeight: 700, border: `1.5px solid ${msg.ringColor}`
                         }}>M</div>
                     ) : (
-                      <Avatar seed={msg.seed} size={26} ring={msg.ringColor} />
+                      <AgentAvatar seed={msg.seed} ministers={gameState?.ministers || []} size={26} ring={msg.ringColor} />
                     )}
                   </div>
                   <div className="flex-1 min-w-0">
@@ -2100,7 +2255,9 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                       <span style={{ fontSize: 9, color: '#334155', marginLeft: 'auto' }}>{msg.time}</span>
                     </div>
                     <div className="mt-1 px-2 py-1.5 rounded-lg" style={{
-                      fontSize: 11, color: '#c0cfe0',
+                      fontSize: 11,
+                      color: msg.isSystemFallback ? '#475569' : '#c0cfe0',
+                      fontStyle: msg.isSystemFallback ? 'italic' : undefined,
                       background: msg.isMayor ? 'rgba(216,160,48,0.1)' : 'rgba(255,255,255,0.05)',
                       borderLeft: `2px solid ${msg.ringColor}44`, lineHeight: 1.5,
                     }}>{msg.text}</div>
@@ -2232,8 +2389,8 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                 {showAllParams ? 'Hide' : 'View All Parameters'} {showAllParams ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
               </button>
             </div>
-            <div className="p-2.5 flex gap-2">
-              {welfareStats.map(stat => <WelfareRing key={stat.label} stat={stat} />)}
+            <div className="p-3 flex gap-3">
+              {welfareStats.map(stat => <WelfareCard key={stat.label} stat={stat} />)}
             </div>
             {/* All Parameters Grid */}
             {showAllParams && (() => {
@@ -2308,13 +2465,35 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
 
             {/* Stream Image Banner */}
             <div className="relative shrink-0 overflow-hidden" style={{ height: 185, background: '#050d1b' }}>
-              {isTurnExecuting ? (
+              {(isTurnExecuting || turnError) ? (
                 <div className="absolute inset-0 overflow-y-auto" style={{ background: 'rgba(5,13,27,0.95)' }}>
                   <div className="absolute inset-0 z-0 bg-cover bg-center opacity-15 saturate-50" style={{
                     backgroundImage: 'url("https://images.unsplash.com/photo-1451187580459-43490279c0fa?q=80&w=1200&auto=format&fit=crop")',
                   }} />
                   <div className="relative z-10">
-                    <LiveMilestoneFeed milestones={liveMilestones} policyName={executingPolicyName ?? ''} />
+                    {turnError ? (
+                      <div style={{ padding: '10px 12px' }}>
+                        <div style={{ color: '#f87171', fontSize: 11, marginBottom: 6 }}>
+                          ⚠ {turnError}
+                        </div>
+                        <button
+                          onClick={() => setTurnError(null)}
+                          style={{
+                            fontSize: 9, color: '#64748b', background: 'rgba(255,255,255,0.05)',
+                            border: '1px solid #1c3652', borderRadius: 4, padding: '2px 8px', cursor: 'pointer',
+                          }}
+                        >
+                          DISMISS
+                        </button>
+                      </div>
+                    ) : (
+                      <LiveMilestoneFeed
+                        milestones={liveMilestones}
+                        policyName={executingPolicyName ?? ''}
+                        approvalVotes={liveApprovalVotes}
+                        evalReasoning={liveEvalReasoning}
+                      />
+                    )}
                   </div>
                 </div>
               ) : (
@@ -2381,78 +2560,132 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
         </div>
 
         {/* ── RIGHT: Identity + Media + City Chatter ──────────────────────── */}
-        <div className="w-[280px] flex flex-col gap-2 shrink-0 overflow-hidden min-h-0">
+        <div className="w-[340px] flex flex-col gap-2 shrink-0 overflow-hidden min-h-0">
 
           {/* Identity Groups */}
-          <div style={{ ...PANEL, maxHeight: 260 }} className="shrink-0 overflow-hidden flex flex-col">
+          <div style={{ ...PANEL, maxHeight: 380 }} className="shrink-0 overflow-hidden flex flex-col">
             <div className="flex items-center justify-between px-3 py-2 shrink-0" style={{ borderBottom: '1px solid #1c3652' }}>
               <div className="flex items-center gap-2">
                 <div className="w-1 h-4 rounded-full" style={{ background: '#a855f7', boxShadow: '0 0 6px #a855f7' }} />
                 <span style={HDR_LABEL}>IDENTITY GROUPS</span>
               </div>
-              <select
-                value={identityFilter}
-                onChange={e => setIdentityFilter(e.target.value)}
-                style={{
-                  fontSize: 9, background: '#071018', border: '1px solid #1c3652',
-                  color: '#a855f7', borderRadius: 3, padding: '2px 5px', cursor: 'pointer',
-                  fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em', fontWeight: 700,
-                }}>
-                {filterableTypes.map(t => (
-                  <option key={t} value={t}>{t.toUpperCase()}</option>
-                ))}
-              </select>
             </div>
-            {/* Column headers */}
-            <div className="flex items-center gap-1.5 px-3 py-1 shrink-0" style={{ borderBottom: '1px solid rgba(28,54,82,0.4)' }}>
-              <span className="flex-1" style={{ fontSize: 8, color: '#334155', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em' }}>GROUP</span>
-              <span style={{ fontSize: 8, color: '#334155', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em', width: 55, textAlign: 'right' }}>WELLBEING</span>
-              <span style={{ fontSize: 8, color: '#334155', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em', width: 14, textAlign: 'right' }}>↕</span>
+            {/* Pill filter tabs */}
+            <div className="px-3 py-1.5 shrink-0 flex gap-1 flex-wrap" style={{ borderBottom: '1px solid rgba(28,54,82,0.4)' }}>
+              {filterableTypes.map(t => (
+                <button
+                  key={t}
+                  onClick={() => { setIdentityFilter(t); setExpandedGroup(null) }}
+                  style={{
+                    fontSize: 9, fontWeight: 700, letterSpacing: '0.08em',
+                    fontFamily: "'Rajdhani', sans-serif",
+                    padding: '2px 8px', borderRadius: 10, cursor: 'pointer', border: 'none',
+                    background: identityFilter === t ? '#a855f7' : 'rgba(168,85,247,0.12)',
+                    color: identityFilter === t ? '#fff' : '#a855f7',
+                    transition: 'all 0.15s',
+                  }}>
+                  {t.toUpperCase()}
+                </button>
+              ))}
             </div>
-            <div className="px-2 py-1 space-y-0.5 overflow-y-auto flex-1">
+            <div className="px-2 py-1.5 overflow-y-auto flex-1" style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
               {wardReport
                 .filter(e => e.group_type === identityFilter)
-                .slice(0, 10)
+                .slice(0, 12)
                 .map((entry, i) => {
-                  const delta = entry.avg_wellbeing_delta
                   const wb = Math.min(100, Math.max(0, entry.avg_wellbeing ?? 50))
-                  // Color: red <40, amber 40-60, green >70, purple for bright_spot
-                  const col = entry.hotspot ? '#f87171'
+                  const appr = Math.min(100, Math.max(0, entry.approval ?? 50))
+                  const scoreColor = entry.hotspot ? '#f87171'
                     : entry.bright_spot ? '#a855f7'
-                      : wb >= 70 ? '#22c55e'
-                        : wb >= 45 ? '#e8a030'
+                      : wb >= 65 ? '#22c55e'
+                        : wb >= 45 ? '#f59e0b'
                           : '#f87171'
-                  const hasDelta = lastTurn != null && delta !== 0
-                  const groupIcon: Record<string, string> = {
-                    religion: '☪', ideology: '⚖', profession: '💼',
-                    income: '₹', location: '📍', caste: '◈', age_group: '◑',
-                  }
-                  const icon = groupIcon[entry.group_type] ?? '⬡'
+                  const apprColor = appr >= 60 ? '#22c55e' : appr >= 40 ? '#f59e0b' : '#f87171'
+                  const trendIcon = entry.trend === 'up' ? '↑' : entry.trend === 'down' ? '↓' : '─'
+                  const trendColor = entry.trend === 'up' ? '#22c55e' : entry.trend === 'down' ? '#f87171' : '#475569'
+                  const groupKey = `${entry.group_type}:${entry.group_name}`
+                  const isExpanded = expandedGroup === groupKey
+
+                  // Per-turn history for this group from turnHistory
+                  const groupHistory = isExpanded ? turnHistory.map(te => {
+                    const wr = te.result.ward_report?.find(
+                      e => e.group_type === entry.group_type && e.group_name === entry.group_name
+                    )
+                    return wr ? { turn: te.turn, wb: wr.avg_wellbeing, appr: wr.approval ?? 50, pulse: wr.pulse_summary || '' } : null
+                  }).filter(Boolean) as { turn: number; wb: number; appr: number; pulse: string }[] : []
+
                   return (
                     <div key={i}
-                      className="flex items-center gap-1.5 px-1.5 rounded"
-                      style={{ paddingTop: 3, paddingBottom: 3 }}>
-                      <span style={{ fontSize: 10, width: 14, textAlign: 'center', lineHeight: 1 }}>{icon}</span>
-                      <span className="flex-1 truncate" style={{ fontSize: 10, color: '#94a3b8' }}>{entry.group_name}</span>
-                      {hasDelta && (
-                        <span style={{ fontSize: 8, color: delta >= 0 ? '#4ade80' : '#f87171', minWidth: 22, textAlign: 'right', fontFamily: "'Share Tech Mono', monospace" }}>
-                          {delta >= 0 ? '+' : ''}{Math.round(delta)}
-                        </span>
-                      )}
-                      <div className="flex items-center gap-1 shrink-0">
-                        <MiniBar value={wb} color={col} width={34} />
-                        <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "'Share Tech Mono', monospace", color: col, width: 22, textAlign: 'right' }}>
-                          {Math.round(wb)}
-                        </span>
+                      onClick={() => setExpandedGroup(isExpanded ? null : groupKey)}
+                      style={{
+                        background: isExpanded ? 'rgba(30,41,59,0.7)' : 'rgba(15,23,42,0.4)',
+                        borderRadius: 8, padding: '10px 14px', cursor: 'pointer',
+                        border: `1px solid ${entry.hotspot ? 'rgba(248,113,113,0.3)' : entry.bright_spot ? 'rgba(168,85,247,0.3)' : 'rgba(51,65,85,0.5)'}`,
+                        boxShadow: isExpanded ? '0 4px 12px rgba(0,0,0,0.2)' : 'none',
+                        transition: 'all 0.2s ease',
+                      }}>
+                      {/* Row 1: name + wellbeing score + trend */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                        <span className="flex-1 truncate" style={{ fontSize: 11, fontWeight: 600, color: '#cbd5e1' }}>{entry.group_name}</span>
+                        <span style={{ fontSize: 14, fontWeight: 800, fontFamily: "'Share Tech Mono', monospace", color: scoreColor }}>{Math.round(wb)}</span>
+                        <span style={{ fontSize: 8, color: '#4b6280', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.05em', fontWeight: 600 }}>WB</span>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: trendColor, width: 14, textAlign: 'center' }}>{trendIcon}</span>
                       </div>
-                      <span style={{ fontSize: 9, width: 12, textAlign: 'center', color: entry.trend === 'up' ? '#22c55e' : entry.trend === 'down' ? '#f87171' : '#334155' }}>
-                        {entry.trend === 'up' ? '▲' : entry.trend === 'down' ? '▼' : '—'}
-                      </span>
+                      {/* Row 2: wellbeing bar */}
+                      <div style={{ height: 4, background: '#071422', borderRadius: 3, overflow: 'hidden', marginBottom: 5 }}>
+                        <div style={{
+                          height: '100%', width: `${wb}%`, borderRadius: 3,
+                          background: `linear-gradient(90deg, ${scoreColor}88, ${scoreColor})`,
+                          boxShadow: `0 0 6px ${scoreColor}40`,
+                          transition: 'width 0.5s ease',
+                        }} />
+                      </div>
+                      {/* Row 3: population + approval */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10 }}>
+                        <span style={{ color: '#64748b', fontFamily: "'Share Tech Mono', monospace", letterSpacing: '0.02em' }}>
+                          Representing {Math.round(entry.population_pct ?? 0)}% of population
+                        </span>
+                        <span style={{ marginLeft: 'auto', fontFamily: "'Share Tech Mono', monospace", fontWeight: 800, color: apprColor, letterSpacing: '0.05em' }}>
+                          {Math.round(appr)}%
+                        </span>
+                        <span style={{ color: '#4b6280', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.05em', fontWeight: 700, fontSize: 9 }}>APPR</span>
+                      </div>
+                      {/* Expanded: per-turn history */}
+                      {isExpanded && (
+                        <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid rgba(51,65,85,0.6)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          {groupHistory.length > 0 ? groupHistory.map(h => {
+                            const twbColor = h.wb >= 65 ? '#22c55e' : h.wb >= 45 ? '#f59e0b' : '#f87171'
+                            const taColor = h.appr >= 60 ? '#22c55e' : h.appr >= 40 ? '#f59e0b' : '#f87171'
+                            return (
+                              <div key={h.turn} style={{ background: 'rgba(15,23,42,0.3)', borderRadius: 4, padding: '6px 8px', borderLeft: '2px solid #3b82f6' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, marginBottom: 4 }}>
+                                  <span style={{
+                                    fontSize: 9, fontWeight: 800, color: '#3b82f6',
+                                    background: 'rgba(59,130,246,0.15)',
+                                    borderRadius: 3, padding: '1px 5px',
+                                    fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.06em',
+                                  }}>TURN {h.turn}</span>
+                                  <span style={{ color: '#64748b', fontFamily: "'Rajdhani', sans-serif", fontWeight: 600, fontSize: 9 }}>WB</span>
+                                  <span style={{ fontFamily: "'Share Tech Mono', monospace", color: twbColor, fontWeight: 700 }}>{Math.round(h.wb)}</span>
+                                  <span style={{ color: '#334155' }}>│</span>
+                                  <span style={{ color: '#64748b', fontFamily: "'Rajdhani', sans-serif", fontWeight: 600, fontSize: 9 }}>APPR</span>
+                                  <span style={{ fontFamily: "'Share Tech Mono', monospace", color: taColor, fontWeight: 700 }}>{Math.round(h.appr)}%</span>
+                                </div>
+                                <div style={{ fontSize: 11, color: '#e2e8f0', lineHeight: 1.4, fontStyle: 'italic' }}>
+                                  "{h.pulse || 'Sentiment remains stable amid policy adjustments.'}"
+                                </div>
+                              </div>
+                            )
+                          }) : (
+                            <div style={{ fontSize: 10, color: '#64748b', fontStyle: 'italic', textAlign: 'center', padding: '4px 0' }}>Run a turn to see this group's reaction history.</div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )
                 })}
               {wardReport.filter(e => e.group_type === identityFilter).length === 0 && (
-                <div style={{ fontSize: 10, color: '#334155', textAlign: 'center', paddingTop: 12 }}>No data yet</div>
+                <div style={{ fontSize: 11, color: '#334155', textAlign: 'center', paddingTop: 16 }}>No data yet — run a turn to see group welfare</div>
               )}
             </div>
           </div>
@@ -2543,34 +2776,47 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
               )}
               {allVoices.length > 0 && [0, 1].map(copy => (
                 <div key={copy} ref={copy === 0 ? chatterInnerRef : undefined} className="space-y-2.5" style={copy === 1 ? { paddingTop: 10 } : undefined}>
-                  {allVoices.map((v, i) => {
+                  {allVoices.filter(v => !v.citizen_id.startsWith('politics-')).map((v, i) => {
                     const ring = sentimentRing(v.sentiment)
                     return (
-                      <div key={`${copy}-${i}`} className="flex gap-2">
-                        <div className="shrink-0" style={{ position: 'relative', width: 30, height: 30 }}>
-                          <Avatar seed={v.name} size={30} ring={ring} />
+                      <div key={`${copy}-${i}`} className="flex gap-1.5">
+                        <div className="shrink-0" style={{ position: 'relative', width: 26, height: 26, marginTop: 2 }}>
+                          <Avatar seed={v.name} size={26} ring={ring} />
                           <div className="absolute bottom-0 right-0 rounded-full"
                             style={{
-                              width: 7, height: 7,
+                              width: 6, height: 6,
                               background: v.sentiment === 'approve' ? '#22c55e' : v.sentiment === 'disapprove' ? '#f87171' : '#e8a030',
-                              border: '1px solid #050d1b', boxShadow: `0 0 4px ${ring}`
+                              border: '1px solid #050d1b',
                             }} />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <span style={{ fontSize: 10, fontWeight: 700, color: '#7dd3fc' }}>{v.name}</span>
-                            <span style={{
-                              fontSize: 8, fontWeight: 700, color: '#4b6280',
-                              background: '#0b1929', border: '1px solid #1c3652',
-                              borderRadius: 3, padding: '0 3px', fontFamily: "'Rajdhani', sans-serif"
-                            }}>T{v.turnNum}</span>
-                            <span style={{ fontSize: 9, color: '#475569' }}>{v.demographics_summary}</span>
+                          <div className="flex items-center gap-1" style={{ marginBottom: 2 }}>
+                            <span style={{ fontSize: 9, fontWeight: 700, color: '#94a3b8' }}>{v.name.split(' ')[0]}</span>
+                            <span style={{ fontSize: 8, color: '#334155' }}>· {v.demographics_summary.split(',')[0]}</span>
+                            {(v as any).turnNum != null && (
+                              <span style={{
+                                fontSize: 7, fontWeight: 700, color: '#f59e0b',
+                                background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.25)',
+                                borderRadius: 3, padding: '0 3px',
+                                fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.06em',
+                              }}>T{(v as any).turnNum}</span>
+                            )}
                           </div>
-                          <div className="mt-1 px-2 py-1.5 rounded"
-                            style={{
-                              background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(28,54,82,0.6)',
-                              fontSize: 10, color: '#94a3b8', lineHeight: 1.5
-                            }}>
+                          {/* Speech bubble */}
+                          <div style={{
+                            background: v.sentiment === 'approve'
+                              ? 'rgba(34,197,94,0.06)'
+                              : v.sentiment === 'disapprove'
+                                ? 'rgba(248,113,113,0.06)'
+                                : 'rgba(255,255,255,0.03)',
+                            border: `1px solid ${ring}22`,
+                            borderRadius: '0 8px 8px 8px',
+                            padding: '5px 8px',
+                            fontSize: 10,
+                            color: '#cbd5e1',
+                            lineHeight: 1.55,
+                            fontStyle: 'normal',
+                          }}>
                             {v.reaction}
                           </div>
                         </div>

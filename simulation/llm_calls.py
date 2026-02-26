@@ -14,6 +14,7 @@ from typing import Any
 
 from engine.models import (
     ActiveEvent,
+    Citizen,
     CitizenVoice,
     CityParameters,
     CityProfile,
@@ -22,6 +23,8 @@ from engine.models import (
     MediaOutletState,
     Minister,
     Policy,
+    WardReportEntry,
+    WellbeingState,
 )
 from llm.llm_client import LLMClient
 
@@ -138,8 +141,8 @@ CITY_PROFILE_SCHEMA = textwrap.dedent("""\
         "interest_rate": float
       },
       "game_config": {
-        "total_turns": 20,
-        "election_turn": 12,
+        "total_turns": 10,
+        "election_turn": 8,
         "agent_count": 50,
         "minister_count": 5,
         "legacy_equilibrium_multiplier": 2.0
@@ -265,16 +268,16 @@ MINISTER_SYSTEM_TEMPLATE = textwrap.dedent("""\
 
     Your personality: {personality_summary}
 
-    CONVERSATION STYLE — this is a real cabinet room discussion, not a solo briefing:
-    - You can AGREE with another minister's point if it makes sense — don't always push your own angle.
-    - You can say "I don't have much to add here" or defer to a colleague with more expertise.
-    - You can BUILD on what someone else said"
-    - You can SUPPORT or QUALIFY ideas"
-    - You can DISAGREE respectfully if your portfolio is directly affected.
-    - You are NOT the only voice in the room. Be a team player when appropriate.
-    - Sometimes the best response is short: one sentence of agreement or a clarifying question.
-    - Only advocate hard for your portfolio when it's directly relevant to the topic.
-    - Speak in first person. Keep it to 1-3 sentences. Sound human, not formal.
+    CONVERSATION STYLE — this is a real cabinet room, not a polite seminar:
+    - NEVER start with "I agree". Push your own portfolio's angle FIRST, then acknowledge others if relevant.
+    - If another minister's proposal hurts your sector, say so directly. Budget is limited — fight for your share.
+    - You can challenge, qualify, or redirect: "That's fine for roads, but my schools are crumbling."
+    - If the topic doesn't concern your portfolio at all, keep it very brief (one sentence) or raise a different concern.
+    - You can support an idea, but add a condition: "Only if we also fund X."
+    - Show personality — if you're high-integrity, call out waste. If low-loyalty, subtly question the mayor's priorities.
+    - Speak in first person. Keep it to 1-3 sentences. Sound like a real politician, not a bureaucrat.
+    - NEVER just echo what others said. Add new information, a counter-argument, or a trade-off.
+    - Vary your address: sometimes "Mayor", sometimes just dive straight in. NEVER say "Mr. Mayor" or "Madam Mayor" — this is an informal cabinet room, not a press conference.
 """)
 
 
@@ -597,6 +600,7 @@ def sample_citizen_reactions(
     citizens_str = "\n".join(
         f"  {i+1}. {c['name']} — {c['demographics']} | ideology: {c['ideology']} | "
         f"wellbeing: {c['wellbeing']:.0f}/100"
+        + (f" | personality: {c['personality']}" if c.get('personality') else "")
         for i, c in enumerate(sampled_citizens)
     )
 
@@ -613,22 +617,30 @@ def sample_citizen_reactions(
         Citizens to react:
         {citizens_str}
 
-        Generate one authentic, casual, in-character reaction quote for each citizen.
-        They should sound like REAL PEOPLE talking — not formal statements.
-        Citizens can use their mother tongue phrases mixed with English naturally.
-        Sentiment must be one of: approve, disapprove, undecided.
+        Write one raw, unfiltered reaction for each citizen — like a WhatsApp forward,
+        chai-stall argument, or auto-rickshaw conversation. Think street-level, not press conference.
+
+        Style rules:
+        - Mix mother tongue with English naturally (Hinglish, Tanglish, Bangla-English, etc.)
+        - Use slang: yaar, bhai, da, na, arre, kya baat hai, waste da, sahi hai, pagal hain kya
+        - Be specific to THEIR situation — a poor daily-wage worker reacts differently than a
+          middle-class professional. Reference their job, income, or location if relevant.
+        - High integrity citizens get angry at corruption even if the policy helped them
+        - High empathy citizens worry about neighbors, not just themselves
+        - Keep it 1-2 sentences MAX. Short, punchy, real.
+        - Sentiment must be one of: approve, disapprove, undecided
 
         Return a JSON array:
         [
           {{
             "citizen_id": "string",
             "name": "string",
-            "reaction": "one casual sentence — like a WhatsApp message or street conversation",
+            "reaction": "raw casual quote in their voice",
             "sentiment": "approve|disapprove|undecided"
           }}
         ]
 
-        One entry per citizen, in the same order.
+        One entry per citizen, in the same order as the input list.
     """)
     raw = llm.chat_text(CITIZEN_VOICES_SYSTEM, prompt)
     data = _extract_json(raw)
@@ -692,3 +704,245 @@ def generate_advisor_summary(
         return llm.chat_text(ADVISOR_SYSTEM, prompt).strip()
     except Exception:
         return ""
+
+
+# ---------------------------------------------------------------------------
+# AI Policy Evaluator
+# ---------------------------------------------------------------------------
+
+EVALUATOR_SYSTEM = textwrap.dedent("""\
+    You are an impartial policy analyst evaluating municipal governance in a city simulation.
+    Given a policy, the minister implementing it, and the city's current state, you assess
+    realistic implementation outcomes.
+
+    Be specific and grounded — reference the minister's actual competence and integrity,
+    the city's infrastructure constraints, and how this policy interacts with existing conditions.
+    Do NOT be uniformly optimistic. Corruption, bureaucratic friction, and weak institutions
+    genuinely reduce outcomes.
+""")
+
+
+def evaluate_policy_implementation(
+    llm: LLMClient,
+    policy: Policy,
+    minister: Minister,
+    city_params: CityParameters,
+    ward_report: list[WardReportEntry],
+    recent_history: list[dict],
+    city_name: str,
+) -> dict:
+    """AI-driven evaluation of policy execution.
+
+    Returns dict with keys:
+      execution_pct (0-100), leakage_cr (float), reasoning (str),
+      city_param_deltas (dict[str, float]), side_effect_deltas (dict[str, float])
+    Falls back to formula-based values if parse fails.
+    """
+    m = minister.citizen
+    cap = minister.citizen.capability
+    state = minister.state
+    p = city_params.as_dict()
+
+    # Top 3 hotspot groups for context
+    hotspots = [e for e in ward_report if e.hotspot][:3]
+    hotspot_str = ", ".join(f"{e.group_name} ({e.group_type}, wb={e.avg_wellbeing:.0f})" for e in hotspots) or "none"
+
+    # Recent history summary
+    hist_lines = []
+    for h in recent_history[-2:]:
+        hist_lines.append(
+            f"  Turn {h.get('turn','?')}: {h.get('policy','?')} — "
+            f"{h.get('exec_pct','?')}% exec, approval {h.get('approval_before','?')}%→{h.get('approval_after','?')}%"
+        )
+    hist_str = "\n".join(hist_lines) or "  No prior turns"
+
+    # Target effects summary
+    targets_str = ", ".join(f"{k} {'+' if v>=0 else ''}{v}" for k, v in policy.target_effects.items())
+    side_str = ", ".join(f"{k} {'+' if v>=0 else ''}{v}" for k, v in (policy.side_effects or {}).items()) or "none"
+
+    # Key city params (most relevant first)
+    relevant_keys = list(policy.target_effects.keys()) + list((policy.side_effects or {}).keys())
+    param_lines = []
+    for k, v in p.items():
+        marker = " ← target" if k in relevant_keys else ""
+        param_lines.append(f"  {k}: {v:.0f}/100{marker}")
+    params_str = "\n".join(param_lines)
+
+    prompt = textwrap.dedent(f"""\
+        City: {city_name}
+
+        POLICY: {policy.name}
+        Description: {policy.description}
+        Budget: ₹{policy.budget_cost:.0f} Cr
+        Intended effects: {targets_str}
+        Known side effects: {side_str}
+
+        MINISTER: {m.name} ({minister.portfolio})
+        Competence: {cap.competence:.0f}/100
+        Managerial skill: {cap.managerial_skill:.0f}/100
+        Bureaucratic navigation: {cap.bureaucratic_navigation:.0f}/100
+        Integrity: {m.personality.integrity:.0f}/100
+        Corruption tolerance: {m.personality.corruption_tolerance:.0f}/100
+        Loyalty to mayor: {state.loyalty:.0f}/100
+        Scandal exposure: {state.scandal_exposure:.0f}/100
+
+        CITY PARAMETERS (current):
+        {params_str}
+
+        VULNERABLE GROUPS: {hotspot_str}
+
+        RECENT HISTORY:
+        {hist_str}
+
+        Evaluate this policy's implementation realistically. Consider:
+        - A minister with low competence (<40) will significantly under-deliver
+        - High corruption_tolerance + low integrity = high leakage risk
+        - Low admin_efficiency or anti_corruption city params amplify problems
+        - The actual param deltas should be scaled versions of the intended effects
+          (e.g. 60% execution → roughly 60% of intended delta, but not mechanically exact)
+
+        Return ONLY a JSON object (no markdown, no explanation outside the JSON):
+        {{
+          "execution_pct": <integer 0-100>,
+          "leakage_cr": <float, corruption leak in crores>,
+          "reasoning": "<2-3 sentences explaining WHY this execution level — be specific>",
+          "city_param_deltas": {{<param_key>: <float delta>}},
+          "side_effect_deltas": {{<param_key>: <float delta>}}
+        }}
+
+        Only include params that actually change. Deltas should be realistic (rarely exceed ±8).
+    """)
+
+    try:
+        raw = llm.chat_text(EVALUATOR_SYSTEM, prompt)
+        result = _extract_json(raw)
+        if not isinstance(result, dict):
+            raise ValueError("not a dict")
+        # Validate required keys
+        execution_pct = max(0, min(100, int(result.get("execution_pct", 50))))
+        leakage_cr = float(result.get("leakage_cr", 0.0))
+        reasoning = str(result.get("reasoning", "")).strip()
+        city_param_deltas = {k: float(v) for k, v in result.get("city_param_deltas", {}).items()}
+        side_effect_deltas = {k: float(v) for k, v in result.get("side_effect_deltas", {}).items()}
+        return {
+            "execution_pct": execution_pct,
+            "leakage_cr": leakage_cr,
+            "reasoning": reasoning,
+            "city_param_deltas": city_param_deltas,
+            "side_effect_deltas": side_effect_deltas,
+        }
+    except Exception as exc:
+        import logging
+        logging.warning(f"evaluate_policy_implementation fallback: {exc}")
+        # Fallback: use formula-based approximation
+        from engine.implementation import minister_exec_score, city_filter_score
+        exec_score = minister_exec_score(minister) * city_filter_score(city_params)
+        exec_pct = round(exec_score * 100)
+        leakage = policy.budget_cost * (1 - minister.citizen.personality.integrity / 100) * 0.15
+        scaled_deltas = {k: round(v * exec_score, 2) for k, v in policy.target_effects.items()}
+        return {
+            "execution_pct": exec_pct,
+            "leakage_cr": round(leakage, 1),
+            "reasoning": f"Estimated {exec_pct}% execution based on minister capability and city conditions.",
+            "city_param_deltas": scaled_deltas,
+            "side_effect_deltas": {k: round(v * exec_score, 2) for k, v in (policy.side_effects or {}).items()},
+        }
+
+
+# ---------------------------------------------------------------------------
+# Citizen Approval Poll
+# ---------------------------------------------------------------------------
+
+APPROVAL_POLL_SYSTEM = textwrap.dedent("""\
+    You are roleplaying as a specific citizen in a city governance simulation.
+    You will be given your personal profile — your demographics, personality, ideology,
+    and how this turn's policy affected your wellbeing. React authentically to the mayor's
+    performance this turn. Stay in character. Be honest, not polite.
+""")
+
+
+def poll_citizen_approval(
+    llm: LLMClient,
+    citizen: Citizen,
+    wellbeing_before: WellbeingState,
+    wellbeing_after: WellbeingState,
+    policy: Policy,
+    execution_pct: float,
+    city_params_before: dict,
+    city_params_after: dict,
+    city_name: str,
+) -> CitizenVoice:
+    """Single citizen votes on mayor approval and gives an in-character reaction.
+
+    Returns a CitizenVoice with reaction quote and sentiment.
+    """
+    d = citizen.demographics
+    p = citizen.personality
+    wb_before = wellbeing_before.score()
+    wb_after = wellbeing_after.score()
+    wb_delta = wb_after - wb_before
+
+    # Top changed params
+    changed = sorted(
+        [(k, city_params_after.get(k, 50) - city_params_before.get(k, 50)) for k in city_params_after],
+        key=lambda x: abs(x[1]), reverse=True
+    )[:3]
+    changes_str = ", ".join(
+        f"{k.replace('_', ' ')} {'+' if v>=0 else ''}{v:.1f}" for k, v in changed if abs(v) >= 0.3
+    ) or "no significant changes"
+
+    prompt = textwrap.dedent(f"""\
+        You are: {citizen.name}
+        City: {city_name}
+        Demographics: {d.age_group}, {d.income_bracket}, {d.religion}, {d.profession}, {d.location}
+        Ideology: {d.ideology_economic} / {d.ideology_social}
+        Personality:
+          Integrity: {p.integrity:.0f}/100 (higher = angrier about corruption)
+          Empathy: {p.empathy:.0f}/100 (higher = cares more about community impact)
+          Corruption tolerance: {p.corruption_tolerance:.0f}/100 (lower = more outraged by leaks)
+          Authority respect: {p.authority_respect:.0f}/100 (higher = more forgiving of government)
+
+        THIS TURN:
+        Policy implemented: {policy.name} — {policy.description[:100]}
+        Execution: {execution_pct:.0f}% delivered
+        Your wellbeing: {wb_before:.1f} → {wb_after:.1f} (delta: {wb_delta:+.2f})
+        City changes: {changes_str}
+
+        Based on all this, give your honest reaction to the Mayor's performance this turn.
+        Write as yourself — raw, casual, in your own voice (can mix mother tongue + English).
+        Then vote: approve / disapprove / undecided.
+
+        Return ONLY JSON (no markdown):
+        {{
+          "reaction": "<your casual in-character quote, 1-2 sentences max>",
+          "sentiment": "approve|disapprove|undecided"
+        }}
+    """)
+
+    try:
+        raw = llm.chat_text(APPROVAL_POLL_SYSTEM, prompt)
+        result = _extract_json(raw)
+        if not isinstance(result, dict):
+            raise ValueError("not a dict")
+        sentiment = result.get("sentiment", "undecided")
+        if sentiment not in ("approve", "disapprove", "undecided"):
+            sentiment = "undecided"
+        return CitizenVoice(
+            citizen_id=citizen.id,
+            name=citizen.name,
+            demographics_summary=f"{d.income_bracket}, {d.profession}",
+            ideology=f"{d.ideology_economic} / {d.ideology_social}",
+            reaction=str(result.get("reaction", "")).strip(),
+            sentiment=sentiment,
+        )
+    except Exception:
+        # Fallback: derive sentiment from wellbeing delta
+        sentiment = "approve" if wb_delta > 0.5 else "disapprove" if wb_delta < -0.5 else "undecided"
+        return CitizenVoice(
+            citizen_id=citizen.id,
+            name=citizen.name,
+            demographics_summary=f"{d.income_bracket}, {d.profession}",
+            ideology=f"{d.ideology_economic} / {d.ideology_social}",
+            reaction="...",
+            sentiment=sentiment,
+        )

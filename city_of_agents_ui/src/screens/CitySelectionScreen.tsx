@@ -58,7 +58,7 @@ const PRESET_CITIES = [
 export default function CitySelectionScreen({ onGameCreated }: Props) {
   const [selectedCityId, setSelectedCityId] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const [turnsToElection, setTurnsToElection] = useState(30)
+  const [turnsToElection, setTurnsToElection] = useState(5)
   const [populationStr, setPopulationStr] = useState("10")
 
   const [isStarting, setIsStarting] = useState(false)
@@ -76,9 +76,11 @@ export default function CitySelectionScreen({ onGameCreated }: Props) {
       // 1. Generate profile from hint
       const profile = await generateProfile(city.hint)
 
-      // Override some visual parameters if needed based on sliders
-      profile.total_turns = turnsToElection
-      // In a real app we'd map populationStr to the city_parameters appropriately.
+      // Override game config based on sliders
+      if (profile.game_config) {
+        profile.game_config.total_turns = turnsToElection
+        profile.game_config.election_turn = Math.max(3, turnsToElection - 1)
+      }
 
       // 2. Start game
       const result = await newGame(profile)
@@ -211,7 +213,7 @@ export default function CitySelectionScreen({ onGameCreated }: Props) {
               <div className="relative flex-1 flex items-center group">
                 <input
                   type="range"
-                  min="10" max="50" step="5"
+                  min="5" max="10" step="1"
                   value={turnsToElection}
                   onChange={(e) => setTurnsToElection(parseInt(e.target.value))}
                   className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-white hover:accent-amber-400 transition-all"

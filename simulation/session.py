@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import random
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 # ─── Debug Logger ─────────────────────────────────────────────────────────────
@@ -82,12 +83,14 @@ from engine.scoring import check_loss_conditions, compute_scorecard
 from engine.wellbeing import update_citizen_wellbeing
 from llm.llm_client import LLMClient
 from simulation.llm_calls import (
+    evaluate_policy_implementation,
     generate_advisor_summary,
     generate_citizen_names,
     generate_delivery_narrative,
     generate_media_headlines,
     generate_policy_options,
     minister_response,
+    poll_citizen_approval,
     sample_citizen_reactions,
 )
 
@@ -233,10 +236,12 @@ class GameSession:
     # Minister consultation
     # ------------------------------------------------------------------
 
-    def open_consultation(self, minister_id: str) -> str:
+    def open_consultation(self, minister_id: str, silent: bool = False) -> str:
         """Start a consultation with a specific minister.
 
-        Returns the minister's opening statement.
+        If silent=True, skip the LLM opening statement (used for broadcast @all
+        where each minister replies directly to the mayor's question without a
+        separate greeting LLM call). Returns empty string in silent mode.
         """
         assert self.state
         minister = self._get_minister(minister_id)
@@ -244,6 +249,8 @@ class GameSession:
             raise ValueError(f"No minister with id {minister_id}")
         self._active_minister_id = minister_id
         self._consultation_history = []
+        if silent:
+            return ""
         # Opening: LLM generates an unprompted opening comment
         opening_prompt = (
             "The Mayor has opened a consultation. Offer 1-2 sentences on the most pressing issue "
@@ -339,7 +346,7 @@ class GameSession:
         _log("phase", "═" * 54)
         _log("phase", f"TURN {state.current_turn}  |  City of {city}  |  Seed: {state.prng_seed + state.current_turn * 1000}")
         _log("phase", "═" * 54)
-        approval_now = sum(c.mayor_alignment for c in state.citizens) / max(len(state.citizens), 1)
+        approval_now = compute_overall_approval(state.citizens)
         _log("info",  f"Treasury: ₹{state.treasury:.0f} Cr  |  Debt: ₹{state.outstanding_debt:.0f} Cr  |  Approx approval: {approval_now:.1f}%")
 
         # ① Resolve minor action
@@ -873,7 +880,7 @@ class GameSession:
         _log("phase", "═" * 54)
         _log("phase", f"TURN {state.current_turn}  |  City of {city}  |  STREAMING")
         _log("phase", "═" * 54)
-        approval_now = sum(c.mayor_alignment for c in state.citizens) / max(len(state.citizens), 1)
+        approval_now = compute_overall_approval(state.citizens)
 
         # ① Minor action
         m_action = MinorAction(**minor_action)
@@ -1229,6 +1236,373 @@ class GameSession:
         }
 
     # ------------------------------------------------------------------
+    # Agentic turn execution (v2 — AI-driven evaluation + citizen poll)
+    # ------------------------------------------------------------------
+
+    def execute_turn_agentic(
+        self,
+        policy_index: int,
+        minister_id: str,
+        minor_action: dict[str, Any],
+    ):
+        """Fully agentic turn — AI evaluates policy, citizens vote on approval.
+
+        Yields SSE event dicts for each phase. Frontend connects to /turn/stream/v2.
+        """
+        assert self.state
+        state = self.state
+        rng = random.Random(state.prng_seed + state.current_turn * 1000)
+        llm = self.llm
+
+        # ── Validate inputs ───────────────────────────────────────────
+        if not self._pending_policy_options:
+            raise ValueError("No policy options pending — call get_policy_options first")
+        if policy_index < 0 or policy_index >= len(self._pending_policy_options):
+            raise ValueError(f"Invalid policy_index {policy_index}")
+
+        policy_dict = self._pending_policy_options[policy_index]
+        policy = Policy(**policy_dict) if isinstance(policy_dict, dict) else policy_dict
+
+        minor = MinorAction(**minor_action) if isinstance(minor_action, dict) else minor_action
+
+        # Find player-chosen minister
+        minister = self._get_minister(minister_id)
+        if minister is None:
+            # Fallback to portfolio match
+            minister = self._find_minister_for_portfolio(policy.portfolio)
+        if minister is None:
+            raise ValueError(f"Minister {minister_id} not found")
+
+        city_name = state.city_profile.city_name
+        languages = state.city_profile.languages
+        params = state.city_params
+        current_turn = state.current_turn
+
+        # ── Phase 1: Announcement ─────────────────────────────────────
+        _log("phase", f"[agentic] Phase 1 — Announcement: {policy.name}")
+        yield {
+            "type": "announcement",
+            "policy": policy.model_dump(),
+            "minister_name": minister.citizen.name,
+            "minister_portfolio": minister.portfolio,
+        }
+
+        # 2–3 immediate citizen reactions to the announcement
+        minister_ids = {m.citizen.id for m in state.ministers}
+        eligible = [c for c in state.citizens if c.id not in minister_ids]
+        sample_3 = rng.sample(eligible, min(3, len(eligible)))
+        sample_3_dicts = [self._citizen_for_reaction(c) for c in sample_3]
+        announcement_voices = sample_citizen_reactions(
+            llm, policy, 1.0, sample_3_dicts, city_name, languages
+        )
+        yield {
+            "type": "announcement_voices",
+            "voices": [v.model_dump() for v in announcement_voices],
+        }
+
+        # ── Phase 2: Assignment confirmed ─────────────────────────────
+        _log("phase", f"[agentic] Phase 2 — Assignment: {minister.citizen.name}")
+        yield {
+            "type": "assignment",
+            "minister_id": minister.citizen.id,
+            "minister_name": minister.citizen.name,
+            "portfolio": minister.portfolio,
+            "competence": round(minister.citizen.capability.competence),
+            "loyalty": round(minister.state.loyalty),
+            "scandal_exposure": round(minister.state.scandal_exposure),
+        }
+
+        # ── Phase 3: AI Policy Evaluation ────────────────────────────
+        _log("phase", "[agentic] Phase 3 — AI evaluation")
+        ward_report = self._compute_ward_report(state.citizens, {})
+        recent_history = [
+            {
+                "turn": tr.turn,
+                "policy": tr.major_policy.name if tr.major_policy else "?",
+                "exec_pct": round(tr.execution_score * 100),
+                "approval_before": round(tr.approval_before or 0),
+                "approval_after": round(tr.interim_approval),
+            }
+            for tr in state.turn_history[-2:]
+        ]
+        eval_result = evaluate_policy_implementation(
+            llm, policy, minister, params, ward_report, recent_history, city_name
+        )
+        execution_score = eval_result["execution_pct"] / 100.0
+        budget_stolen = eval_result["leakage_cr"]
+        actual_deltas = eval_result["city_param_deltas"]
+        side_effect_deltas = eval_result["side_effect_deltas"]
+
+        yield {"type": "evaluation", **eval_result}
+
+        # Apply param deltas to city
+        all_deltas = {**actual_deltas, **side_effect_deltas}
+        params = params.apply_delta(all_deltas)
+
+        # Deterministic wellbeing update per citizen
+        wb_before_map = {c.id: c.wellbeing for c in state.citizens}
+        for c in state.citizens:
+            c.wellbeing = update_citizen_wellbeing(c, all_deltas, state.city_profile)
+
+        # Recompute ward report with updated wellbeing
+        updated_ward_report = self._compute_ward_report(state.citizens, actual_deltas)
+        yield {
+            "type": "wellbeing_update",
+            "ward_report": [e.model_dump() for e in updated_ward_report],
+        }
+
+        # 3–5 implementation reactions
+        sample_5 = rng.sample(eligible, min(5, len(eligible)))
+        sample_5_dicts = [self._citizen_for_reaction(c) for c in sample_5]
+        impl_voices = sample_citizen_reactions(
+            llm, policy, execution_score, sample_5_dicts, city_name, languages
+        )
+        yield {
+            "type": "implementation_voices",
+            "voices": [v.model_dump() for v in impl_voices],
+        }
+
+        # ── Phase 4: Citizen Approval Poll ───────────────────────────
+        _log("phase", "[agentic] Phase 4 — Citizen approval poll")
+        poll_sample = rng.sample(eligible, min(32, len(eligible)))
+        params_before_dict = state.city_params.as_dict()
+        params_after_dict = params.as_dict()
+
+        approval_votes: list[dict] = []
+
+        def _poll_one(citizen):
+            return poll_citizen_approval(
+                llm=llm,
+                citizen=citizen,
+                wellbeing_before=wb_before_map[citizen.id],
+                wellbeing_after=citizen.wellbeing,
+                policy=policy,
+                execution_pct=eval_result["execution_pct"],
+                city_params_before=params_before_dict,
+                city_params_after=params_after_dict,
+                city_name=city_name,
+            )
+
+        with ThreadPoolExecutor(max_workers=12) as pool:
+            futures = {pool.submit(_poll_one, c): c for c in poll_sample}
+            for future in as_completed(futures):
+                try:
+                    voice = future.result()
+                    citizen = futures[future]
+                    yield {
+                        "type": "approval_vote",
+                        "voice": voice.model_dump(),
+                        "population_weight": citizen.population_weight,
+                    }
+                    approval_votes.append({
+                        "sentiment": voice.sentiment,
+                        "weight": citizen.population_weight,
+                    })
+                except Exception as exc:
+                    _log("bad", f"[agentic] poll error: {exc}")
+
+        # Compute weighted approval from votes
+        approve_w = sum(v["weight"] for v in approval_votes if v["sentiment"] == "approve")
+        disapprove_w = sum(v["weight"] for v in approval_votes if v["sentiment"] == "disapprove")
+        total_w = sum(v["weight"] for v in approval_votes)
+        if total_w > 0:
+            interim_approval = (approve_w / total_w) * 100.0
+        else:
+            interim_approval = compute_interim_approval(state.citizens, params.media_freedom)
+
+        approval_before = compute_interim_approval(state.citizens, state.city_params.media_freedom)
+
+        yield {
+            "type": "approval_final",
+            "approval": round(interim_approval, 1),
+            "approval_before": round(approval_before, 1),
+            "breakdown": {
+                "approve": len([v for v in approval_votes if v["sentiment"] == "approve"]),
+                "disapprove": len([v for v in approval_votes if v["sentiment"] == "disapprove"]),
+                "undecided": len([v for v in approval_votes if v["sentiment"] == "undecided"]),
+                "total": len(approval_votes),
+            },
+        }
+
+        # Update citizen alignments based on wellbeing changes
+        for c in state.citizens:
+            opp_push = 0.0
+            c.mayor_alignment = update_mayor_alignment(
+                c, c.wellbeing, state.media_outlets, params.media_freedom, opp_push
+            )
+
+        # ── Events (deterministic) ────────────────────────────────────
+        threshold_events = check_threshold_events(params, {e.name for e in state.active_events})
+        stochastic_events = check_stochastic_events(params, len(state.active_events), rng)
+        newly_triggered = threshold_events + stochastic_events
+        state.active_events.extend(newly_triggered)
+        state.active_events, event_deltas = step_events(state.active_events, rng)
+        params = params.apply_delta(event_deltas)
+
+        if newly_triggered:
+            yield {
+                "type": "events",
+                "events_triggered": [e.model_dump() for e in newly_triggered],
+            }
+
+        # ── Budget ────────────────────────────────────────────────────
+        tax_rev = compute_tax_revenue(params, state.city_profile.budget.base_tax_revenue)
+        treasury = state.treasury + tax_rev
+        treasury -= policy.budget_cost
+        treasury -= budget_stolen
+        interest_paid = process_interest_payment(state.outstanding_debt, state.city_profile.budget.interest_rate)
+        treasury -= interest_paid
+        treasury, outstanding_debt = process_auto_repayment(treasury, state.outstanding_debt)
+        treasury = apply_minor_action_budget(treasury, minor)
+        params = apply_corruption_consequences(params, budget_stolen, policy.budget_cost)
+        params = apply_maintenance_decay(
+            params, state.targeted_this_turn, state.targeted_last_turn, params.admin_efficiency
+        )
+
+        # ── Media + opposition ────────────────────────────────────────
+        scandal_broke = check_scandal_break(
+            minister, state.media_outlets, 1 - execution_score, params.media_freedom, rng
+        )
+        attack_strategy = pick_attack_strategy(
+            state.opposition_leader, state.city_params.as_dict(), params.as_dict(),
+            execution_score, scandal_broke, bool(state.active_events),
+            state.outstanding_debt, state.city_profile.budget.max_debt,
+            max(1, state.city_profile.game_config.election_turn - current_turn),
+        )
+        counter_frame = "Delivery Receipts"
+
+        state.media_outlets = apply_media_drift(state.media_outlets, interim_approval, 0.0, rng)
+
+        # Communal tension update
+        delta_community = all_deltas.get("community_and_spaces", 0.0)
+        delta_police = all_deltas.get("police_and_emergency", 0.0)
+        minority_sensitive = state.city_profile.communal_config.dominant_fault_line in ("ethnic", "religious")
+        communal_crisis = any("communal" in e.name.lower() or "tension" in e.name.lower() for e in state.active_events)
+        communal_severity = max((e.severity for e in state.active_events), default=0)
+        opp_identity_mobilized = (attack_strategy == "Identity Mobilization")
+        avg_wb = sum(c.wellbeing.score() for c in state.citizens) / max(len(state.citizens), 1)
+        opp_effectiveness = compute_opposition_effectiveness(
+            state.opposition_leader, attack_strategy, execution_score,
+            state.media_outlets, avg_wb,
+            attack_credibility=0.5, credibility_score=state.opposition_credibility,
+        )
+        new_tension = update_communal_tension(
+            state.communal_tension, state.city_profile.communal_config.tension_baseline,
+            festival_boost=0.0, delta_community=delta_community, delta_police=delta_police,
+            minority_police_sensitive=minority_sensitive, crisis_communal=communal_crisis,
+            crisis_severity=communal_severity, opposition_identity_mobilized=opp_identity_mobilized,
+            opposition_effectiveness=opp_effectiveness,
+        )
+
+        # ── Delivery narrative ──────────────────────────────────────────
+        _log("llm", "[agentic] → generate_delivery_narrative()")
+        delivery_narrative = generate_delivery_narrative(
+            llm, policy, execution_score, actual_deltas, city_name, current_turn
+        )
+        yield {"type": "narrative_chunk", "key": "delivery", "value": delivery_narrative}
+
+        # ── Media headlines ───────────────────────────────────────────
+        _log("llm", "[agentic] → generate_media_headlines()")
+        media_headlines = generate_media_headlines(
+            llm, state.media_outlets, policy, execution_score,
+            scandal_broke, minister.citizen.name if scandal_broke else None,
+            state.active_events,
+        )
+        yield {
+            "type": "narrative_chunk",
+            "key": "headlines",
+            "value": [h.model_dump() for h in media_headlines],
+        }
+
+        # ── Advisor debrief ───────────────────────────────────────────
+        _log("llm", "[agentic] → generate_advisor_summary()")
+        worst_side = min(side_effect_deltas.items(), key=lambda x: x[1], default=(None, 0))
+        advisor_summary = generate_advisor_summary(
+            llm, policy.name, execution_score, budget_stolen,
+            approval_before, interim_approval,
+            [e.name for e in newly_triggered],
+            worst_side[0], treasury, city_name,
+        )
+        yield {"type": "narrative_chunk", "key": "advisor", "value": advisor_summary}
+
+        # ── Assemble TurnResult ───────────────────────────────────────
+        delivery_targets = [
+            DeliveryTarget(
+                key=t.key, label=t.label, unit=t.unit,
+                proposed=t.proposed,
+                delivered=actual_deltas.get(t.key, 0.0),
+                completion_ratio=min(1.0, abs(actual_deltas.get(t.key, 0.0)) / max(0.01, abs(t.proposed))),
+            )
+            for t in (policy.targets or [])
+        ]
+
+        turn_result = TurnResult(
+            turn=current_turn,
+            major_policy=policy,
+            minor_action=minor,
+            execution_score=execution_score,
+            actual_deltas=actual_deltas,
+            side_effect_deltas=side_effect_deltas,
+            budget_stolen=budget_stolen,
+            delivery_targets=delivery_targets,
+            delivery_narrative=delivery_narrative,
+            evaluator_reasoning=eval_result.get("reasoning", ""),
+            city_params_before=state.city_params.as_dict(),
+            city_params_after=params.as_dict(),
+            media_headlines=media_headlines,
+            citizen_voices=list(impl_voices) + list(announcement_voices),
+            opposition_attack=attack_strategy,
+            counter_frame=counter_frame,
+            approval_before=approval_before,
+            interim_approval=interim_approval,
+            ward_report=updated_ward_report,
+            events_triggered=newly_triggered,
+            communal_tension_after=new_tension,
+            minister_loyalty_changes={},
+            treasury_after=treasury,
+            outstanding_debt_after=outstanding_debt,
+            interest_paid=interest_paid,
+            tax_revenue=tax_rev,
+            advisor_summary=advisor_summary,
+        )
+
+        # ── Commit state ──────────────────────────────────────────────
+        state.city_params = params
+        state.treasury = treasury
+        state.outstanding_debt = outstanding_debt
+        state.communal_tension = new_tension
+        state.targeted_last_turn = state.targeted_this_turn
+        state.targeted_this_turn = set(actual_deltas.keys())
+        state.turn_history.append(turn_result)
+        state.current_turn += 1
+        self._sealed_transcripts = []
+        self._pending_policy_options = []
+
+        if state.current_turn > state.city_profile.game_config.election_turn and state.phase == "pre_election":
+            state.phase = "legacy"
+
+        loss_reason = check_loss_conditions(state)
+        if loss_reason:
+            state.phase = "game_over"
+        is_final = state.phase == "game_over" or state.current_turn > state.city_profile.game_config.total_turns
+        scorecard = None
+        if is_final:
+            try:
+                scorecard = self.compute_final_score().model_dump()
+            except Exception:
+                pass
+
+        _log("phase", f"[agentic] ══ TURN {turn_result.turn} COMPLETE ══")
+        yield {
+            "type": "complete",
+            "turn_result": turn_result.model_dump(),
+            "state": self.get_state_snapshot(),
+            "game_over": is_final,
+            **({"loss_reason": loss_reason} if loss_reason else {}),
+            **({"scorecard": scorecard} if scorecard else {}),
+        }
+
+    # ------------------------------------------------------------------
     # End-of-game
     # ------------------------------------------------------------------
 
@@ -1332,34 +1706,49 @@ class GameSession:
         return {
             "id": citizen.id,
             "name": citizen.name,
-            "demographics": f"{d.age_group}, {d.religion}, {d.profession}, {d.location}",
+            "demographics": f"{d.age_group}, {d.income_bracket}, {d.religion}, {d.profession}, {d.location}",
             "ideology": f"{d.ideology_economic} / {d.ideology_social}",
             "wellbeing": citizen.wellbeing.score(),
+            "personality": (
+                f"integrity {round(citizen.personality.integrity)}, "
+                f"empathy {round(citizen.personality.empathy)}, "
+                f"corruption_tolerance {round(citizen.personality.corruption_tolerance)}"
+            ),
         }
 
     def _compute_ward_report(self, citizens, param_deltas: dict[str, float]) -> list[WardReportEntry]:
         """Aggregate wellbeing direction by demographic group."""
         from collections import defaultdict
 
-        groups: dict[tuple[str, str], list[float]] = defaultdict(list)
+        total_citizens = len(citizens)
+        # Each group accumulates (wellbeing_scores, mayor_alignments)
+        groups: dict[tuple[str, str], tuple[list[float], list[float]]] = defaultdict(lambda: ([], []))
         for c in citizens:
             d = c.demographics
             wb = c.wellbeing.score()
-            groups[("income", d.income_bracket)].append(wb)
-            groups[("location", d.location)].append(wb)
-            groups[("profession", d.profession)].append(wb)
+            alignment = c.mayor_alignment
+            keys = [
+                ("income", str(d.income_bracket)),
+                ("location", d.location),
+                ("profession", d.profession),
+            ]
             if getattr(d, "religion", None):
-                groups[("religion", d.religion)].append(wb)
+                keys.append(("religion", d.religion))
             if getattr(d, "ideology_social", None):
-                groups[("ideology", d.ideology_social)].append(wb)
+                keys.append(("ideology", str(d.ideology_social)))
+            for key in keys:
+                wbs, aligns = groups[key]
+                wbs.append(wb)
+                aligns.append(alignment)
 
-        # Compute average deltas approximated from param_deltas (simplified)
         total_delta = sum(abs(v) for v in param_deltas.values())
+        delta_sign = 1.0 if sum(param_deltas.values()) > 0 else -1.0
         report = []
-        for (group_type, group_name), wellbeings in groups.items():
+        for (group_type, group_name), (wellbeings, alignments) in groups.items():
             avg_wb = sum(wellbeings) / len(wellbeings)
-            # Approximate: groups with low wellbeing get more effect from positive deltas
-            delta_sign = 1.0 if sum(param_deltas.values()) > 0 else -1.0
+            pop = len(wellbeings)
+            pop_pct = round((pop / total_citizens) * 100, 1) if total_citizens > 0 else 0.0
+            avg_approval = sum((a + 100) / 2.0 for a in alignments) / len(alignments)
             avg_delta = delta_sign * min(2.0, total_delta * 0.1)
             trend: str
             if avg_delta > 0.5:
@@ -1368,6 +1757,32 @@ class GameSession:
                 trend = "down"
             else:
                 trend = "flat"
+                
+            pulse = ""
+            if total_delta == 0:
+                pulse = "Baseline conditions established; awaiting initial mayoral actions."
+            elif avg_delta > 0.5:
+                if avg_approval > 60:
+                    pulse = "Tangible improvements are reinforcing this group's strong baseline support."
+                elif avg_approval < 40:
+                    pulse = "Conditions have improved, but historical skepticism keeps overall approval muted."
+                else:
+                    pulse = "Noticeable gains have generated cautious optimism among these citizens."
+            elif avg_delta < -0.5:
+                if avg_approval > 60:
+                    pulse = "Recent setbacks caused some friction, though goodwill towards the mayor persists."
+                elif avg_approval < 40:
+                    pulse = "Worsening conditions are severely compounding existing frustrations here."
+                else:
+                    pulse = "The recent decline in welfare has begun to erode this group's trust."
+            else:
+                if avg_approval > 60:
+                    pulse = "Policies had minimal impact, but the group remains generally supportive."
+                elif avg_approval < 40:
+                    pulse = "Marginal changes failed to move the needle on this group's low approval."
+                else:
+                    pulse = "Status quo maintained; sentiment remains neutral and stable."
+
             report.append(WardReportEntry(
                 group_type=group_type,
                 group_name=group_name,
@@ -1376,5 +1791,9 @@ class GameSession:
                 avg_wellbeing=round(avg_wb, 1),
                 hotspot=avg_wb < 30.0,
                 bright_spot=avg_wb > 70.0,
+                population=pop,
+                population_pct=pop_pct,
+                approval=round(avg_approval, 1),
+                pulse_summary=pulse,
             ))
-        return report[:12]  # cap to avoid huge payloads
+        return report

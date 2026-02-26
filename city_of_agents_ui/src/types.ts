@@ -116,6 +116,10 @@ export interface WardReportEntry {
   avg_wellbeing: number
   hotspot: boolean
   bright_spot: boolean
+  population: number
+  population_pct: number
+  approval: number
+  pulse_summary: string
 }
 
 export interface TurnResult {
@@ -128,6 +132,7 @@ export interface TurnResult {
   budget_stolen: number
   delivery_targets: DeliveryTarget[]
   delivery_narrative: string
+  evaluator_reasoning?: string
   city_params_before: Record<string, number>
   city_params_after: Record<string, number>
   media_headlines: MediaHeadline[]

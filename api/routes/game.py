@@ -63,6 +63,7 @@ class ConsultRequest(BaseModel):
     action: str  # "open" | "message" | "close"
     minister_id: str | None = None
     message: str | None = None
+    silent: bool = False  # if True, skip opening LLM call (used for broadcast @all)
 
 
 class CabinetAssignmentRequest(BaseModel):
@@ -165,7 +166,7 @@ def consult(game_id: str, req: ConsultRequest) -> dict[str, Any]:
         if not req.minister_id:
             raise HTTPException(status_code=422, detail="minister_id required for action=open")
         try:
-            reply = session.open_consultation(req.minister_id)
+            reply = session.open_consultation(req.minister_id, silent=req.silent)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return {"action": "open", "minister_id": req.minister_id, "reply": reply}
@@ -292,6 +293,46 @@ def execute_turn_stream(game_id: str, req: TurnRequest) -> StreamingResponse:
                 policy_index=req.policy_index,
                 minor_action=req.minor_action,
                 counter_frame_strategy=req.counter_frame,
+            ):
+                yield f"data: {json.dumps(milestone)}\n\n"
+        except Exception as exc:
+            traceback.print_exc()
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+
+    return StreamingResponse(_event_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+class TurnRequestV2(BaseModel):
+    policy_index: int
+    minister_id: str
+    minor_action: dict[str, Any]
+
+
+@router.post("/{game_id}/turn/stream/v2")
+def execute_turn_stream_v2(game_id: str, req: TurnRequestV2) -> StreamingResponse:
+    """Fully agentic turn — AI policy evaluation + citizen approval poll.
+
+    Events arrive as `data: <json>\\n\\n` with type:
+      announcement, announcement_voices, assignment, evaluation,
+      wellbeing_update, implementation_voices, approval_vote, approval_final,
+      events, narrative_chunk (key=headlines|advisor), complete, error
+    """
+    session = _get_session(game_id)
+
+    loss_reason = session.check_loss()
+    if loss_reason:
+        def _lost():
+            yield f"data: {json.dumps({'type': 'game_over', 'loss_reason': loss_reason, 'state': session.get_state_snapshot()})}\n\n"
+        return StreamingResponse(_lost(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    def _event_stream():
+        try:
+            for milestone in session.execute_turn_agentic(
+                policy_index=req.policy_index,
+                minister_id=req.minister_id,
+                minor_action=req.minor_action,
             ):
                 yield f"data: {json.dumps(milestone)}\n\n"
         except Exception as exc:

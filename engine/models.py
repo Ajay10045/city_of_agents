@@ -342,6 +342,10 @@ class WardReportEntry(BaseModel):
     avg_wellbeing: float = 50.0
     hotspot: bool = False
     bright_spot: bool = False
+    population: int = 0          # citizen count in this group
+    population_pct: float = 0.0  # % of total citizens (0–100)
+    approval: float = 50.0       # group avg mayor approval (0–100%)
+    pulse_summary: str = ""      # LLM-like 1-sentence analytical summary
 
 
 class TurnResult(BaseModel):
@@ -354,6 +358,7 @@ class TurnResult(BaseModel):
     budget_stolen: float
     delivery_targets: list[DeliveryTarget]
     delivery_narrative: str
+    evaluator_reasoning: str = ""
     city_params_before: dict[str, float]
     city_params_after: dict[str, float]
     media_headlines: list[MediaHeadline]

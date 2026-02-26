@@ -47,10 +47,10 @@ export function assignCabinet(gameId: string, assignments: { citizen_id: string;
 
 // ---- Consultation ----
 
-export function openConsultation(gameId: string, ministerId: string) {
+export function openConsultation(gameId: string, ministerId: string, silent = false) {
   return request<{ action: string; minister_id: string; reply: string }>(`/game/${gameId}/consult`, {
     method: 'POST',
-    body: JSON.stringify({ action: 'open', minister_id: ministerId }),
+    body: JSON.stringify({ action: 'open', minister_id: ministerId, silent }),
   })
 }
 
@@ -116,6 +116,42 @@ export async function* executeTurnStream(
     }),
   })
   if (!res.ok) throw new Error(`Stream failed: ${res.status}`)
+  const reader = res.body!.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  while (true) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const parts = buffer.split('\n\n')
+    buffer = parts.pop()!
+    for (const part of parts) {
+      const line = part.trim()
+      if (line.startsWith('data: ')) {
+        yield JSON.parse(line.slice(6)) as Record<string, unknown>
+      }
+    }
+  }
+}
+
+// ---- Agentic Streaming Turn (v2) ----
+
+export async function* executeTurnStreamV2(
+  gameId: string,
+  policyIndex: number,
+  ministerId: string,
+  minorAction: { type: string; target?: string; budget?: number },
+): AsyncGenerator<Record<string, unknown>> {
+  const res = await fetch(`/game/${gameId}/turn/stream/v2`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      policy_index: policyIndex,
+      minister_id: ministerId,
+      minor_action: { type: minorAction.type, target: minorAction.target ?? null, budget: minorAction.budget ?? 0 },
+    }),
+  })
+  if (!res.ok) throw new Error(`Stream v2 failed: ${res.status}`)
   const reader = res.body!.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
