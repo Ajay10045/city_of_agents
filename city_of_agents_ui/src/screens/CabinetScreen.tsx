@@ -1172,9 +1172,6 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
           className="scrollbar-hide">
           {waitingCandidates.map(c => {
             const isSelected = interviewee?.id === c.id
-            const cap2 = c.capability as Record<string, number>
-            const p2 = c.personality as Record<string, number>
-            const comp = cap2.competence ?? 50
             return (
               <div key={c.id}
                 onClick={() => handleCallToDesk(c)}

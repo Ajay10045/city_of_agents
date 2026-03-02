@@ -12,17 +12,18 @@ def _clamp(v: float, lo: float = 0.0, hi: float = 100.0) -> float:
 
 
 # Section 8.1 — Impact Matrix (column sums = 1.0 each)
+# Sparse representation: Each parameter strongly targets 1-2 wellbeing metrics rather than blending into all 4.
 IMPACT_MATRIX: dict[str, dict[str, float]] = {
-    "jobs_and_commerce":         {"health": 0.05, "wealth": 0.65, "safety": 0.05, "social": 0.10},
-    "transit_and_roads":         {"health": 0.05, "wealth": 0.05, "safety": 0.10, "social": 0.10},
-    "water_power_sanitation":    {"health": 0.20, "wealth": 0.05, "safety": 0.10, "social": 0.00},
-    "hospitals_and_clinics":     {"health": 0.40, "wealth": 0.00, "safety": 0.00, "social": 0.10},
-    "schools_and_universities":  {"health": 0.00, "wealth": 0.10, "safety": 0.00, "social": 0.15},
-    "affordable_housing":        {"health": 0.10, "wealth": 0.10, "safety": 0.15, "social": 0.10},
-    "community_and_spaces":      {"health": 0.05, "wealth": 0.00, "safety": 0.00, "social": 0.30},
-    "police_and_emergency":      {"health": 0.00, "wealth": 0.00, "safety": 0.40, "social": 0.00},
-    "courts_and_legal":          {"health": 0.00, "wealth": 0.05, "safety": 0.20, "social": 0.05},
-    "air_quality_and_pollution":  {"health": 0.15, "wealth": 0.00, "safety": 0.00, "social": 0.10},
+    "jobs_and_commerce":         {"wealth": 1.0},
+    "transit_and_roads":         {"wealth": 0.5, "social": 0.5},
+    "water_power_sanitation":    {"health": 0.5, "wealth": 0.5},
+    "hospitals_and_clinics":     {"health": 1.0},
+    "schools_and_universities":  {"wealth": 0.5, "social": 0.5},
+    "affordable_housing":        {"wealth": 0.5, "social": 0.5},
+    "community_and_spaces":      {"social": 1.0},
+    "police_and_emergency":      {"safety": 1.0},
+    "courts_and_legal":          {"safety": 0.8, "social": 0.2},
+    "air_quality_and_pollution": {"health": 0.8, "social": 0.2},
 }
 
 # Section 8.2 — Income bracket multipliers [param → bracket → multiplier]
@@ -116,11 +117,15 @@ def _ideology_wellbeing_modifier(
 
 
 def _apply_diminishing_returns(current: float, delta: float) -> float:
-    """Section 8.4."""
+    """Apply gentler diminishing returns to prevent hard plateaus.
+    Instead of multiplying by 0 as it approaches 100/0, it halves or gently scales it down.
+    """
     if current > 80 and delta > 0:
-        delta *= (100 - current) / 20.0
+        # e.g., at 90, scale is 0.5 + (10/40) = 0.75
+        delta *= 0.5 + (100 - current) / 40.0
     elif current < 20 and delta < 0:
-        delta *= current / 20.0
+        # e.g., at 10, scale is 0.5 + (10/40) = 0.75
+        delta *= 0.5 + current / 40.0
     return _clamp(current + delta)
 
 

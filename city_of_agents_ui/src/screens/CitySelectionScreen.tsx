@@ -78,8 +78,8 @@ export default function CitySelectionScreen({ onGameCreated }: Props) {
 
       // Override game config based on sliders
       if (profile.game_config) {
-        profile.game_config.total_turns = turnsToElection
-        profile.game_config.election_turn = Math.max(3, turnsToElection - 1)
+        (profile.game_config as Record<string, unknown>).total_turns = turnsToElection;
+        (profile.game_config as Record<string, unknown>).election_turn = Math.max(3, turnsToElection - 1)
       }
 
       // 2. Start game

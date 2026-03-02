@@ -710,63 +710,54 @@ def generate_advisor_summary(
 # AI Policy Evaluator
 # ---------------------------------------------------------------------------
 
-EVALUATOR_SYSTEM = textwrap.dedent("""\
-    You are an impartial policy analyst evaluating municipal governance in a city simulation.
-    Given a policy, the minister implementing it, and the city's current state, you assess
-    realistic implementation outcomes.
+# ---------------------------------------------------------------------------
+# AI Policy Evaluator (Ensemble / Hybrid Architecture)
+# ---------------------------------------------------------------------------
 
-    Be specific and grounded — reference the minister's actual competence and integrity,
-    the city's infrastructure constraints, and how this policy interacts with existing conditions.
-    Do NOT be uniformly optimistic. Corruption, bureaucratic friction, and weak institutions
-    genuinely reduce outcomes.
+EVALUATOR_PERSONAS = {
+    "The Economist": "Focus strictly on jobs, commerce, budget efficiency, and infrastructure costs. Evaluate economic growth and potential corruption leakage.",
+    "The Sociologist": "Focus strictly on community spaces, affordable housing, social cohesion, and the day-to-day impact on vulnerable demographics.",
+    "The Urban Planner": "Focus strictly on hard infrastructure: transit, roads, water, power, and sanitation systems.",
+    "The Chief Medical Officer": "Focus strictly on public health, healthcare access, sanitation impacts on disease, and clinical capacity.",
+    "The Police Chief": "Focus strictly on law enforcement, emergency services, crime rates, rule of law, and public safety.",
+    "The Environmentalist": "Focus strictly on air quality, pollution, green spaces, and the ecological footprint of the policy."
+}
+
+ENSEMBLE_SYSTEM_PROMPT = textwrap.dedent("""\
+    You are {persona_name}. {persona_desc}
+    
+    Given a policy, the minister implementing it, and the city's current state, you must assess realistic implementation outcomes specifically through your domain lens.
+    Be specific and grounded — reference the minister's actual competence and integrity.
+    Do NOT be uniformly optimistic. Corruption, bureaucratic friction, and weak institutions genuinely reduce outcomes.
 """)
 
-
-def evaluate_policy_implementation(
+def _run_single_evaluator(
     llm: LLMClient,
+    persona_name: str,
+    persona_desc: str,
     policy: Policy,
     minister: Minister,
     city_params: CityParameters,
-    ward_report: list[WardReportEntry],
-    recent_history: list[dict],
-    city_name: str,
+    hotspot_str: str,
+    hist_str: str,
+    city_name: str
 ) -> dict:
-    """AI-driven evaluation of policy execution.
-
-    Returns dict with keys:
-      execution_pct (0-100), leakage_cr (float), reasoning (str),
-      city_param_deltas (dict[str, float]), side_effect_deltas (dict[str, float])
-    Falls back to formula-based values if parse fails.
-    """
     m = minister.citizen
     cap = minister.citizen.capability
     state = minister.state
     p = city_params.as_dict()
 
-    # Top 3 hotspot groups for context
-    hotspots = [e for e in ward_report if e.hotspot][:3]
-    hotspot_str = ", ".join(f"{e.group_name} ({e.group_type}, wb={e.avg_wellbeing:.0f})" for e in hotspots) or "none"
-
-    # Recent history summary
-    hist_lines = []
-    for h in recent_history[-2:]:
-        hist_lines.append(
-            f"  Turn {h.get('turn','?')}: {h.get('policy','?')} — "
-            f"{h.get('exec_pct','?')}% exec, approval {h.get('approval_before','?')}%→{h.get('approval_after','?')}%"
-        )
-    hist_str = "\n".join(hist_lines) or "  No prior turns"
-
-    # Target effects summary
     targets_str = ", ".join(f"{k} {'+' if v>=0 else ''}{v}" for k, v in policy.target_effects.items())
     side_str = ", ".join(f"{k} {'+' if v>=0 else ''}{v}" for k, v in (policy.side_effects or {}).items()) or "none"
 
-    # Key city params (most relevant first)
     relevant_keys = list(policy.target_effects.keys()) + list((policy.side_effects or {}).keys())
     param_lines = []
     for k, v in p.items():
         marker = " ← target" if k in relevant_keys else ""
         param_lines.append(f"  {k}: {v:.0f}/100{marker}")
     params_str = "\n".join(param_lines)
+
+    sys_prompt = ENSEMBLE_SYSTEM_PROMPT.format(persona_name=persona_name, persona_desc=persona_desc)
 
     prompt = textwrap.dedent(f"""\
         City: {city_name}
@@ -779,12 +770,8 @@ def evaluate_policy_implementation(
 
         MINISTER: {m.name} ({minister.portfolio})
         Competence: {cap.competence:.0f}/100
-        Managerial skill: {cap.managerial_skill:.0f}/100
-        Bureaucratic navigation: {cap.bureaucratic_navigation:.0f}/100
         Integrity: {m.personality.integrity:.0f}/100
         Corruption tolerance: {m.personality.corruption_tolerance:.0f}/100
-        Loyalty to mayor: {state.loyalty:.0f}/100
-        Scandal exposure: {state.scandal_exposure:.0f}/100
 
         CITY PARAMETERS (current):
         {params_str}
@@ -794,59 +781,150 @@ def evaluate_policy_implementation(
         RECENT HISTORY:
         {hist_str}
 
-        Evaluate this policy's implementation realistically. Consider:
+        Evaluate this policy's implementation realistically from the perspective of {persona_name}.
         - A minister with low competence (<40) will significantly under-deliver
         - High corruption_tolerance + low integrity = high leakage risk
-        - Low admin_efficiency or anti_corruption city params amplify problems
-        - The actual param deltas should be scaled versions of the intended effects
-          (e.g. 60% execution → roughly 60% of intended delta, but not mechanically exact)
+        - The actual param deltas should be scaled versions of the intended effects (e.g. 60% execution → roughly 60% of intended delta)
+        - You may adjust OTHER params if it makes sense for your domain (e.g. Environmentalist reducing Air Quality for construction).
 
         Return ONLY a JSON object (no markdown, no explanation outside the JSON):
         {{
           "execution_pct": <integer 0-100>,
           "leakage_cr": <float, corruption leak in crores>,
-          "reasoning": "<2-3 sentences explaining WHY this execution level — be specific>",
+          "reasoning": "<2-3 sentences explaining WHY this execution level from your domain's perspective>",
           "city_param_deltas": {{<param_key>: <float delta>}},
-          "side_effect_deltas": {{<param_key>: <float delta>}}
+          "side_effect_deltas": {{<param_key>: <float delta>}},
+          "opposition_attack": "<Only if negative side-effects exist, generate a 1-sentence scathing quote from the political opposition. Else empty string>",
+          "crisis_event_triggered": "<If your domain sees critical failure leading to a crisis, name the event type e.g. 'infrastructure_failure', else empty string>"
         }}
 
         Only include params that actually change. Deltas should be realistic (rarely exceed ±8).
     """)
 
     try:
-        raw = llm.chat_text(EVALUATOR_SYSTEM, prompt)
+        raw = llm.chat_text(sys_prompt, prompt)
         result = _extract_json(raw)
         if not isinstance(result, dict):
             raise ValueError("not a dict")
-        # Validate required keys
-        execution_pct = max(0, min(100, int(result.get("execution_pct", 50))))
-        leakage_cr = float(result.get("leakage_cr", 0.0))
-        reasoning = str(result.get("reasoning", "")).strip()
-        city_param_deltas = {k: float(v) for k, v in result.get("city_param_deltas", {}).items()}
-        side_effect_deltas = {k: float(v) for k, v in result.get("side_effect_deltas", {}).items()}
         return {
-            "execution_pct": execution_pct,
-            "leakage_cr": leakage_cr,
-            "reasoning": reasoning,
-            "city_param_deltas": city_param_deltas,
-            "side_effect_deltas": side_effect_deltas,
+            "persona": persona_name,
+            "execution_pct": max(0, min(100, int(result.get("execution_pct", 50)))),
+            "leakage_cr": float(result.get("leakage_cr", 0.0)),
+            "reasoning": str(result.get("reasoning", "")).strip(),
+            "city_param_deltas": {k: float(v) for k, v in result.get("city_param_deltas", {}).items()},
+            "side_effect_deltas": {k: float(v) for k, v in result.get("side_effect_deltas", {}).items()},
+            "opposition_attack": str(result.get("opposition_attack", "")).strip(),
+            "crisis_event_triggered": str(result.get("crisis_event_triggered", "")).strip()
         }
     except Exception as exc:
         import logging
-        logging.warning(f"evaluate_policy_implementation fallback: {exc}")
-        # Fallback: use formula-based approximation
+        logging.warning(f"Ensemble evaluator {persona_name} fallback: {exc}")
+        return None
+
+
+def evaluate_policy_ensemble(
+    llm: LLMClient,
+    policy: Policy,
+    minister: Minister,
+    city_params: CityParameters,
+    ward_report: list[WardReportEntry],
+    recent_history: list[dict],
+    city_name: str,
+) -> dict:
+    """AI-driven ensemble evaluation of policy execution using 6 distinct personas.
+
+    Averages the numeric results and aggregates narratives, opposition, and events.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    hotspots = [e for e in ward_report if e.hotspot][:3]
+    hotspot_str = ", ".join(f"{e.group_name} ({e.group_type}, wb={e.avg_wellbeing:.0f})" for e in hotspots) or "none"
+
+    hist_lines = []
+    for h in recent_history[-2:]:
+        hist_lines.append(
+            f"  Turn {h.get('turn','?')}: {h.get('policy','?')} — "
+            f"{h.get('exec_pct','?')}% exec, approval {h.get('approval_before','?')}%→{h.get('approval_after','?')}%"
+        )
+    hist_str = "\n".join(hist_lines) or "  No prior turns"
+
+    results = []
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        futures = []
+        for p_name, p_desc in EVALUATOR_PERSONAS.items():
+            futures.append(pool.submit(
+                _run_single_evaluator,
+                llm, p_name, p_desc, policy, minister, city_params, hotspot_str, hist_str, city_name
+            ))
+        for future in as_completed(futures):
+            res = future.result()
+            if res:
+                results.append(res)
+
+    if not results:
+        # Extreme fallback if all 6 fail
         from engine.implementation import minister_exec_score, city_filter_score
         exec_score = minister_exec_score(minister) * city_filter_score(city_params)
         exec_pct = round(exec_score * 100)
         leakage = policy.budget_cost * (1 - minister.citizen.personality.integrity / 100) * 0.15
-        scaled_deltas = {k: round(v * exec_score, 2) for k, v in policy.target_effects.items()}
         return {
             "execution_pct": exec_pct,
             "leakage_cr": round(leakage, 1),
             "reasoning": f"Estimated {exec_pct}% execution based on minister capability and city conditions.",
-            "city_param_deltas": scaled_deltas,
+            "city_param_deltas": {k: round(v * exec_score, 2) for k, v in policy.target_effects.items()},
             "side_effect_deltas": {k: round(v * exec_score, 2) for k, v in (policy.side_effects or {}).items()},
+            "opposition_attacks": [],
+            "crises_triggered": [],
+            "ensemble_reasoning": []
         }
+
+    # Aggregate results
+    total_exec = 0
+    total_leakage = 0.0
+    agg_param_deltas: dict[str, list[float]] = {}
+    agg_side_deltas: dict[str, list[float]] = {}
+    
+    opposition_attacks = []
+    crises_triggered = []
+    ensemble_reasoning = []
+
+    for r in results:
+        total_exec += r["execution_pct"]
+        total_leakage += r["leakage_cr"]
+        if r["reasoning"]:
+            ensemble_reasoning.append(f"**{r['persona']}**: {r['reasoning']}")
+        if r["opposition_attack"] and r["opposition_attack"].lower() not in ["none", "n/a", "null", ""]:
+            opposition_attacks.append(r["opposition_attack"])
+        if r["crisis_event_triggered"] and r["crisis_event_triggered"].lower() not in ["none", "n/a", "null", ""]:
+            crises_triggered.append(r["crisis_event_triggered"])
+
+        for k, v in r["city_param_deltas"].items():
+            if v != 0:
+                agg_param_deltas.setdefault(k, []).append(v)
+        for k, v in r["side_effect_deltas"].items():
+            if v != 0:
+                agg_side_deltas.setdefault(k, []).append(v)
+
+    n = len(results)
+    avg_exec = int(total_exec / n)
+    avg_leak = total_leakage / n
+
+    # Average the deltas (only dividing by the number of experts who proposed the delta to preserve intent severity)
+    final_param_deltas = {k: sum(vs)/len(vs) for k, vs in agg_param_deltas.items()}
+    final_side_deltas = {k: sum(vs)/len(vs) for k, vs in agg_side_deltas.items()}
+
+    master_reasoning = "\n".join(ensemble_reasoning)
+
+    return {
+        "execution_pct": avg_exec,
+        "leakage_cr": avg_leak,
+        "reasoning": master_reasoning,
+        "city_param_deltas": final_param_deltas,
+        "side_effect_deltas": final_side_deltas,
+        "opposition_attacks": opposition_attacks,
+        "crises_triggered": crises_triggered,
+        "ensemble_reasoning": ensemble_reasoning
+    }
 
 
 # ---------------------------------------------------------------------------

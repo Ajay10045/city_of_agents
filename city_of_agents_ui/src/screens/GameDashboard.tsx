@@ -1,8 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import {
-  ChevronRight, ChevronDown, HelpCircle, Settings, Clock,
+  ChevronRight, ChevronDown,
   Zap, Send, AlertTriangle, TrendingDown, Droplets,
-  MapPin, Info,
   Newspaper, MessageCircle, TrendingUp, Loader2,
   Volume2, VolumeX
 } from 'lucide-react'
@@ -12,7 +11,7 @@ import {
 } from '../api'
 import type {
   GameState, TurnResult, Policy, Minister, ActiveEvent,
-  MediaHeadline, CitizenVoice, WardReportEntry,
+  MediaHeadline, CitizenVoice,
   GovernanceScorecard,
 } from '../types'
 
@@ -106,7 +105,9 @@ interface WelfareStat {
   color: string; icon: string
 }
 
-function WelfareCard({ stat }: { stat: WelfareStat }) {
+// WelfareCard removed (redesign)
+// @ts-expect-error kept for potential future use
+function _WelfareCard({ stat }: { stat: WelfareStat }) {
   const deltaColor = stat.delta > 0 ? '#4ade80' : stat.delta < 0 ? '#f87171' : '#64748b'
   const scoreColor = stat.score >= 65 ? '#4ade80' : stat.score >= 40 ? '#f59e0b' : '#f87171'
   return (
@@ -148,7 +149,9 @@ function WelfareCard({ stat }: { stat: WelfareStat }) {
 
 // ─── MiniBar ──────────────────────────────────────────────────────────────────
 
-function MiniBar({ value, color, width = 36 }: { value: number; color: string; width?: number }) {
+// MiniBar removed (redesign)
+// @ts-expect-error kept for potential future use
+function _MiniBar({ value, color, width = 36 }: { value: number; color: string; width?: number }) {
   return (
     <div style={{ width, height: 4, background: 'rgba(10,26,48,0.8)', borderRadius: 2, overflow: 'hidden' }}>
       <div style={{
@@ -476,28 +479,6 @@ interface TurnEntry {
   expanded: boolean
 }
 
-// ─── Portfolio image map ───────────────────────────────────────────────────────
-
-const PORTFOLIO_IMG: Record<string, string> = {
-  'Infrastructure': 'https://images.unsplash.com/photo-1544621531-97b77ab684cb?q=80&w=1200&auto=format&fit=crop',
-  'Health & Education': 'https://images.unsplash.com/photo-1551076805-e1869033e561?q=80&w=1200&auto=format&fit=crop',
-  'Finance & Economy': 'https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?q=80&w=1200&auto=format&fit=crop',
-  'Home Affairs': 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?q=80&w=1200&auto=format&fit=crop',
-  'Housing & Community': 'https://images.unsplash.com/photo-1580216643062-cf460548a66a?q=80&w=1200&auto=format&fit=crop',
-  'Environment': 'https://images.unsplash.com/photo-1441974231531-c6227db76b6e?q=80&w=1200&auto=format&fit=crop',
-  'Governance Reform': 'https://images.unsplash.com/photo-1580582932707-520aed937b7b?q=80&w=1200&auto=format&fit=crop',
-
-  // Fallbacks
-  'Transport & Roads': 'https://images.unsplash.com/photo-1544621531-97b77ab684cb?q=80&w=1200&auto=format&fit=crop',
-  'Health': 'https://images.unsplash.com/photo-1551076805-e1869033e561?q=80&w=1200&auto=format&fit=crop',
-  'Education': 'https://images.unsplash.com/photo-1580582932707-520aed937b7b?q=80&w=1200&auto=format&fit=crop',
-  'Housing': 'https://images.unsplash.com/photo-1580216643062-cf460548a66a?q=80&w=1200&auto=format&fit=crop',
-  'Security & Law': 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?q=80&w=1200&auto=format&fit=crop',
-  'Water & Power': 'https://images.unsplash.com/photo-1509391366360-2e959784a276?q=80&w=1200&auto=format&fit=crop',
-  'Commerce': 'https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?q=80&w=1200&auto=format&fit=crop',
-  'Labor & Employment': 'https://images.unsplash.com/photo-1504307651254-35680f356dfd?q=80&w=1200&auto=format&fit=crop',
-}
-const DEFAULT_IMG = 'https://images.unsplash.com/photo-1596430212278-7f7b1d0c9a4e?q=80&w=1200&auto=format&fit=crop'
 
 // ─── Welfare score helpers ────────────────────────────────────────────────────
 
@@ -664,7 +645,9 @@ function findMinisterForPortfolio(ministers: Minister[], portfolio: string): Min
 
 // ─── TurnPhaseCard ─────────────────────────────────────────────────────────────
 
-function TurnPhaseCard({
+// TurnPhaseCard removed from render (redesign)
+// @ts-expect-error kept for potential future use
+function _TurnPhaseCard({
   entry, ministers, onToggle,
 }: {
   entry: TurnEntry; ministers: Minister[]; onToggle: () => void
@@ -814,15 +797,7 @@ function TurnPhaseCard({
                     )}
                   </div>
 
-                  {/* Right Column: Spanning Analysis */}
-                  {tr.evaluator_reasoning && (
-                    <div style={{ paddingLeft: 12, borderLeft: '1px solid #1c3652', height: '100%' }}>
-                      <div style={{ fontSize: 7, color: '#94a3b8', letterSpacing: '0.12em', fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, marginBottom: 4 }}>IMPLEMENTATION ANALYSIS</div>
-                      <div style={{ fontSize: 9, color: '#cbd5e1', lineHeight: 1.5, fontStyle: 'italic' }}>
-                        "{tr.evaluator_reasoning}"
-                      </div>
-                    </div>
-                  )}
+                  {/* Right Column: Spanning Analysis Removed per user request */}
                 </div>
               </div>
             )}
@@ -988,20 +963,7 @@ function TurnPhaseCard({
               )
             })()}
 
-            {/* ── ADVISOR DEBRIEF ─────────────────────────────────────────── */}
-            {tr.advisor_summary && (
-              <div style={{
-                padding: '8px 10px', borderRadius: 5,
-                background: 'rgba(232,160,48,0.05)', border: '1px solid rgba(232,160,48,0.18)',
-                display: 'flex', gap: 8, alignItems: 'flex-start',
-              }}>
-                <div style={{ fontSize: 16, marginTop: -1 }}>📋</div>
-                <div>
-                  <div style={{ fontSize: 7, fontWeight: 700, color: '#e8a030', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.12em', marginBottom: 3 }}>ADVISOR DEBRIEF</div>
-                  <div style={{ fontSize: 10, color: '#b8924a', lineHeight: 1.6 }}>{tr.advisor_summary}</div>
-                </div>
-              </div>
-            )}
+            {/* Advisor Debrief removed per user request */}
 
           </div>
         )
@@ -1012,38 +974,70 @@ function TurnPhaseCard({
 
 // ─── Live Milestone Feed ───────────────────────────────────────────────────────
 
-function LiveMilestoneFeed({ milestones, policyName, approvalVotes, evalReasoning }: {
+function LiveMilestoneFeed({ milestones, policyName, approvalVotes }: {
   milestones: Record<string, unknown>[]
   policyName: string
   approvalVotes?: { sentiment: string; weight: number }[]
-  evalReasoning?: string | null
 }) {
   const feedEndRef = useRef<HTMLDivElement>(null)
   useEffect(() => { feedEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [milestones.length])
 
-  const dot = (color: string) => (
-    <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: color, marginRight: 5, flexShrink: 0 }} />
-  )
+  // Map milestone types to human-readable phase labels and icons
+  const phaseOf = (m: Record<string, unknown>) => {
+    const type = m.type as string
+    const key = m.key as string | undefined
+    if (type === 'policy_start') return { label: 'DEPLOYING POLICY', icon: '📋', color: '#38bdf8' }
+    if (type === 'implementation') return { label: 'MINISTER EXECUTING', icon: '⚙️', color: '#a78bfa' }
+    if (type === 'events') return { label: 'CHECKING EVENTS', icon: '🔔', color: '#f59e0b' }
+    if (type === 'wellbeing_update') return { label: 'CITIZEN IMPACT', icon: '👥', color: '#22c55e' }
+    if (type === 'politics') return { label: 'POLITICAL FALLOUT', icon: '🏛', color: '#f87171' }
+    if (type === 'narrative_chunk' && key === 'delivery') return { label: 'FIELD REPORT', icon: '📝', color: '#60a5fa' }
+    if (type === 'narrative_chunk' && key === 'headlines') return { label: 'PRESS COVERAGE', icon: '📰', color: '#fb923c' }
+    if (type === 'narrative_chunk' && key === 'voices') return { label: 'CITIZEN REACTIONS', icon: '💬', color: '#34d399' }
+    if (type === 'narrative_chunk' && key === 'advisor') return { label: 'ADVISOR BRIEFING', icon: '🎯', color: '#e8a030' }
+    if (type === 'evaluation') return { label: 'AI EVALUATION', icon: '🤖', color: '#7dd3fc' }
+    if (type === 'approval_final') return { label: 'APPROVAL UPDATE', icon: '📊', color: '#4ade80' }
+    if (type === 'complete') return { label: 'TURN COMPLETE', icon: '✅', color: '#22c55e' }
+    return { label: (type || 'PROCESSING').toUpperCase(), icon: '⏳', color: '#64748b' }
+  }
 
-  function renderMilestone(m: Record<string, unknown>, i: number) {
-    const base = { display: 'flex', flexDirection: 'column' as const, gap: 2 }
+  function renderCard(m: Record<string, unknown>, _i: number, _phase: ReturnType<typeof phaseOf>) {
 
     if (m.type === 'policy_start') {
       const effects = m.target_effects as Record<string, number> | undefined
-      const topEffect = effects ? Object.entries(effects).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))[0] : null
+      const topEffects = effects
+        ? Object.entries(effects).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).slice(0, 3)
+        : []
       return (
-        <div key={i} style={base}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            {dot('#4ade80')}
-            <span style={{ fontSize: 11, fontWeight: 700, color: '#e2e8f0', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.05em' }}>
-              {m.policy_name as string}
-            </span>
-            <span style={{ fontSize: 9, color: '#64748b', marginLeft: 2 }}>· {m.portfolio as string}</span>
+        <div style={{
+          background: 'linear-gradient(135deg, rgba(56,189,248,0.08), rgba(56,189,248,0.02))',
+          border: '1px solid rgba(56,189,248,0.2)', borderRadius: 8, padding: '12px 14px',
+        }}>
+          <div style={{
+            fontSize: 14, fontWeight: 700, color: '#f1f5f9', marginBottom: 6,
+            fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.03em'
+          }}>
+            {m.policy_name as string}
           </div>
-          <div style={{ paddingLeft: 11, fontSize: 9, color: '#4b6280', display: 'flex', gap: 8 }}>
-            <span>₹{m.budget_cost as number} Cr</span>
-            {topEffect && <span style={{ color: topEffect[1] >= 0 ? '#4ade80' : '#f87171' }}>{topEffect[0].replace(/_/g, ' ')} {topEffect[1] >= 0 ? '+' : ''}{topEffect[1]}</span>}
+          <div className="flex items-center gap-3 flex-wrap" style={{ marginBottom: 4 }}>
+            <span style={{ fontSize: 10, color: '#64748b' }}>📂 {m.portfolio as string}</span>
+            <span style={{ fontSize: 10, color: '#f59e0b', fontWeight: 700 }}>₹{m.budget_cost as number} Cr</span>
           </div>
+          {topEffects.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {topEffects.map(([k, v]) => (
+                <span key={k} style={{
+                  fontSize: 9, fontWeight: 700, fontFamily: "'Share Tech Mono', monospace",
+                  padding: '2px 6px', borderRadius: 4,
+                  background: v >= 0 ? 'rgba(34,197,94,0.12)' : 'rgba(248,113,113,0.12)',
+                  border: `1px solid ${v >= 0 ? 'rgba(34,197,94,0.3)' : 'rgba(248,113,113,0.3)'}`,
+                  color: v >= 0 ? '#4ade80' : '#f87171',
+                }}>
+                  {v >= 0 ? '+' : ''}{v} {k.replace(/_/g, ' ')}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       )
     }
@@ -1053,17 +1047,28 @@ function LiveMilestoneFeed({ milestones, policyName, approvalVotes, evalReasonin
       const stolen = m.budget_stolen as number
       const color = score >= 70 ? '#4ade80' : score >= 40 ? '#f59e0b' : '#f87171'
       return (
-        <div key={i} style={base}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            {dot(color)}
-            <span style={{ fontSize: 10, color: '#94a3b8' }}>Implementation · <span style={{ color: '#7dd3fc' }}>{m.minister_name as string}</span></span>
+        <div style={{
+          background: 'rgba(167,139,250,0.06)', border: '1px solid rgba(167,139,250,0.2)',
+          borderRadius: 8, padding: '12px 14px',
+        }}>
+          <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0' }}>
+              Minister <span style={{ color: '#7dd3fc' }}>{m.minister_name as string}</span> executing
+            </span>
+            <span style={{ fontSize: 16, fontWeight: 800, fontFamily: "'Share Tech Mono', monospace", color }}>
+              {Math.round(score)}%
+            </span>
           </div>
-          <div style={{ paddingLeft: 11, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <div style={{ width: 60, height: 4, background: '#1c3652', borderRadius: 2, overflow: 'hidden' }}>
-              <div style={{ width: `${score}%`, height: '100%', background: color, borderRadius: 2 }} />
-            </div>
-            <span style={{ fontSize: 9, color }}>  {Math.round(score)}% exec</span>
-            {stolen > 0 && <span style={{ fontSize: 9, color: '#f87171' }}>· ₹{stolen.toFixed(1)} Cr leaked</span>}
+          <div style={{ height: 8, background: '#0f1b2e', borderRadius: 4, overflow: 'hidden', marginBottom: 6 }}>
+            <div style={{
+              width: `${score}%`, height: '100%', background: `linear-gradient(90deg, ${color}88, ${color})`,
+              borderRadius: 4, boxShadow: `0 0 12px ${color}60`,
+              transition: 'width 0.5s ease',
+            }} />
+          </div>
+          <div className="flex items-center gap-4" style={{ fontSize: 10 }}>
+            <span style={{ color: '#64748b' }}>Execution Score</span>
+            {stolen > 0 && <span style={{ color: '#f87171', fontWeight: 700 }}>₹{stolen.toFixed(1)} Cr leaked to corruption</span>}
           </div>
         </div>
       )
@@ -1071,168 +1076,326 @@ function LiveMilestoneFeed({ milestones, policyName, approvalVotes, evalReasonin
 
     if (m.type === 'events') {
       const triggered = m.events_triggered as { name: string; type: string; severity: number }[]
-      if (triggered.length === 0) {
-        return (
-          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            {dot('#334155')}
-            <span style={{ fontSize: 9, color: '#4b6280', fontStyle: 'italic' }}>No new events</span>
-          </div>
-        )
-      }
       return (
-        <div key={i} style={base}>
-          {triggered.map((ev, j) => (
-            <div key={j} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <span style={{ fontSize: 9, color: ev.type === 'crisis' ? '#f87171' : '#4ade80' }}>
-                {ev.type === 'crisis' ? '⚠' : '✦'}
-              </span>
-              <span style={{ fontSize: 9, color: ev.type === 'crisis' ? '#fca5a5' : '#86efac' }}>{ev.name}</span>
-              <span style={{ fontSize: 8, color: '#4b6280' }}>sev {ev.severity}</span>
+        <div style={{
+          background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.2)',
+          borderRadius: 8, padding: '10px 14px',
+        }}>
+          {triggered.length === 0 ? (
+            <div style={{ fontSize: 11, color: '#64748b', fontStyle: 'italic' }}>✓ No new crises or events triggered</div>
+          ) : (
+            <div className="space-y-2">
+              {triggered.map((ev, j) => (
+                <div key={j} className="flex items-center gap-2">
+                  <span style={{ fontSize: 14 }}>{ev.type === 'crisis' ? '⚠️' : '✨'}</span>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: ev.type === 'crisis' ? '#fca5a5' : '#86efac' }}>
+                    {ev.name}
+                  </span>
+                  <span style={{
+                    fontSize: 8, padding: '1px 5px', borderRadius: 3, fontWeight: 700,
+                    fontFamily: "'Rajdhani', sans-serif",
+                    background: ev.type === 'crisis' ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.15)',
+                    color: ev.type === 'crisis' ? '#f87171' : '#4ade80',
+                    border: `1px solid ${ev.type === 'crisis' ? 'rgba(239,68,68,0.3)' : 'rgba(34,197,94,0.3)'}`,
+                  }}>SEV {ev.severity}</span>
+                </div>
+              ))}
             </div>
-          ))}
+          )}
         </div>
       )
     }
 
     if (m.type === 'wellbeing_update') {
       const ward = (m.ward_report ?? []) as { group_type: string; avg_wellbeing: number; trend: string }[]
-      const avgWb = ward.length > 0
-        ? Math.round(ward.reduce((s, w) => s + w.avg_wellbeing, 0) / ward.length)
-        : null
+      const avgWb = ward.length > 0 ? Math.round(ward.reduce((s, w) => s + w.avg_wellbeing, 0) / ward.length) : null
       const upCount = ward.filter(w => w.trend === 'up').length
       const downCount = ward.filter(w => w.trend === 'down').length
-      const netTrend = upCount > downCount ? '↑' : upCount < downCount ? '↓' : '─'
-      const trendColor = netTrend === '↑' ? '#4ade80' : netTrend === '↓' ? '#f87171' : '#64748b'
       return (
-        <div key={i} style={{
-          background: 'rgba(255,255,255,0.02)', borderRadius: 4,
-          padding: '5px 8px', border: '1px solid #1c3652',
+        <div style={{
+          background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.2)',
+          borderRadius: 8, padding: '10px 14px',
         }}>
-          <div style={{ fontSize: 8, color: '#4b6280', letterSpacing: '0.1em', fontFamily: "'Rajdhani', sans-serif", marginBottom: 4 }}>WELLBEING UPDATE</div>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <div className="flex items-center gap-4">
             {avgWb !== null && (
-              <span style={{ fontSize: 11, color: trendColor, fontWeight: 700, fontFamily: "'Share Tech Mono', monospace" }}>
-                {netTrend} avg {avgWb}
-              </span>
+              <div className="flex items-center gap-2">
+                <span style={{ fontSize: 10, color: '#64748b' }}>Avg Wellbeing</span>
+                <span style={{ fontSize: 16, fontWeight: 800, fontFamily: "'Share Tech Mono', monospace", color: avgWb >= 50 ? '#4ade80' : '#f59e0b' }}>
+                  {avgWb}
+                </span>
+              </div>
             )}
-            <span style={{ fontSize: 9, color: '#22c55e' }}>↑ {upCount} groups</span>
-            <span style={{ fontSize: 9, color: '#f87171' }}>↓ {downCount} groups</span>
+            <div className="flex items-center gap-2">
+              {upCount > 0 && <span style={{ fontSize: 10, color: '#4ade80' }}>▲ {upCount} groups improving</span>}
+              {downCount > 0 && <span style={{ fontSize: 10, color: '#f87171' }}>▼ {downCount} groups declining</span>}
+            </div>
           </div>
         </div>
       )
     }
 
     if (m.type === 'politics') {
-      const aBefore = Math.round(m.approval_before as number)
-      const aAfter = Math.round(m.approval_after as number)
-      const delta = aAfter - aBefore
-      const color = delta >= 0 ? '#4ade80' : '#f87171'
       return (
-        <div key={i} style={base}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            {dot('#38bdf8')}
-            <span style={{ fontSize: 9, color: '#94a3b8' }}>Politics · <span style={{ color: '#fbbf24' }}>{m.attack as string}</span> vs <span style={{ color: '#34d399' }}>{m.counter as string}</span></span>
-          </div>
-          <div style={{ paddingLeft: 11, fontSize: 9, color }}>
-            Approval {aBefore}% → {aAfter}% ({delta >= 0 ? '+' : ''}{delta}%)
-          </div>
+        <div style={{
+          background: 'rgba(248,113,113,0.06)', border: '1px solid rgba(248,113,113,0.15)',
+          borderRadius: 8, padding: '10px 14px',
+        }}>
+          {(m.opposition_attack as string) && (
+            <div style={{ marginBottom: 6 }}>
+              <div style={{ fontSize: 9, color: '#f87171', fontWeight: 700, fontFamily: "'Rajdhani', sans-serif", marginBottom: 3 }}>OPPOSITION</div>
+              <div style={{ fontSize: 10, color: '#fca5a5', lineHeight: 1.5 }}>{String(m.opposition_attack).slice(0, 120)}...</div>
+            </div>
+          )}
+          {(m.counter_frame as string) && (
+            <div>
+              <div style={{ fontSize: 9, color: '#4ade80', fontWeight: 700, fontFamily: "'Rajdhani', sans-serif", marginBottom: 3 }}>YOUR COUNTER</div>
+              <div style={{ fontSize: 10, color: '#86efac', lineHeight: 1.5 }}>{String(m.counter_frame).slice(0, 120)}...</div>
+            </div>
+          )}
         </div>
       )
     }
 
     if (m.type === 'narrative_chunk') {
       const key = m.key as string
-      if (key === 'delivery') {
-        const text = m.value as string
-        return (
-          <div key={i} style={{ padding: '8px 10px', background: 'rgba(56,189,248,0.06)', borderRadius: 4, border: '1px solid rgba(56,189,248,0.15)', marginTop: 8 }}>
-            <div style={{ fontSize: 7, color: '#38bdf8', letterSpacing: '0.12em', fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, marginBottom: 4 }}>ON THE GROUND</div>
-            <div style={{ fontSize: 10, color: '#e0f2fe', lineHeight: 1.6, fontStyle: 'italic' }}>
-              "{text}"
-            </div>
-          </div>
-        )
-      }
       if (key === 'headlines') {
-        const hs = m.value as { outlet: string; headline: string }[]
+        const headlines = m.value as { headline: string; outlet: string; lean: string }[]
         return (
-          <div key={i} style={base}>
-            {hs.slice(0, 2).map((h, j) => (
-              <div key={j} style={{ display: 'flex', alignItems: 'flex-start', gap: 4 }}>
-                <Newspaper size={8} color="#64748b" style={{ marginTop: 2, flexShrink: 0 }} />
-                <span style={{ fontSize: 9, color: '#94a3b8' }}><span style={{ color: '#64748b' }}>{h.outlet || (h as any).outlet_name}:</span> {h.headline}</span>
+          <div style={{
+            background: 'rgba(251,146,60,0.06)', border: '1px solid rgba(251,146,60,0.2)',
+            borderRadius: 8, padding: '10px 14px',
+          }}>
+            {headlines.slice(0, 3).map((h, j) => (
+              <div key={j} className="flex items-center gap-2" style={{ marginBottom: j < 2 ? 6 : 0 }}>
+                <span style={{
+                  fontSize: 8, fontWeight: 700, padding: '1px 4px', borderRadius: 3,
+                  background: h.lean === 'mayor' ? 'rgba(34,197,94,0.15)' : h.lean === 'opposition' ? 'rgba(248,113,113,0.15)' : 'rgba(96,165,250,0.15)',
+                  color: h.lean === 'mayor' ? '#4ade80' : h.lean === 'opposition' ? '#f87171' : '#60a5fa',
+                }}>{h.outlet.split(' ').map(w => w[0]).join('').slice(0, 2)}</span>
+                <span style={{ fontSize: 10, color: '#e2e8f0', lineHeight: 1.4 }}>{h.headline}</span>
               </div>
             ))}
           </div>
         )
       }
-      if (key === 'advisor') {
-        const text = m.value as string
+      if (key === 'voices') {
+        const voices = m.value as { name: string; reaction: string; sentiment: string }[]
         return (
-          <div key={i} style={{ paddingLeft: 2, borderLeft: '2px solid #92400e' }}>
-            <div style={{ fontSize: 9, color: '#d97706', fontStyle: 'italic' }}>
-              ★ {text.slice(0, 100)}{text.length > 100 ? '…' : ''}
-            </div>
+          <div style={{
+            background: 'rgba(52,211,153,0.06)', border: '1px solid rgba(52,211,153,0.2)',
+            borderRadius: 8, padding: '10px 14px',
+          }}>
+            {voices.slice(0, 3).map((v, j) => (
+              <div key={j} style={{ marginBottom: j < 2 ? 6 : 0 }}>
+                <div className="flex items-center gap-2" style={{ marginBottom: 2 }}>
+                  <span style={{ fontSize: 9, fontWeight: 700, color: '#94a3b8' }}>{v.name.split(' ')[0]}</span>
+                  <span style={{
+                    width: 6, height: 6, borderRadius: '50%',
+                    background: v.sentiment === 'approve' ? '#22c55e' : v.sentiment === 'disapprove' ? '#f87171' : '#f59e0b',
+                  }} />
+                </div>
+                <div style={{ fontSize: 10, color: '#cbd5e1', lineHeight: 1.4, paddingLeft: 2 }}>
+                  "{v.reaction.slice(0, 80)}..."
+                </div>
+              </div>
+            ))}
           </div>
         )
       }
-      return null
-    }
-
-    return null
-  }
-
-  return (
-    <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <div style={{ fontFamily: "'Rajdhani', sans-serif", fontSize: 11, fontWeight: 700, letterSpacing: '0.12em', color: '#4ade80', display: 'flex', alignItems: 'center', gap: 6 }}>
-        <Loader2 size={10} className="animate-spin" color="#4ade80" />
-        TURN IN PROGRESS
-        {policyName && <span style={{ color: '#4b6280', fontWeight: 400, fontSize: 9 }}>· {policyName}</span>}
-      </div>
-      {milestones.length === 0 && (
-        <div style={{ color: '#4b6280', fontSize: 9, fontStyle: 'italic' }}>Initialising...</div>
-      )}
-      {milestones.map((m, i) => renderMilestone(m, i))}
-
-      {/* AI Evaluation reasoning */}
-      {evalReasoning && (
-        <div style={{ marginBottom: 10, paddingLeft: 8, borderLeft: '2px solid #334155', marginTop: 8 }}>
-          <div style={{ fontSize: 7, color: '#94a3b8', letterSpacing: '0.12em', fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, marginBottom: 2 }}>IMPLEMENTATION ANALYSIS</div>
-          <div style={{ fontSize: 10, color: '#cbd5e1', lineHeight: 1.5 }}>
-            {evalReasoning}
-          </div>
-        </div>
-      )}
-
-      {/* Live approval bar */}
-      {approvalVotes && approvalVotes.length > 0 && (() => {
-        const total = approvalVotes.length
-        const approveW = approvalVotes.filter(v => v.sentiment === 'approve').reduce((s, v) => s + v.weight, 0)
-        const totalW = approvalVotes.reduce((s, v) => s + v.weight, 0)
-        const approvalPct = totalW > 0 ? Math.round((approveW / totalW) * 100) : 50
-        const approveCt = approvalVotes.filter(v => v.sentiment === 'approve').length
-        const disapproveCt = approvalVotes.filter(v => v.sentiment === 'disapprove').length
-        const undecidedCt = approvalVotes.filter(v => v.sentiment === 'undecided').length
-        const col = approvalPct >= 50 ? '#22c55e' : '#f87171'
+      if (key === 'delivery') {
         return (
-          <div style={{ marginTop: 2 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-              <span style={{ fontSize: 8, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.1em', color: '#4b6280' }}>CITIZEN POLL ({total} voted)</span>
-              <span style={{ fontSize: 12, fontWeight: 800, color: col, fontFamily: "'Share Tech Mono', monospace" }}>{approvalPct}%</span>
-            </div>
-            <div style={{ height: 6, background: '#0b1929', borderRadius: 3, overflow: 'hidden', position: 'relative' }}>
-              <div style={{ position: 'absolute', left: 0, top: 0, height: '100%', width: `${approvalPct}%`, background: col, borderRadius: 3, transition: 'width 0.4s ease' }} />
-            </div>
-            <div style={{ display: 'flex', gap: 10, marginTop: 5 }}>
-              <span style={{ fontSize: 9, color: '#22c55e' }}>✓ {approveCt}</span>
-              <span style={{ fontSize: 9, color: '#f87171' }}>✗ {disapproveCt}</span>
-              <span style={{ fontSize: 9, color: '#64748b' }}>~ {undecidedCt}</span>
-            </div>
+          <div style={{
+            background: 'rgba(96,165,250,0.06)', border: '1px solid rgba(96,165,250,0.2)',
+            borderRadius: 8, padding: '10px 14px', fontSize: 10, color: '#94a3b8', lineHeight: 1.6,
+          }}>
+            {String(m.value).slice(0, 200)}...
           </div>
         )
-      })()}
+      }
+      if (key === 'advisor') {
+        return (
+          <div style={{
+            background: 'rgba(232,160,48,0.06)', border: '1px solid rgba(232,160,48,0.2)',
+            borderRadius: 8, padding: '10px 14px', fontSize: 10, color: '#e8a030', lineHeight: 1.6,
+            fontStyle: 'italic',
+          }}>
+            💡 {String(m.value).slice(0, 200)}...
+          </div>
+        )
+      }
+    }
 
-      <div ref={feedEndRef} />
+    if (m.type === 'approval_final') {
+      const before = m.before as number
+      const after = m.after as number
+      const delta = after - before
+      return (
+        <div style={{
+          background: 'rgba(74,222,128,0.08)', border: '1px solid rgba(74,222,128,0.2)',
+          borderRadius: 8, padding: '12px 14px', textAlign: 'center',
+        }}>
+          <div style={{ fontSize: 10, color: '#64748b', marginBottom: 6, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.1em' }}>APPROVAL RATING</div>
+          <div className="flex items-center justify-center gap-4">
+            <span style={{ fontSize: 14, color: '#64748b', fontFamily: "'Share Tech Mono', monospace" }}>{Math.round(before)}%</span>
+            <span style={{ fontSize: 18, color: delta >= 0 ? '#4ade80' : '#f87171' }}>→</span>
+            <span style={{ fontSize: 22, fontWeight: 800, fontFamily: "'Share Tech Mono', monospace", color: delta >= 0 ? '#4ade80' : '#f87171' }}>
+              {Math.round(after)}%
+            </span>
+            <span style={{
+              fontSize: 12, fontWeight: 700, fontFamily: "'Share Tech Mono', monospace",
+              color: delta >= 0 ? '#4ade80' : '#f87171',
+            }}>
+              ({delta >= 0 ? '+' : ''}{Math.round(delta)})
+            </span>
+          </div>
+        </div>
+      )
+    }
+
+    // Generic fallback
+    return (
+      <div style={{
+        background: 'rgba(255,255,255,0.03)', border: '1px solid #1c3652',
+        borderRadius: 8, padding: '8px 14px', fontSize: 10, color: '#94a3b8',
+      }}>
+        {JSON.stringify(m).slice(0, 100)}
+      </div>
+    )
+  }
+
+  // Count completed steps for progress
+  const totalExpectedSteps = 8
+  const currentStep = milestones.length
+  const progressPct = Math.min(100, Math.round((currentStep / totalExpectedSteps) * 100))
+
+  return (
+    <div className="w-full" style={{ maxWidth: 560 }}>
+      {/* Header with policy name and progress */}
+      <div style={{ marginBottom: 16 }}>
+        <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
+          <div>
+            <div style={{
+              fontSize: 9, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.12em',
+              color: '#38bdf8', fontWeight: 700,
+            }}>EXECUTING POLICY</div>
+            <div style={{
+              fontSize: 16, fontWeight: 700, color: '#f1f5f9',
+              fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.03em',
+            }}>
+              {policyName || 'Processing...'}
+            </div>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'Share Tech Mono', monospace", color: '#38bdf8' }}>
+              {progressPct}%
+            </div>
+            <div style={{ fontSize: 8, color: '#4b6280', fontFamily: "'Rajdhani', sans-serif" }}>
+              STEP {currentStep}/{totalExpectedSteps}
+            </div>
+          </div>
+        </div>
+        {/* Overall progress bar */}
+        <div style={{ height: 4, background: '#0f1b2e', borderRadius: 2, overflow: 'hidden' }}>
+          <div style={{
+            width: `${progressPct}%`, height: '100%',
+            background: 'linear-gradient(90deg, #1d4ed8, #38bdf8, #7dd3fc)',
+            borderRadius: 2, boxShadow: '0 0 12px rgba(56,189,248,0.5)',
+            transition: 'width 0.4s ease',
+          }} />
+        </div>
+      </div>
+
+      {/* Step-by-step feed with vertical timeline */}
+      <div className="space-y-3 relative overflow-y-auto" style={{ maxHeight: 'calc(100vh - 300px)', paddingLeft: 24 }}>
+        {/* Timeline line */}
+        <div style={{
+          position: 'absolute', left: 8, top: 0, bottom: 0, width: 2,
+          background: 'linear-gradient(180deg, #38bdf8 0%, #1c3652 100%)',
+        }} />
+
+        {milestones.map((m, i) => {
+          const phase = phaseOf(m)
+          const isLast = i === milestones.length - 1
+          return (
+            <div key={i} style={{ position: 'relative' }}>
+              {/* Timeline dot */}
+              <div style={{
+                position: 'absolute', left: -20, top: 4,
+                width: 12, height: 12, borderRadius: '50%',
+                background: isLast ? phase.color : '#0a1828',
+                border: `2px solid ${phase.color}`,
+                boxShadow: isLast ? `0 0 10px ${phase.color}80` : 'none',
+                zIndex: 1,
+              }} />
+
+              {/* Phase label */}
+              <div className="flex items-center gap-2" style={{ marginBottom: 4 }}>
+                <span style={{ fontSize: 12 }}>{phase.icon}</span>
+                <span style={{
+                  fontSize: 9, fontWeight: 700, fontFamily: "'Rajdhani', sans-serif",
+                  letterSpacing: '0.1em', color: phase.color,
+                }}>
+                  {phase.label}
+                </span>
+                {isLast && (
+                  <div className="flex items-center gap-1">
+                    <div style={{
+                      width: 5, height: 5, borderRadius: '50%', background: phase.color,
+                      animation: 'pulse 1.5s infinite',
+                    }} />
+                  </div>
+                )}
+              </div>
+
+              {/* Card content */}
+              {renderCard(m, i, phase)}
+            </div>
+          )
+        })}
+
+        {/* Always show a pulsing "working" indicator at the bottom */}
+        {milestones.length > 0 && milestones[milestones.length - 1]?.type !== 'complete' && (
+          <div style={{ position: 'relative' }}>
+            <div style={{
+              position: 'absolute', left: -20, top: 4,
+              width: 12, height: 12, borderRadius: '50%',
+              background: '#38bdf8', border: '2px solid #38bdf8',
+              boxShadow: '0 0 10px rgba(56,189,248,0.6)',
+              animation: 'pulse 1.5s infinite',
+            }} />
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg"
+              style={{ background: 'rgba(56,189,248,0.06)', border: '1px solid rgba(56,189,248,0.15)' }}>
+              <Loader2 size={12} className="animate-spin" color="#38bdf8" />
+              <span style={{ fontSize: 10, color: '#7dd3fc', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.06em' }}>
+                Processing next step...
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Approval vote tally during execution */}
+        {approvalVotes && approvalVotes.length > 0 && (
+          <div style={{
+            background: 'rgba(255,255,255,0.03)', border: '1px solid #1c3652',
+            borderRadius: 8, padding: '8px 12px', marginTop: 8,
+          }}>
+            <div style={{ fontSize: 8, color: '#4b6280', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.1em', marginBottom: 4 }}>LIVE APPROVAL VOTES</div>
+            <div className="flex items-center gap-3">
+              <span style={{ fontSize: 10, color: '#4ade80' }}>
+                ✓ {approvalVotes.filter(v => v.sentiment === 'approve').length}
+              </span>
+              <span style={{ fontSize: 10, color: '#f87171' }}>
+                ✗ {approvalVotes.filter(v => v.sentiment === 'disapprove').length}
+              </span>
+              <span style={{ fontSize: 10, color: '#f59e0b' }}>
+                ~ {approvalVotes.filter(v => v.sentiment === 'mixed').length}
+              </span>
+            </div>
+          </div>
+        )}
+
+        <div ref={feedEndRef} />
+      </div>
     </div>
   )
 }
@@ -1242,7 +1405,7 @@ function LiveMilestoneFeed({ milestones, policyName, approvalVotes, evalReasonin
 export default function GameDashboard({ gameId, initialState }: { gameId: string; initialState: GameState }) {
   const [gameState, setGameState] = useState<GameState>(initialState)
   const [lastTurn, setLastTurn] = useState<TurnResult | null>(initialState.last_turn)
-  const [turnHistory, setTurnHistory] = useState<TurnEntry[]>([])
+  const [, setTurnHistory] = useState<TurnEntry[]>([])
   const initialTreasury = useRef(initialState.treasury)
 
   // Unified council chat
@@ -1257,7 +1420,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
   const [expandedMinisterId, setExpandedMinisterId] = useState<string | null>(null)
 
   // All parameters panel
-  const [showAllParams, setShowAllParams] = useState(false)
+  // showAllParams removed (redesign)
 
   // Minor Action
 
@@ -1275,13 +1438,11 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
   // Turn execution
   const [isTurnExecuting, setIsTurnExecuting] = useState(false)
   const [executingPolicyName, setExecutingPolicyName] = useState<string | null>(null)
-  const [executingPolicy, setExecutingPolicy] = useState<Policy | null>(null)
   const [turnError, setTurnError] = useState<string | null>(null)
   const [liveMilestones, setLiveMilestones] = useState<Record<string, unknown>[]>([])
 
   // Live approval poll tracking
   const [liveApprovalVotes, setLiveApprovalVotes] = useState<{ sentiment: string; weight: number }[]>([])
-  const [liveEvalReasoning, setLiveEvalReasoning] = useState<string | null>(null)
   // Live approval — updated from approval_final event so top bar updates before complete
   const [liveApproval, setLiveApproval] = useState<number | null>(null)
 
@@ -1295,7 +1456,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
 
   // Identity groups filter + expansion
   const [identityFilter, setIdentityFilter] = useState<string>('')
-  const [expandedGroup, setExpandedGroup] = useState<string | null>(null)
+  // expandedGroup removed (redesign)
 
   const chatEndRef = useRef<HTMLDivElement>(null)
   const mediaScrollRef = useRef<HTMLDivElement>(null)
@@ -1651,13 +1812,11 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
     setTurnError(null)
     setLiveMilestones([])
     setLiveApprovalVotes([])
-    setLiveEvalReasoning(null)
     setLiveApproval(null)
     hasChatThisTurnRef.current = false
 
     const selectedPolicy = policyOptions?.[index] ?? null
     setExecutingPolicyName(selectedPolicy?.name || 'Policy Execution')
-    setExecutingPolicy(selectedPolicy)
 
     try {
       for await (const event of executeTurnStreamV2(gameId, index, ministerId, { type: 'governance_upkeep', budget: 0 })) {
@@ -1671,10 +1830,8 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
           setTurnHistory(prev => [newEntry, ...prev.map(e => ({ ...e, expanded: false }))])
           setPolicyOptions(null)
           setExecutingPolicyName(null)
-          setExecutingPolicy(null)
           setPolicyError(null)
           setLiveApprovalVotes([])
-          setLiveEvalReasoning(null)
 
           // Add turn separator to chat
           const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -1733,7 +1890,6 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
         }
 
         if (event.type === 'evaluation') {
-          setLiveEvalReasoning(event.reasoning as string)
           setAllHeadlines(prev => [...prev, {
             outlet: 'WIRE SERVICE',
             lean: 'neutral' as const,
@@ -1809,9 +1965,10 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
   ]
 
   const treasury = gameState.treasury
-  const initTreasury = initialTreasury.current
-  const spent = Math.max(0, initTreasury - treasury)
-  const spentPct = initTreasury > 0 ? Math.min(100, (spent / initTreasury) * 100) : 0
+  // @ts-expect-error kept for potential future use
+  const _initTreasury = initialTreasury.current
+  // const spent = Math.max(0, initTreasury - treasury) // removed (redesign)
+  // spentPct removed (redesign)
 
   // Use liveApproval (from approval_final event) when available for real-time top bar update
   const approval = liveApproval ?? gameState.interim_approval
@@ -1821,36 +1978,9 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
   const opportunities = gameState.active_events.filter(e => e.type === 'opportunity')
   const allCrises: ActiveEvent[] = [...crises, ...opportunities]
 
-  const streamImg = lastTurn?.major_policy
-    ? (PORTFOLIO_IMG[lastTurn.major_policy.portfolio] ?? DEFAULT_IMG)
-    : DEFAULT_IMG
-  const streamTitle = lastTurn?.major_policy?.name ?? (crises[0]?.name ?? 'City Overview')
-  const streamLocation = lastTurn?.major_policy?.portfolio ?? crises[0]?.portfolio ?? ''
+  // streamImg, streamTitle, streamLocation, streamEffects removed (redesign)
 
-  const streamEffects = lastTurn?.actual_deltas
-    ? Object.entries(lastTurn.actual_deltas)
-      .filter(([, v]) => Math.abs(v as number) >= 1)
-      .sort((a, b) => Math.abs(b[1] as number) - Math.abs(a[1] as number))
-      .slice(0, 3)
-      .map(([k, v]) => ({
-        label: `${k.replace(/_/g, ' ')} ${(v as number) >= 0 ? '+' : ''}${Math.round(v as number)}`,
-        color: (v as number) >= 0 ? '#22c55e' : '#f87171',
-        up: (v as number) >= 0,
-      }))
-    : []
-
-  // Use last turn's ward report if available, fall back to state snapshot (no-delta baseline)
-  const wardReport: WardReportEntry[] = lastTurn?.ward_report ?? gameState.ward_report ?? []
-
-  // Compute which group types have 2–8 unique values (meaningful to filter on)
-  const groupTypeCounts: Record<string, Set<string>> = {}
-  for (const entry of wardReport) {
-    if (!groupTypeCounts[entry.group_type]) groupTypeCounts[entry.group_type] = new Set()
-    groupTypeCounts[entry.group_type].add(entry.group_name)
-  }
-  const filterableTypes = Object.entries(groupTypeCounts)
-    .filter(([, names]) => names.size >= 2 && names.size <= 8)
-    .map(([type]) => type)
+  // wardReport, groupTypeCounts, filterableTypes removed (redesign)
 
   const leanColor = (lean: string) =>
     lean === 'mayor' ? '#22c55e' : lean === 'opposition' ? '#f87171' : '#60a5fa'
@@ -1861,6 +1991,9 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
 
   // ─────────────────────────────────────────────────────────────────────────────
 
+
+  // ─────────────────────────────────────────────────────────────────────────────
+
   return (
     <div className="h-screen flex flex-col overflow-hidden"
       style={{ background: '#050d1b', color: '#fff', fontFamily: "'Inter', 'Segoe UI', sans-serif" }}>
@@ -1868,7 +2001,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
       {/* Modals */}
       {gameOver && scorecard && <ScorecardOverlay sc={scorecard} />}
 
-      {/* Minister Info Popup — rendered as fixed overlay but visually near left panel */}
+      {/* Minister Info Popup */}
       {expandedMinisterId && (() => {
         const mIdx = gameState.ministers.findIndex(m => m.id === expandedMinisterId)
         const m = gameState.ministers[mIdx]
@@ -1879,7 +2012,6 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
             onClick={() => setExpandedMinisterId(null)}
             style={{
               position: 'fixed', inset: 0, zIndex: 300,
-              // No full backdrop — just a very subtle dim so the panel stays visible
               background: 'rgba(5,13,27,0.35)',
             }}
           >
@@ -1887,8 +2019,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
               onClick={e => e.stopPropagation()}
               style={{
                 position: 'absolute',
-                // Anchor left panel width (380px) + 8px gap + 8px outer padding
-                left: 396, top: 60,
+                left: 356, top: 60,
                 width: 300, maxHeight: 'calc(100vh - 80px)', overflowY: 'auto',
                 background: '#0a1929', border: `1px solid ${col}55`,
                 borderTop: `3px solid ${col}`, borderRadius: 8,
@@ -1897,7 +2028,6 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                 display: 'flex', flexDirection: 'column', gap: 14,
               }}
             >
-              {/* Header: avatar + name + close */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <AgentAvatar seed={m.name} ministers={gameState?.ministers || []} size={44} ring={col} />
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -1907,20 +2037,14 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                     <span key={p} style={{ fontSize: 8, color: '#e8a030', marginRight: 4, background: 'rgba(232,160,48,0.1)', padding: '1px 5px', borderRadius: 3, border: '1px solid rgba(232,160,48,0.25)' }}>+{p}</span>
                   ))}
                 </div>
-                <button
-                  onClick={() => setExpandedMinisterId(null)}
-                  style={{ fontSize: 16, color: '#475569', background: 'none', border: 'none', cursor: 'pointer', lineHeight: 1, padding: '2px 6px' }}
-                >✕</button>
+                <button onClick={() => setExpandedMinisterId(null)}
+                  style={{ fontSize: 16, color: '#475569', background: 'none', border: 'none', cursor: 'pointer', lineHeight: 1, padding: '2px 6px' }}>✕</button>
               </div>
-
-              {/* Demographics */}
               {m.demographics && (
                 <div style={{ fontSize: 10, color: '#64748b', lineHeight: 1.6, background: 'rgba(255,255,255,0.02)', borderRadius: 5, padding: '7px 10px', border: '1px solid #1c3652' }}>
                   {[m.demographics.profession, m.demographics.age_group, m.demographics.location, m.demographics.income_bracket].filter(Boolean).join('  ·  ')}
                 </div>
               )}
-
-              {/* ── CORE STATS ── */}
               <div>
                 <div style={{ fontSize: 8, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.12em', fontWeight: 700, color: col, marginBottom: 8 }}>CORE ATTRIBUTES</div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
@@ -1936,8 +2060,6 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                   ))}
                 </div>
               </div>
-
-              {/* ── DERIVED STATUS ── */}
               <div>
                 <div style={{ fontSize: 8, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.12em', fontWeight: 700, color: '#94a3b8', marginBottom: 8 }}>POLITICAL STATUS</div>
                 {[
@@ -1946,37 +2068,14 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                   { label: 'Scandal Exposure', value: m.scandal_exposure, color: m.scandal_exposure > 50 ? '#f87171' : '#fb923c' },
                 ].map(s => (
                   <div key={s.label} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-                    <span style={{ fontSize: 10, color: '#94a3b8', width: 120, flexShrink: 0, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.04em' }}>{s.label}</span>
+                    <span style={{ fontSize: 10, color: '#94a3b8', width: 120, flexShrink: 0 }}>{s.label}</span>
                     <div style={{ flex: 1, height: 5, background: '#071422', borderRadius: 3, overflow: 'hidden' }}>
-                      <div style={{ height: '100%', width: `${Math.max(0, Math.min(100, s.value))}%`, background: s.color, borderRadius: 3, transition: 'width 0.3s ease', boxShadow: `0 0 8px ${s.color}50` }} />
+                      <div style={{ height: '100%', width: `${Math.max(0, Math.min(100, s.value))}%`, background: s.color, borderRadius: 3 }} />
                     </div>
                     <span style={{ fontSize: 11, fontFamily: "'Share Tech Mono', monospace", color: s.color, width: 26, textAlign: 'right', fontWeight: 700 }}>{Math.round(s.value)}</span>
                   </div>
                 ))}
               </div>
-
-              {/* ── PERSONALITY TRAITS ── */}
-              {m.personality && Object.keys(m.personality).length > 0 && (
-                <div>
-                  <div style={{ fontSize: 8, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.12em', fontWeight: 700, color: '#94a3b8', marginBottom: 8 }}>PERSONALITY</div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                    {Object.entries(m.personality).filter(([t]) => t !== 'integrity').map(([trait, val]) => {
-                      const v = Math.round(val as number)
-                      const barColor = v > 65 ? '#22c55e' : v < 35 ? '#f87171' : '#60a5fa'
-                      return (
-                        <div key={trait} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                          <span style={{ fontSize: 10, color: '#94a3b8', width: 120, flexShrink: 0, textTransform: 'capitalize' }}>{trait.replace(/_/g, ' ')}</span>
-                          <div style={{ flex: 1, height: 4, background: '#071422', borderRadius: 2, overflow: 'hidden' }}>
-                            <div style={{ height: '100%', width: `${v}%`, background: barColor, borderRadius: 2 }} />
-                          </div>
-                          <span style={{ fontSize: 10, fontFamily: "'Share Tech Mono', monospace", color: barColor, width: 26, textAlign: 'right', fontWeight: 700 }}>{v}</span>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-
               <div style={{ fontSize: 9, color: '#334155', textAlign: 'center', fontStyle: 'italic' }}>Click outside to close</div>
             </div>
           </div>
@@ -2000,147 +2099,127 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
         />
       )}
 
-      {/* ── TOP BAR ────────────────────────────────────────────────────────── */}
+      {/* ── COMPACT STATUS BAR ───────────────────────────────────────────── */}
       <div className="flex items-center gap-4 px-4 shrink-0"
         style={{
-          height: 52, background: 'linear-gradient(90deg, #071320 0%, #0a1828 40%, #071320 100%)',
+          height: 48, background: 'linear-gradient(90deg, #071320 0%, #0a1828 40%, #071320 100%)',
           borderBottom: '1px solid #1c3652', boxShadow: '0 2px 20px rgba(0,0,0,0.5)', zIndex: 10
         }}>
 
         {/* Emblem + City */}
         <div className="flex items-center gap-3 shrink-0">
           <div className="flex items-center justify-center rounded-full shrink-0" style={{
-            width: 36, height: 36,
+            width: 32, height: 32,
             background: 'linear-gradient(135deg, #b45309 0%, #d97706 50%, #92400e 100%)',
             boxShadow: '0 0 12px rgba(217,119,6,0.5), inset 0 1px 1px rgba(255,255,255,0.2)',
-            border: '1.5px solid #f59e0b', fontSize: 16,
+            border: '1.5px solid #f59e0b', fontSize: 14,
           }}>🏛</div>
           <div>
             <div style={{
-              fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 15,
-              color: '#f0c040', letterSpacing: '0.06em', textShadow: '0 0 12px rgba(240,192,64,0.5)'
+              fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 14,
+              color: '#f0c040', letterSpacing: '0.06em',
             }}>
               City of {gameState.city_name}
             </div>
             <div className="flex items-center gap-1.5">
-              <span className="px-1.5 py-0 rounded" style={{
-                fontSize: 9, fontFamily: "'Rajdhani', sans-serif", fontWeight: 700,
-                letterSpacing: '0.1em', color: '#e8a030',
-                background: 'rgba(232,160,48,0.12)', border: '1px solid rgba(232,160,48,0.25)',
-              }}>TERM 1</span>
-              <ChevronRight size={9} color="#4b6280" />
-              <span style={{ fontSize: 10, fontFamily: "'Share Tech Mono', monospace", color: '#4b6280' }}>
+              <span style={{
+                fontSize: 9, fontFamily: "'Share Tech Mono', monospace", color: '#4b6280'
+              }}>
                 Turn {gameState.current_turn} / {gameState.total_turns}
               </span>
             </div>
           </div>
         </div>
 
-        <div className="h-8 w-px" style={{ background: '#1c3652' }} />
-
-        {/* Budget */}
-        <div className="flex-1 max-w-md">
-          <div className="flex items-center justify-between mb-1">
-            <span style={{
-              fontSize: 9, fontFamily: "'Rajdhani', sans-serif", fontWeight: 700,
-              letterSpacing: '0.2em', color: '#4b6280'
-            }}>BUDGET</span>
-            <span style={{
-              fontSize: 9, fontFamily: "'Rajdhani', sans-serif", fontWeight: 700,
-              letterSpacing: '0.12em', color: '#4b6280'
-            }}>FISCAL YEAR</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1 shrink-0">
-              <span style={{ fontSize: 12, fontWeight: 700, ...MONO('#f87171') }}>
-                ₹{fmtNum(spent)} Cr
-              </span>
-              <span style={{ fontSize: 9, color: '#64748b' }}>Spent</span>
-            </div>
-            <div className="flex-1 rounded-full overflow-hidden" style={{ height: 6, background: '#071018' }}>
-              <div className="h-full rounded-full" style={{
-                width: `${spentPct}%`,
-                background: 'linear-gradient(90deg, #dc2626, #f59e0b)',
-                boxShadow: '0 0 6px rgba(245,158,11,0.5)',
-                transition: 'width 0.5s ease',
-              }} />
-            </div>
-            <div className="flex items-center gap-1 shrink-0">
-              <span style={{ fontSize: 9, color: '#64748b' }}>Left</span>
-              <span style={{ fontSize: 12, fontWeight: 700, ...MONO('#4ade80') }}>
-                ₹{fmtNum(Math.max(0, treasury))} Cr
-              </span>
-            </div>
-          </div>
+        {/* Welfare Indicators */}
+        <div className="flex items-center gap-2 ml-4">
+          {welfareStats.map(s => {
+            const scoreColor = s.score >= 60 ? '#4ade80' : s.score >= 40 ? '#f59e0b' : '#f87171'
+            return (
+              <div key={s.label} className="flex items-center gap-2 px-3 py-1 rounded-lg"
+                style={{
+                  background: 'rgba(255,255,255,0.03)',
+                  border: `1px solid ${scoreColor}30`,
+                }}>
+                <span style={{ fontSize: 10, color: '#94a3b8', fontFamily: "'Rajdhani', sans-serif", fontWeight: 600, letterSpacing: '0.04em' }}>
+                  {s.label.toUpperCase()}
+                </span>
+                <span style={{ fontSize: 16, fontWeight: 800, fontFamily: "'Share Tech Mono', monospace", color: scoreColor }}>
+                  {Math.round(s.score)}
+                </span>
+                {s.delta !== 0 && (
+                  <span style={{
+                    fontSize: 10, fontFamily: "'Share Tech Mono', monospace",
+                    color: s.delta > 0 ? '#4ade80' : '#f87171', fontWeight: 700,
+                  }}>
+                    {s.delta > 0 ? `▲${Math.round(s.delta)}` : `▼${Math.round(s.delta)}`}
+                  </span>
+                )}
+              </div>
+            )
+          })}
         </div>
 
-        <div className="h-8 w-px" style={{ background: '#1c3652' }} />
+        <div className="flex-1" />
 
-        {/* Mayor Approval */}
-        <div className="flex flex-col gap-1 shrink-0" style={{ minWidth: 120 }}>
+        {/* Treasury */}
+        <div className="flex items-center gap-2 shrink-0">
+          <span style={{ fontSize: 9, color: '#4b6280', fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, letterSpacing: '0.1em' }}>TREASURY</span>
+          <span style={{ fontSize: 14, fontWeight: 700, ...MONO('#4ade80') }}>
+            ₹{fmtNum(Math.max(0, treasury))} Cr
+          </span>
+        </div>
+
+        <div className="h-6 w-px" style={{ background: '#1c3652' }} />
+
+        {/* Approval Gauge */}
+        <div className="flex items-center gap-3 shrink-0">
           <div style={{
-            fontSize: 9, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.15em',
-            color: '#4b6280', fontWeight: 700,
-          }}>MAYOR APPROVAL</div>
-          <div className="flex items-center gap-2">
-            <span style={{ fontSize: 20, fontWeight: 700, ...MONO('#f0c040'), lineHeight: 1 }}>
+            width: 44, height: 44, borderRadius: '50%',
+            background: `conic-gradient(${approval >= 50 ? '#22c55e' : approval >= 35 ? '#f59e0b' : '#f87171'} ${approval * 3.6}deg, #1c3652 0deg)`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            boxShadow: `0 0 16px ${approval >= 50 ? 'rgba(34,197,94,0.4)' : 'rgba(248,113,113,0.4)'}`,
+          }}>
+            <div style={{
+              width: 34, height: 34, borderRadius: '50%', background: '#0a1828',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 14, fontWeight: 800, fontFamily: "'Share Tech Mono', monospace",
+              color: approval >= 50 ? '#22c55e' : approval >= 35 ? '#f59e0b' : '#f87171',
+            }}>
               {Math.round(approval)}%
-            </span>
+            </div>
+          </div>
+          <div>
+            <div style={{ fontSize: 10, color: '#94a3b8', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em', fontWeight: 700 }}>APPROVAL</div>
             {approvalDelta !== 0 && (
-              <span style={{
-                fontSize: 10, fontWeight: 700,
+              <div style={{
+                fontSize: 11, fontWeight: 700,
                 color: approvalDelta >= 0 ? '#4ade80' : '#f87171',
                 fontFamily: "'Share Tech Mono', monospace",
               }}>
                 {approvalDelta >= 0 ? '▲+' : '▼'}{Math.round(approvalDelta)}%
-              </span>
+              </div>
             )}
           </div>
-          <div style={{ height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 2, overflow: 'hidden' }}>
-            <div style={{
-              height: '100%',
-              width: `${Math.max(0, Math.min(100, approval))}%`,
-              background: approval >= 50 ? '#22c55e' : approval >= 35 ? '#f59e0b' : '#f87171',
-              borderRadius: 2,
-              transition: 'width 0.7s ease',
-            }} />
-          </div>
         </div>
 
-        <div className="h-8 w-px" style={{ background: '#1c3652' }} />
+        <div className="h-6 w-px" style={{ background: '#1c3652' }} />
 
-        {/* Controls */}
-        <div className="flex items-center gap-2 ml-auto shrink-0">
-          {[{ Icon: Clock, label: 'History' }, { Icon: HelpCircle, label: 'Help' }, { Icon: Settings, label: 'Settings' }]
-            .map(({ Icon, label }) => (
-              <button key={label} title={label}
-                className="flex items-center justify-center rounded transition-all"
-                style={{
-                  width: 30, height: 30, background: 'rgba(255,255,255,0.04)', border: '1px solid #1c3652',
-                  cursor: 'pointer'
-                }}
-                onMouseEnter={e => { e.currentTarget.style.borderColor = '#e8a030'; e.currentTarget.style.background = 'rgba(232,160,48,0.1)' }}
-                onMouseLeave={e => { e.currentTarget.style.borderColor = '#1c3652'; e.currentTarget.style.background = 'rgba(255,255,255,0.04)' }}>
-                <Icon size={13} color="#4b6280" />
-              </button>
-            ))}
-          <button title={isMuted ? 'Play Music' : 'Mute Music'} onClick={toggleMusic}
-            className="flex items-center justify-center rounded transition-all"
-            style={{
-              width: 30, height: 30,
-              background: isMuted ? 'rgba(255,255,255,0.04)' : 'rgba(232,160,48,0.15)',
-              border: isMuted ? '1px solid #1c3652' : '1px solid rgba(232,160,48,0.4)',
-              cursor: 'pointer'
-            }}
-            onMouseEnter={e => { e.currentTarget.style.borderColor = '#e8a030'; e.currentTarget.style.background = 'rgba(232,160,48,0.1)' }}
-            onMouseLeave={e => { e.currentTarget.style.borderColor = isMuted ? '#1c3652' : 'rgba(232,160,48,0.4)'; e.currentTarget.style.background = isMuted ? 'rgba(255,255,255,0.04)' : 'rgba(232,160,48,0.15)' }}>
-            {isMuted ? <VolumeX size={13} color="#4b6280" /> : <Volume2 size={13} color="#e8a030" />}
-          </button>
-          <audio ref={audioRef} src={TRACKS[currentTrackIndex]} onEnded={nextTrack} preload="auto" />
-        </div>
+        {/* Music Toggle */}
+        <button title={isMuted ? 'Play Music' : 'Mute Music'} onClick={toggleMusic}
+          className="flex items-center justify-center rounded transition-all"
+          style={{
+            width: 30, height: 30,
+            background: isMuted ? 'rgba(255,255,255,0.04)' : 'rgba(232,160,48,0.15)',
+            border: isMuted ? '1px solid #1c3652' : '1px solid rgba(232,160,48,0.4)',
+            cursor: 'pointer'
+          }}>
+          {isMuted ? <VolumeX size={13} color="#4b6280" /> : <Volume2 size={13} color="#e8a030" />}
+        </button>
+        <audio ref={audioRef} src={TRACKS[currentTrackIndex]} onEnded={nextTrack} preload="auto" />
       </div>
 
-      {/* Policy error bar (outside modal, e.g. if modal closed before error) */}
+      {/* Policy error bar */}
       {policyError && !showPolicyModal && (
         <div style={{
           background: 'rgba(248,113,113,0.1)', borderBottom: '1px solid #7f1d1d',
@@ -2159,7 +2238,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
       <div className="flex flex-1 gap-2 p-2 overflow-hidden min-h-0">
 
         {/* ── LEFT: Advisory Chat + Crises ───────────────────────────────── */}
-        <div className="w-[380px] flex flex-col gap-2 shrink-0" style={{ position: 'relative' }}>
+        <div className="w-[340px] flex flex-col gap-2 shrink-0" style={{ position: 'relative' }}>
 
           {/* Advisory Chat Panel */}
           <div className="flex flex-col" style={{ ...PANEL, minHeight: 500 }}>
@@ -2179,7 +2258,6 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
 
             {/* Minister List */}
             <div style={{ borderBottom: '1px solid #1c3652' }}>
-              {/* Minister grid — 3 per row, max 2 rows */}
               <div style={{
                 display: 'grid',
                 gridTemplateColumns: 'repeat(3, 1fr)',
@@ -2197,134 +2275,123 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                         gap: 4,
                         background: isExpanded ? 'rgba(255,255,255,0.05)' : '',
                         borderBottom: isExpanded ? `2px solid ${col}` : '2px solid transparent',
-                        borderRight: (idx % 3 < 2) ? '1px solid rgba(28,54,82,0.3)' : 'none',
-                      }}
-                      onMouseEnter={e => { if (!isExpanded) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
-                      onMouseLeave={e => { if (!isExpanded) e.currentTarget.style.background = '' }}
-                    >
-                      <AgentAvatar seed={m.name} ministers={gameState?.ministers || []} size={36} ring={col} />
-                      <span style={{ fontSize: 10, fontWeight: 700, color: isExpanded ? '#fff' : '#94a3b8', textAlign: 'center', lineHeight: 1.2, width: '100%' }}>
-                        {m.name}
-                      </span>
-                      <span style={{ fontSize: 9, color: col, textAlign: 'center', lineHeight: 1.1, opacity: 0.85, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.04em' }}>
-                        {m.portfolio}
-                      </span>
+                      }}>
+                      <AgentAvatar seed={m.name} ministers={gameState?.ministers || []} size={36} ring={isExpanded ? col : '#1c3652'} />
+                      <div style={{
+                        fontSize: 9, fontWeight: 600, color: isExpanded ? '#e2e8f0' : '#94a3b8',
+                        textAlign: 'center', lineHeight: 1.2, maxWidth: '100%', overflow: 'hidden',
+                        textOverflow: 'ellipsis', whiteSpace: 'nowrap', width: '100%',
+                      }}>{m.name.split(' ')[0]}</div>
+                      <div style={{
+                        fontSize: 7, color: col, fontWeight: 700, letterSpacing: '0.04em',
+                        fontFamily: "'Rajdhani', sans-serif",
+                        maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      }}>{m.portfolio.split(' ')[0]}</div>
                     </div>
                   )
                 })}
               </div>
             </div>
 
-            {/* Council hint */}
-            <div style={{
-              padding: '5px 12px', fontSize: 10, color: '#475569',
-              background: 'rgba(232,160,48,0.03)', borderBottom: '1px solid rgba(28,54,82,0.4)',
-              fontStyle: 'italic', lineHeight: 1.4
-            }}>
-              Click a minister to view their full profile. Use @name to address someone directly.
-            </div>
-
-            {/* Chat Messages */}
-            <div className="overflow-y-auto space-y-2.5" style={{ height: 320, padding: '10px' }}>
-              {chatMessages.map((msg, i) => msg.isSystem ? (
-                <div key={i} style={{
-                  textAlign: 'center', fontSize: 9, color: '#334155', fontStyle: 'italic',
-                  padding: '4px 0', borderTop: '1px solid #1c3652', borderBottom: '1px solid #1c3652',
-                  letterSpacing: '0.04em', margin: '2px 0',
-                }}>{msg.text}</div>
-              ) : (
-                <div key={i} className="flex gap-2">
-                  <div className="shrink-0 mt-0.5" style={{ width: 26, height: 26 }}>
-                    {msg.isMayor ? (
-                      <div className="rounded-full flex items-center justify-center text-white"
-                        style={{
-                          width: 26, height: 26,
-                          background: `linear-gradient(135deg, ${msg.ringColor}, ${msg.ringColor}88)`,
-                          fontSize: 9, fontWeight: 700, border: `1.5px solid ${msg.ringColor}`
-                        }}>M</div>
-                    ) : (
-                      <AgentAvatar seed={msg.seed} ministers={gameState?.ministers || []} size={26} ring={msg.ringColor} />
-                    )}
+            {/* Chat messages area */}
+            <div className="flex-1 overflow-y-auto p-2 space-y-2" style={{ scrollbarWidth: 'thin' }}>
+              {chatMessages.length === 0 && (
+                <div style={{ textAlign: 'center', padding: '20px 10px' }}>
+                  <div style={{ fontSize: 11, color: '#334155', marginBottom: 6 }}>
+                    Use @name to direct, @all to broadcast. Use threats to address concerns directly.
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <span style={{ fontSize: 10, fontWeight: 700, color: msg.isMayor ? '#e8a030' : '#7dd3fc' }}>
-                        {msg.sender}
-                      </span>
-                      {msg.senderRole && <span style={{ fontSize: 10, color: '#475569' }}>· {msg.senderRole}</span>}
-                      <span style={{ fontSize: 9, color: '#334155', marginLeft: 'auto' }}>{msg.time}</span>
+                </div>
+              )}
+              {chatMessages.map((msg, i) => (
+                <div key={i} className={`flex gap-2 ${msg.isMayor ? 'flex-row-reverse' : ''}`}>
+                  {!msg.isSystem && (
+                    <div className="shrink-0 mt-1">
+                      {msg.isMayor
+                        ? <div className="rounded-full flex items-center justify-center" style={{
+                          width: 24, height: 24, background: 'linear-gradient(135deg, #b45309, #d97706)',
+                          fontSize: 10, border: '1.5px solid #f59e0b'
+                        }}>👔</div>
+                        : <AgentAvatar seed={msg.seed || msg.sender} ministers={gameState?.ministers || []} size={24} ring={msg.ringColor || '#1c3652'} />
+                      }
                     </div>
-                    <div className="mt-1 px-2 py-1.5 rounded-lg" style={{
-                      fontSize: 11,
-                      color: msg.isSystemFallback ? '#475569' : '#c0cfe0',
-                      fontStyle: msg.isSystemFallback ? 'italic' : undefined,
-                      background: msg.isMayor ? 'rgba(216,160,48,0.1)' : 'rgba(255,255,255,0.05)',
-                      borderLeft: `2px solid ${msg.ringColor}44`, lineHeight: 1.5,
-                    }}>{msg.text}</div>
+                  )}
+                  <div className={`flex-1 min-w-0 ${msg.isMayor ? 'text-right' : ''}`}>
+                    {!msg.isSystem && (
+                      <div className="flex items-center gap-1.5" style={{ marginBottom: 2, justifyContent: msg.isMayor ? 'flex-end' : 'flex-start' }}>
+                        <span style={{ fontSize: 9, fontWeight: 700, color: msg.isMayor ? '#f0c040' : '#94a3b8' }}>{msg.sender}</span>
+                        {msg.senderRole && <span style={{ fontSize: 8, color: msg.ringColor || '#4b6280' }}>{msg.senderRole}</span>}
+                        {msg.time && <span style={{ fontSize: 7, color: '#334155' }}>{msg.time}</span>}
+                      </div>
+                    )}
+                    <div style={{
+                      fontSize: msg.isSystem ? 9 : 10,
+                      color: msg.isSystem ? '#475569' : '#cbd5e1',
+                      lineHeight: 1.55,
+                      background: msg.isSystem ? 'transparent' : msg.isMayor ? 'rgba(240,192,64,0.08)' : 'rgba(255,255,255,0.03)',
+                      border: msg.isSystem ? 'none' : msg.isMayor ? '1px solid rgba(240,192,64,0.15)' : '1px solid rgba(28,54,82,0.6)',
+                      borderRadius: msg.isMayor ? '8px 0 8px 8px' : '0 8px 8px 8px',
+                      padding: msg.isSystem ? '4px 0' : '6px 10px',
+                      textAlign: msg.isSystem ? 'center' : 'left',
+                      fontStyle: msg.isSystem ? 'italic' : 'normal',
+                    }}>
+                      {msg.text}
+                    </div>
                   </div>
                 </div>
               ))}
               {consultLoading && (
-                <div className="flex gap-2 items-center">
-                  <Loader2 size={14} color="#4b6280" className="animate-spin" />
-                  <div style={{ fontSize: 11, color: '#475569', fontStyle: 'italic' }}>
-                    Ministers are responding...
-                  </div>
+                <div className="flex items-center gap-2 px-2">
+                  <Loader2 size={12} className="animate-spin" color="#e8a030" />
+                  <span style={{ fontSize: 9, color: '#64748b' }}>Advisor is thinking...</span>
                 </div>
               )}
               {chatError && (
-                <div style={{
-                  fontSize: 11, color: '#f87171', display: 'flex', alignItems: 'center', gap: 6,
-                  padding: '6px 8px', background: 'rgba(248,113,113,0.08)', border: '1px solid #7f1d1d',
-                  borderRadius: 4
-                }}>
-                  <AlertTriangle size={11} />
+                <div style={{ fontSize: 9, color: '#f87171', padding: '4px 8px', background: 'rgba(248,113,113,0.08)', borderRadius: 4 }}>
                   {chatError}
                 </div>
               )}
-              <div ref={chatEndRef} />
             </div>
 
-            {/* Input */}
-            <div className="px-2 py-2 flex gap-1.5" style={{ borderTop: '1px solid #1c3652' }}>
-              <input
-                type="text" value={chatInput}
-                onChange={e => setChatInput(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && !consultLoading && chatInput.trim() && handleSendMessage()}
-                placeholder="Message the council... (@name to address directly)"
-                disabled={consultLoading}
-                className="flex-1 text-white placeholder-gray-600 focus:outline-none"
-                style={{
-                  background: '#071018', border: '1px solid #1c3652', borderRadius: 4,
-                  padding: '5px 8px', fontSize: 11
-                }}
-                onFocus={e => (e.target.style.borderColor = '#e8a030')}
-                onBlur={e => (e.target.style.borderColor = '#1c3652')}
-              />
-              <button onClick={handleSendMessage}
-                disabled={!chatInput.trim() || consultLoading}
-                className="shrink-0 flex items-center justify-center transition-all"
-                style={{
-                  background: 'linear-gradient(135deg, #c47d10, #e8a030)', borderRadius: 4,
-                  width: 30, height: 30, boxShadow: '0 0 8px rgba(232,160,48,0.4)',
-                  opacity: (!chatInput.trim() || consultLoading) ? 0.4 : 1,
-                  cursor: (!chatInput.trim() || consultLoading) ? 'not-allowed' : 'pointer',
-                  border: 'none'
-                }}>
-                {consultLoading ? <Loader2 size={13} color="white" className="animate-spin" /> : <Send size={13} color="white" />}
-              </button>
-              <button onClick={handleDraftPolicy} disabled={fetchingPolicies}
-                className="shrink-0 text-xs px-2 transition-all"
-                style={{
-                  background: 'rgba(59,130,246,0.15)', border: '1px solid #1e40af', borderRadius: 4,
-                  color: '#60a5fa', fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap',
-                  fontFamily: "'Rajdhani', sans-serif",
-                  opacity: fetchingPolicies ? 0.5 : 1, cursor: fetchingPolicies ? 'not-allowed' : 'pointer'
-                }}
-                onMouseEnter={e => { if (!fetchingPolicies) e.currentTarget.style.background = 'rgba(59,130,246,0.25)' }}
-                onMouseLeave={e => (e.currentTarget.style.background = 'rgba(59,130,246,0.15)')}>
-                {fetchingPolicies ? <Loader2 size={10} className="animate-spin" /> : 'Draft Policy'}
-              </button>
+            {/* Chat input */}
+            <div className="px-2 pb-2 pt-1 shrink-0" style={{ borderTop: '1px solid #1c3652' }}>
+              <div className="flex items-center gap-2">
+                <input
+                  value={chatInput}
+                  onChange={e => setChatInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage() } }}
+                  placeholder="Message the council... @name to address directly"
+                  disabled={consultLoading || isTurnExecuting}
+                  style={{
+                    flex: 1, background: 'rgba(255,255,255,0.03)', border: '1px solid #1c3652',
+                    borderRadius: 6, padding: '7px 10px', fontSize: 10, color: '#e2e8f0',
+                    outline: 'none',
+                  }}
+                />
+                <button
+                  onClick={handleSendMessage}
+                  disabled={consultLoading || !chatInput.trim() || isTurnExecuting}
+                  className="flex items-center justify-center rounded transition-all"
+                  style={{
+                    width: 32, height: 32,
+                    background: chatInput.trim() ? 'rgba(34,197,94,0.2)' : 'rgba(255,255,255,0.03)',
+                    border: chatInput.trim() ? '1px solid rgba(34,197,94,0.4)' : '1px solid #1c3652',
+                    cursor: chatInput.trim() ? 'pointer' : 'default',
+                  }}>
+                  <Send size={12} color={chatInput.trim() ? '#22c55e' : '#334155'} />
+                </button>
+                <button
+                  onClick={handleDraftPolicy}
+                  disabled={fetchingPolicies || isTurnExecuting}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded transition-all"
+                  style={{
+                    background: 'rgba(59,130,246,0.15)', border: '1px solid rgba(59,130,246,0.3)',
+                    color: '#60a5fa', fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap',
+                    fontFamily: "'Rajdhani', sans-serif",
+                    opacity: fetchingPolicies ? 0.5 : 1, cursor: fetchingPolicies ? 'not-allowed' : 'pointer'
+                  }}>
+                  {fetchingPolicies ? <Loader2 size={10} className="animate-spin" /> : 'Draft Policy'}
+                </button>
+              </div>
             </div>
           </div>
 
@@ -2337,6 +2404,9 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
               </div>
               <ChevronRight size={14} color="#4b6280" />
             </div>
+            <div style={{ padding: '6px 10px 0', fontSize: 9, color: '#64748b', fontStyle: 'italic', lineHeight: 1.4 }}>
+              Draft policies targeting the root issues to stabilize conditions.
+            </div>
             <div className="p-2 space-y-1.5">
               {allCrises.length === 0 && (
                 <div style={{ fontSize: 11, color: '#334155', textAlign: 'center', padding: '8px 0' }}>No active crises</div>
@@ -2347,13 +2417,10 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                 return (
                   <div key={crisis.id}
                     className="flex items-center gap-2 px-2 py-2 rounded cursor-pointer transition-all"
-                    style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(28,54,82,0.6)' }}
-                    onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.06)')}
-                    onMouseLeave={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.03)')}>
+                    style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(28,54,82,0.6)' }}>
                     <CrisisIcon size={14} color={sv.color} className="shrink-0" />
                     <div className="flex-1 min-w-0">
                       <div className="text-white truncate" style={{ fontSize: 11, fontWeight: 600 }}>{crisis.name}</div>
-                      {crisis.portfolio && <div style={{ fontSize: 10, color: '#64748b' }}>{crisis.portfolio}</div>}
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
                       <span className="px-1.5 py-0.5 rounded" style={{
@@ -2369,81 +2436,10 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
           </div>
         </div>
 
-        {/* ── CENTER: Welfare + Game Stream ──────────────────────────────── */}
-        <div className="flex-1 flex flex-col gap-2 min-w-0">
+        {/* ── CENTER: Game Zone ────────────────────────────────────────────── */}
+        <div className="flex-1 flex flex-col gap-2 overflow-hidden min-h-0">
 
-          {/* Welfare Indicators */}
-          <div style={PANEL} className="shrink-0">
-            <div className="flex items-center justify-between px-3 py-2" style={{ borderBottom: '1px solid #1c3652' }}>
-              <div className="flex items-center gap-2">
-                <div className="w-1 h-4 rounded-full bg-amber-400" style={{ boxShadow: '0 0 6px #f59e0b' }} />
-                <span style={HDR_LABEL}>WELFARE INDICATORS</span>
-              </div>
-              <button
-                onClick={() => setShowAllParams(p => !p)}
-                className="flex items-center gap-1.5 px-2 py-1 rounded transition-all"
-                style={{
-                  border: '1px solid #1c3652', fontSize: 10, color: showAllParams ? '#e8a030' : '#4b6280',
-                  fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.05em', background: showAllParams ? 'rgba(232,160,48,0.08)' : 'none', cursor: 'pointer'
-                }}>
-                {showAllParams ? 'Hide' : 'View All Parameters'} {showAllParams ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
-              </button>
-            </div>
-            <div className="p-3 flex gap-3">
-              {welfareStats.map(stat => <WelfareCard key={stat.label} stat={stat} />)}
-            </div>
-            {/* All Parameters Grid */}
-            {showAllParams && (() => {
-              const paramDeltas: Record<string, number> = {}
-              if (lastTurn?.city_params_after && lastTurn?.city_params_before) {
-                for (const [k, v] of Object.entries(lastTurn.city_params_after)) {
-                  paramDeltas[k] = v - (lastTurn.city_params_before[k] ?? v)
-                }
-              }
-              const barColor = (v: number) => v > 65 ? '#22c55e' : v > 35 ? '#f59e0b' : '#f87171'
-              const groups: { label: string; params: [string, string][] }[] = [
-                { label: 'HEALTH', params: [['hospitals_and_clinics', 'Hospitals & Clinics'], ['air_quality_and_pollution', 'Air Quality']] },
-                { label: 'WEALTH', params: [['jobs_and_commerce', 'Jobs & Commerce'], ['affordable_housing', 'Affordable Housing']] },
-                { label: 'SAFETY', params: [['police_and_emergency', 'Police & Emergency'], ['courts_and_legal', 'Courts & Legal']] },
-                { label: 'SOCIETY', params: [['community_and_spaces', 'Community & Spaces'], ['schools_and_universities', 'Schools & Universities']] },
-                { label: 'INFRASTRUCTURE', params: [['transit_and_roads', 'Transit & Roads'], ['water_power_sanitation', 'Water & Sanitation']] },
-                { label: 'GOVERNANCE', params: [['admin_efficiency', 'Admin Efficiency'], ['anti_corruption', 'Anti-Corruption'], ['media_freedom', 'Media Freedom']] },
-              ]
-              return (
-                <div style={{ borderTop: '1px solid #1c3652', padding: '8px 12px 10px' }}>
-                  <div className="grid grid-cols-2 gap-x-6 gap-y-0">
-                    {groups.map(g => (
-                      <div key={g.label} className="mb-2">
-                        <div style={{ ...HDR_LABEL, fontSize: 8, marginBottom: 4, color: '#6b7280' }}>{g.label}</div>
-                        {g.params.map(([key, label]) => {
-                          const val = (cp as unknown as Record<string, number>)[key] ?? 0
-                          const delta = paramDeltas[key] ?? 0
-                          const roundDelta = Math.round(delta)
-                          return (
-                            <div key={key} className="flex items-center gap-2 mb-1" style={{ height: 18 }}>
-                              <span style={{ fontSize: 9, color: '#94a3b8', width: 90, flexShrink: 0 }} className="truncate">{label}</span>
-                              <MiniBar value={val} color={barColor(val)} width={50} />
-                              <span style={{ fontSize: 9, ...MONO('#fff'), width: 20, textAlign: 'right' }}>{Math.round(val)}</span>
-                              {roundDelta !== 0 && (
-                                <span style={{
-                                  fontSize: 8, fontFamily: "'Share Tech Mono', monospace",
-                                  color: roundDelta > 0 ? '#4ade80' : '#f87171'
-                                }}>
-                                  {roundDelta > 0 ? `▲+${roundDelta}` : `▼${roundDelta}`}
-                                </span>
-                              )}
-                            </div>
-                          )
-                        })}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )
-            })()}
-          </div>
-
-          {/* Game Stream */}
+          {/* Live execution or Policy Card */}
           <div style={PANEL} className="flex-1 flex flex-col overflow-hidden min-h-0">
             <div className="flex items-center justify-between px-3 py-2 shrink-0" style={{ borderBottom: '1px solid #1c3652' }}>
               <div className="flex items-center gap-2">
@@ -2451,244 +2447,173 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                   style={{ background: 'rgba(232,160,48,0.15)', border: '1px solid #92400e' }}>
                   <span style={{ color: '#e8a030', fontSize: 10 }}>▶</span>
                 </div>
-                <span style={HDR_LABEL}>GAME STREAM</span>
+                <span style={HDR_LABEL}>GAME ZONE</span>
               </div>
-              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded"
-                style={{ background: 'rgba(239,68,68,0.2)', border: '1px solid #991b1b' }}>
-                <div className="w-1.5 h-1.5 rounded-full bg-red-400" style={{ boxShadow: '0 0 4px #f87171' }} />
-                <span style={{
-                  color: '#f87171', fontSize: 9, fontWeight: 700,
-                  fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.1em'
-                }}>LIVE</span>
-              </div>
+              {isTurnExecuting && (
+                <div className="flex items-center gap-1.5 px-2 py-0.5 rounded"
+                  style={{ background: 'rgba(239,68,68,0.2)', border: '1px solid #991b1b' }}>
+                  <div className="w-1.5 h-1.5 rounded-full bg-red-400" style={{ boxShadow: '0 0 4px #f87171' }} />
+                  <span style={{
+                    color: '#f87171', fontSize: 9, fontWeight: 700,
+                    fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.1em'
+                  }}>LIVE</span>
+                </div>
+              )}
             </div>
 
-            {/* Stream Image Banner */}
-            <div className="relative shrink-0 overflow-hidden" style={{ height: 185, background: '#050d1b' }}>
-              {(isTurnExecuting || turnError) ? (
-                <div className="absolute inset-0 overflow-y-auto" style={{ background: 'rgba(5,13,27,0.95)' }}>
-                  <div className="absolute inset-0 z-0 bg-cover bg-center opacity-15 saturate-50" style={{
-                    backgroundImage: 'url("https://images.unsplash.com/photo-1451187580459-43490279c0fa?q=80&w=1200&auto=format&fit=crop")',
+            <div className="flex-1 overflow-y-auto p-4 flex flex-col items-center justify-center gap-4">
+              {isTurnExecuting ? (
+                /* Live execution feed */
+                <div className="w-full max-w-lg">
+                  <LiveMilestoneFeed
+                    milestones={liveMilestones}
+                    policyName={executingPolicyName ?? ''}
+                    approvalVotes={liveApprovalVotes}
+                  />
+                </div>
+              ) : turnError ? (
+                <div style={{ padding: '16px 20px', textAlign: 'center' }}>
+                  <div style={{ color: '#f87171', fontSize: 13, marginBottom: 8 }}>⚠ {turnError}</div>
+                  <button onClick={() => setTurnError(null)} style={{
+                    fontSize: 10, color: '#64748b', background: 'rgba(255,255,255,0.05)',
+                    border: '1px solid #1c3652', borderRadius: 4, padding: '4px 12px', cursor: 'pointer',
+                  }}>DISMISS</button>
+                </div>
+              ) : lastTurn?.major_policy ? (
+                /* Last turn receipt card */
+                <div className="w-full max-w-lg" style={{
+                  background: 'linear-gradient(135deg, rgba(15,23,42,0.8), rgba(10,25,41,0.9))',
+                  border: '1px solid rgba(56,189,248,0.2)', borderRadius: 12,
+                  padding: '24px 28px', position: 'relative', overflow: 'hidden',
+                }}>
+                  {/* Subtle glow */}
+                  <div style={{
+                    position: 'absolute', top: -50, right: -50, width: 150, height: 150,
+                    borderRadius: '50%', background: 'radial-gradient(circle, rgba(56,189,248,0.08) 0%, transparent 70%)',
                   }} />
-                  <div className="relative z-10">
-                    {turnError ? (
-                      <div style={{ padding: '10px 12px' }}>
-                        <div style={{ color: '#f87171', fontSize: 11, marginBottom: 6 }}>
-                          ⚠ {turnError}
-                        </div>
-                        <button
-                          onClick={() => setTurnError(null)}
-                          style={{
-                            fontSize: 9, color: '#64748b', background: 'rgba(255,255,255,0.05)',
-                            border: '1px solid #1c3652', borderRadius: 4, padding: '2px 8px', cursor: 'pointer',
-                          }}
-                        >
-                          DISMISS
-                        </button>
+
+                  <div style={{
+                    fontSize: 8, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.15em',
+                    color: '#38bdf8', fontWeight: 700, marginBottom: 12,
+                  }}>TURN {lastTurn.turn} COMPLETE</div>
+
+                  <div style={{
+                    fontSize: 18, fontWeight: 800, color: '#f1f5f9',
+                    fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.03em', marginBottom: 16,
+                    lineHeight: 1.3,
+                  }}>
+                    {lastTurn.major_policy.name}
+                  </div>
+
+                  {/* Execution bar */}
+                  <div style={{ marginBottom: 16 }}>
+                    <div className="flex items-center justify-between" style={{ marginBottom: 6 }}>
+                      <span style={{ fontSize: 9, color: '#64748b', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.1em' }}>EXECUTION</span>
+                      <span style={{ fontSize: 13, fontWeight: 800, fontFamily: "'Share Tech Mono', monospace", color: '#4ade80' }}>
+                        {Math.round(lastTurn.execution_score ?? 0)}%
+                      </span>
+                    </div>
+                    <div style={{ height: 6, background: '#071422', borderRadius: 3, overflow: 'hidden' }}>
+                      <div style={{
+                        height: '100%', width: `${lastTurn.execution_score ?? 0}%`,
+                        background: 'linear-gradient(90deg, #22c55e, #4ade80)',
+                        borderRadius: 3, boxShadow: '0 0 12px rgba(34,197,94,0.4)',
+                        transition: 'width 0.7s ease',
+                      }} />
+                    </div>
+                  </div>
+
+                  {/* Budget + Minister row */}
+                  <div className="flex items-center gap-4" style={{ marginBottom: 16 }}>
+                    <div className="flex items-center gap-1.5">
+                      <span style={{ fontSize: 9, color: '#64748b' }}>Budget</span>
+                      <span style={{ fontSize: 11, fontWeight: 700, ...MONO('#f59e0b') }}>₹{fmtNum(lastTurn.major_policy.budget_cost)} Cr</span>
+                    </div>
+                    {lastTurn.budget_stolen != null && lastTurn.budget_stolen > 1 && (
+                      <div className="flex items-center gap-1">
+                        <span style={{ fontSize: 9, color: '#64748b' }}>Leaked</span>
+                        <span style={{ fontSize: 11, fontWeight: 700, ...MONO('#f87171') }}>₹{lastTurn.budget_stolen.toFixed(1)} Cr</span>
                       </div>
-                    ) : (
-                      <LiveMilestoneFeed
-                        milestones={liveMilestones}
-                        policyName={executingPolicyName ?? ''}
-                        approvalVotes={liveApprovalVotes}
-                        evalReasoning={liveEvalReasoning}
-                      />
+                    )}
+                  </div>
+
+                  {/* Stat delta pills */}
+                  {lastTurn.actual_deltas && (
+                    <div className="flex flex-wrap gap-2">
+                      {Object.entries(lastTurn.actual_deltas)
+                        .filter(([, v]) => Math.abs(v as number) >= 1)
+                        .sort((a, b) => Math.abs(b[1] as number) - Math.abs(a[1] as number))
+                        .slice(0, 6)
+                        .map(([k, v]) => {
+                          const val = v as number
+                          const isPositive = val >= 0
+                          return (
+                            <span key={k} style={{
+                              fontSize: 10, fontWeight: 700,
+                              fontFamily: "'Share Tech Mono', monospace",
+                              padding: '3px 8px', borderRadius: 6,
+                              background: isPositive ? 'rgba(34,197,94,0.12)' : 'rgba(248,113,113,0.12)',
+                              border: `1px solid ${isPositive ? 'rgba(34,197,94,0.3)' : 'rgba(248,113,113,0.3)'}`,
+                              color: isPositive ? '#4ade80' : '#f87171',
+                            }}>
+                              {isPositive ? '+' : ''}{Math.round(val)} {k.replace(/_/g, ' ')}
+                            </span>
+                          )
+                        })}
+                    </div>
+                  )}
+
+                  {/* Approval change */}
+                  <div className="flex items-center gap-3 mt-4 pt-4" style={{ borderTop: '1px solid rgba(56,189,248,0.1)' }}>
+                    <span style={{ fontSize: 9, color: '#64748b', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em' }}>APPROVAL</span>
+                    <span style={{ fontSize: 14, fontWeight: 800, fontFamily: "'Share Tech Mono', monospace", color: approvalDelta >= 0 ? '#4ade80' : '#f87171' }}>
+                      {Math.round(approval)}%
+                    </span>
+                    {approvalDelta !== 0 && (
+                      <span style={{
+                        fontSize: 10, fontWeight: 700, fontFamily: "'Share Tech Mono', monospace",
+                        color: approvalDelta >= 0 ? '#4ade80' : '#f87171',
+                      }}>
+                        ({approvalDelta >= 0 ? '+' : ''}{Math.round(approvalDelta)})
+                      </span>
                     )}
                   </div>
                 </div>
               ) : (
-                <>
-                  <img src={streamImg} alt={streamTitle} className="absolute inset-0 w-full h-full object-cover" />
-                  <div className="absolute inset-0"
-                    style={{ background: 'linear-gradient(to top, rgba(5,13,27,0.97) 0%, rgba(5,13,27,0.3) 55%, transparent 100%)' }} />
-                  <div className="absolute bottom-0 left-0 right-0 p-3">
-                    <div className="text-white uppercase tracking-wide"
-                      style={{ fontSize: 15, fontWeight: 700, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em' }}>
-                      {streamTitle}
-                    </div>
-                    {streamLocation && (
-                      <div className="flex items-center gap-1.5 mt-0.5">
-                        <MapPin size={10} color="#94a3b8" />
-                        <span style={{ fontSize: 10, color: '#94a3b8' }}>{streamLocation}</span>
-                      </div>
-                    )}
-                    {streamEffects.length > 0 && (
-                      <div className="flex items-center gap-4 mt-2 flex-wrap">
-                        {streamEffects.map((effect, i) => (
-                          <span key={i} className="flex items-center gap-1"
-                            style={{
-                              fontSize: 10, fontWeight: 700, color: effect.color,
-                              fontFamily: "'Share Tech Mono', monospace"
-                            }}>
-                            <span style={{ fontSize: 8 }}>{effect.up ? '▲' : '▼'}</span>
-                            {effect.label}
-                          </span>
-                        ))}
-                        <button className="ml-auto flex items-center justify-center rounded transition-all"
-                          style={{
-                            width: 20, height: 20, background: 'rgba(255,255,255,0.1)',
-                            border: '1px solid rgba(255,255,255,0.2)', cursor: 'pointer'
-                          }}>
-                          <Info size={11} color="#94a3b8" />
-                        </button>
-                      </div>
-                    )}
+                /* Empty state — no turns yet */
+                <div style={{ textAlign: 'center', padding: '40px 20px' }}>
+                  <div style={{ fontSize: 40, marginBottom: 16, opacity: 0.3 }}>🏛</div>
+                  <div style={{
+                    fontSize: 16, fontWeight: 700, color: '#475569',
+                    fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.06em', marginBottom: 8,
+                  }}>
+                    Welcome, Mayor
                   </div>
-                </>
-              )}
-            </div>
-
-            {/* Turn History */}
-            <div className="flex-1 overflow-y-auto min-h-0">
-              {turnHistory.length === 0 && (
-                <div style={{ fontSize: 11, color: '#334155', textAlign: 'center', padding: '16px' }}>
-                  No turns yet. Draft a policy to begin.
+                  <div style={{ fontSize: 11, color: '#334155', lineHeight: 1.6, maxWidth: 300, margin: '0 auto' }}>
+                    Consult your advisory council, then draft your first policy to begin governing.
+                  </div>
+                  <button
+                    onClick={handleDraftPolicy}
+                    disabled={fetchingPolicies || isTurnExecuting}
+                    className="mt-6 px-6 py-2.5 rounded-lg transition-all"
+                    style={{
+                      background: 'linear-gradient(135deg, #1d4ed8, #2563eb)',
+                      border: '1px solid rgba(59,130,246,0.5)',
+                      color: '#fff', fontSize: 13, fontWeight: 700,
+                      fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em',
+                      cursor: fetchingPolicies ? 'not-allowed' : 'pointer',
+                      boxShadow: '0 0 20px rgba(37,99,235,0.3)',
+                    }}>
+                    {fetchingPolicies ? 'GENERATING...' : 'DRAFT POLICY'}
+                  </button>
                 </div>
               )}
-              {turnHistory.map((entry, i) => (
-                <TurnPhaseCard
-                  key={entry.turn}
-                  entry={entry}
-                  ministers={gameState.ministers}
-                  onToggle={() => setTurnHistory(prev =>
-                    prev.map((e, j) => j === i ? { ...e, expanded: !e.expanded } : e)
-                  )}
-                />
-              ))}
             </div>
           </div>
         </div>
 
-        {/* ── RIGHT: Identity + Media + City Chatter ──────────────────────── */}
-        <div className="w-[340px] flex flex-col gap-2 shrink-0 overflow-hidden min-h-0">
-
-          {/* Identity Groups */}
-          <div style={{ ...PANEL, maxHeight: 380 }} className="shrink-0 overflow-hidden flex flex-col">
-            <div className="flex items-center justify-between px-3 py-2 shrink-0" style={{ borderBottom: '1px solid #1c3652' }}>
-              <div className="flex items-center gap-2">
-                <div className="w-1 h-4 rounded-full" style={{ background: '#a855f7', boxShadow: '0 0 6px #a855f7' }} />
-                <span style={HDR_LABEL}>IDENTITY GROUPS</span>
-              </div>
-            </div>
-            {/* Pill filter tabs */}
-            <div className="px-3 py-1.5 shrink-0 flex gap-1 flex-wrap" style={{ borderBottom: '1px solid rgba(28,54,82,0.4)' }}>
-              {filterableTypes.map(t => (
-                <button
-                  key={t}
-                  onClick={() => { setIdentityFilter(t); setExpandedGroup(null) }}
-                  style={{
-                    fontSize: 9, fontWeight: 700, letterSpacing: '0.08em',
-                    fontFamily: "'Rajdhani', sans-serif",
-                    padding: '2px 8px', borderRadius: 10, cursor: 'pointer', border: 'none',
-                    background: identityFilter === t ? '#a855f7' : 'rgba(168,85,247,0.12)',
-                    color: identityFilter === t ? '#fff' : '#a855f7',
-                    transition: 'all 0.15s',
-                  }}>
-                  {t.toUpperCase()}
-                </button>
-              ))}
-            </div>
-            <div className="px-2 py-1.5 overflow-y-auto flex-1" style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-              {wardReport
-                .filter(e => e.group_type === identityFilter)
-                .slice(0, 12)
-                .map((entry, i) => {
-                  const wb = Math.min(100, Math.max(0, entry.avg_wellbeing ?? 50))
-                  const appr = Math.min(100, Math.max(0, entry.approval ?? 50))
-                  const scoreColor = entry.hotspot ? '#f87171'
-                    : entry.bright_spot ? '#a855f7'
-                      : wb >= 65 ? '#22c55e'
-                        : wb >= 45 ? '#f59e0b'
-                          : '#f87171'
-                  const apprColor = appr >= 60 ? '#22c55e' : appr >= 40 ? '#f59e0b' : '#f87171'
-                  const trendIcon = entry.trend === 'up' ? '↑' : entry.trend === 'down' ? '↓' : '─'
-                  const trendColor = entry.trend === 'up' ? '#22c55e' : entry.trend === 'down' ? '#f87171' : '#475569'
-                  const groupKey = `${entry.group_type}:${entry.group_name}`
-                  const isExpanded = expandedGroup === groupKey
-
-                  // Per-turn history for this group from turnHistory
-                  const groupHistory = isExpanded ? turnHistory.map(te => {
-                    const wr = te.result.ward_report?.find(
-                      e => e.group_type === entry.group_type && e.group_name === entry.group_name
-                    )
-                    return wr ? { turn: te.turn, wb: wr.avg_wellbeing, appr: wr.approval ?? 50, pulse: wr.pulse_summary || '' } : null
-                  }).filter(Boolean) as { turn: number; wb: number; appr: number; pulse: string }[] : []
-
-                  return (
-                    <div key={i}
-                      onClick={() => setExpandedGroup(isExpanded ? null : groupKey)}
-                      style={{
-                        background: isExpanded ? 'rgba(30,41,59,0.7)' : 'rgba(15,23,42,0.4)',
-                        borderRadius: 8, padding: '10px 14px', cursor: 'pointer',
-                        border: `1px solid ${entry.hotspot ? 'rgba(248,113,113,0.3)' : entry.bright_spot ? 'rgba(168,85,247,0.3)' : 'rgba(51,65,85,0.5)'}`,
-                        boxShadow: isExpanded ? '0 4px 12px rgba(0,0,0,0.2)' : 'none',
-                        transition: 'all 0.2s ease',
-                      }}>
-                      {/* Row 1: name + wellbeing score + trend */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                        <span className="flex-1 truncate" style={{ fontSize: 11, fontWeight: 600, color: '#cbd5e1' }}>{entry.group_name}</span>
-                        <span style={{ fontSize: 14, fontWeight: 800, fontFamily: "'Share Tech Mono', monospace", color: scoreColor }}>{Math.round(wb)}</span>
-                        <span style={{ fontSize: 8, color: '#4b6280', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.05em', fontWeight: 600 }}>WB</span>
-                        <span style={{ fontSize: 13, fontWeight: 700, color: trendColor, width: 14, textAlign: 'center' }}>{trendIcon}</span>
-                      </div>
-                      {/* Row 2: wellbeing bar */}
-                      <div style={{ height: 4, background: '#071422', borderRadius: 3, overflow: 'hidden', marginBottom: 5 }}>
-                        <div style={{
-                          height: '100%', width: `${wb}%`, borderRadius: 3,
-                          background: `linear-gradient(90deg, ${scoreColor}88, ${scoreColor})`,
-                          boxShadow: `0 0 6px ${scoreColor}40`,
-                          transition: 'width 0.5s ease',
-                        }} />
-                      </div>
-                      {/* Row 3: population + approval */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10 }}>
-                        <span style={{ color: '#64748b', fontFamily: "'Share Tech Mono', monospace", letterSpacing: '0.02em' }}>
-                          Representing {Math.round(entry.population_pct ?? 0)}% of population
-                        </span>
-                        <span style={{ marginLeft: 'auto', fontFamily: "'Share Tech Mono', monospace", fontWeight: 800, color: apprColor, letterSpacing: '0.05em' }}>
-                          {Math.round(appr)}%
-                        </span>
-                        <span style={{ color: '#4b6280', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.05em', fontWeight: 700, fontSize: 9 }}>APPR</span>
-                      </div>
-                      {/* Expanded: per-turn history */}
-                      {isExpanded && (
-                        <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid rgba(51,65,85,0.6)', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                          {groupHistory.length > 0 ? groupHistory.map(h => {
-                            const twbColor = h.wb >= 65 ? '#22c55e' : h.wb >= 45 ? '#f59e0b' : '#f87171'
-                            const taColor = h.appr >= 60 ? '#22c55e' : h.appr >= 40 ? '#f59e0b' : '#f87171'
-                            return (
-                              <div key={h.turn} style={{ background: 'rgba(15,23,42,0.3)', borderRadius: 4, padding: '6px 8px', borderLeft: '2px solid #3b82f6' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, marginBottom: 4 }}>
-                                  <span style={{
-                                    fontSize: 9, fontWeight: 800, color: '#3b82f6',
-                                    background: 'rgba(59,130,246,0.15)',
-                                    borderRadius: 3, padding: '1px 5px',
-                                    fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.06em',
-                                  }}>TURN {h.turn}</span>
-                                  <span style={{ color: '#64748b', fontFamily: "'Rajdhani', sans-serif", fontWeight: 600, fontSize: 9 }}>WB</span>
-                                  <span style={{ fontFamily: "'Share Tech Mono', monospace", color: twbColor, fontWeight: 700 }}>{Math.round(h.wb)}</span>
-                                  <span style={{ color: '#334155' }}>│</span>
-                                  <span style={{ color: '#64748b', fontFamily: "'Rajdhani', sans-serif", fontWeight: 600, fontSize: 9 }}>APPR</span>
-                                  <span style={{ fontFamily: "'Share Tech Mono', monospace", color: taColor, fontWeight: 700 }}>{Math.round(h.appr)}%</span>
-                                </div>
-                                <div style={{ fontSize: 11, color: '#e2e8f0', lineHeight: 1.4, fontStyle: 'italic' }}>
-                                  "{h.pulse || 'Sentiment remains stable amid policy adjustments.'}"
-                                </div>
-                              </div>
-                            )
-                          }) : (
-                            <div style={{ fontSize: 10, color: '#64748b', fontStyle: 'italic', textAlign: 'center', padding: '4px 0' }}>Run a turn to see this group's reaction history.</div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
-              {wardReport.filter(e => e.group_type === identityFilter).length === 0 && (
-                <div style={{ fontSize: 11, color: '#334155', textAlign: 'center', paddingTop: 16 }}>No data yet — run a turn to see group welfare</div>
-              )}
-            </div>
-          </div>
+        {/* ── RIGHT: Media + City Chatter ──────────────────────────────────── */}
+        <div className="w-[300px] flex flex-col gap-2 shrink-0 overflow-hidden min-h-0">
 
           {/* Media */}
           <div style={PANEL} className="flex-1 overflow-hidden flex flex-col">
@@ -2802,7 +2727,6 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                               }}>T{(v as any).turnNum}</span>
                             )}
                           </div>
-                          {/* Speech bubble */}
                           <div style={{
                             background: v.sentiment === 'approve'
                               ? 'rgba(34,197,94,0.06)'
@@ -2815,7 +2739,6 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                             fontSize: 10,
                             color: '#cbd5e1',
                             lineHeight: 1.55,
-                            fontStyle: 'normal',
                           }}>
                             {v.reaction}
                           </div>

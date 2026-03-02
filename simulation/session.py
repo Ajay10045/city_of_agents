@@ -83,7 +83,7 @@ from engine.scoring import check_loss_conditions, compute_scorecard
 from engine.wellbeing import update_citizen_wellbeing
 from llm.llm_client import LLMClient
 from simulation.llm_calls import (
-    evaluate_policy_implementation,
+    evaluate_policy_ensemble,
     generate_advisor_summary,
     generate_citizen_names,
     generate_delivery_narrative,
@@ -1325,15 +1325,21 @@ class GameSession:
             }
             for tr in state.turn_history[-2:]
         ]
-        eval_result = evaluate_policy_implementation(
+        eval_result = evaluate_policy_ensemble(
             llm, policy, minister, params, ward_report, recent_history, city_name
         )
-        execution_score = eval_result["execution_pct"] / 100.0
-        budget_stolen = eval_result["leakage_cr"]
-        actual_deltas = eval_result["city_param_deltas"]
-        side_effect_deltas = eval_result["side_effect_deltas"]
+        execution_score = eval_result.get("execution_pct", 50) / 100.0
+        budget_stolen = eval_result.get("leakage_cr", 0.0)
+        actual_deltas = eval_result.get("city_param_deltas", {})
+        side_effect_deltas = eval_result.get("side_effect_deltas", {})
+        
+        ensemble_reasoning = eval_result.get("reasoning", "")
+        opp_attacks_list = eval_result.get("opposition_attacks", [])
+        crises_list = eval_result.get("crises_triggered", [])
 
-        yield {"type": "evaluation", **eval_result}
+        stream_eval = {k: v for k, v in eval_result.items() if k not in ["opposition_attacks", "crises_triggered", "ensemble_reasoning", "persona"]}
+        stream_eval["reasoning"] = ensemble_reasoning
+        yield {"type": "evaluation", **stream_eval}
 
         # Apply param deltas to city
         all_deltas = {**actual_deltas, **side_effect_deltas}
@@ -1401,15 +1407,26 @@ class GameSession:
                 except Exception as exc:
                     _log("bad", f"[agentic] poll error: {exc}")
 
-        # Compute weighted approval from votes
+        # Compute weighted approval from the LLM poll (for narrative/flash poll reasons only)
         approve_w = sum(v["weight"] for v in approval_votes if v["sentiment"] == "approve")
         disapprove_w = sum(v["weight"] for v in approval_votes if v["sentiment"] == "disapprove")
         total_w = sum(v["weight"] for v in approval_votes)
-        if total_w > 0:
-            interim_approval = (approve_w / total_w) * 100.0
-        else:
-            interim_approval = compute_interim_approval(state.citizens, params.media_freedom)
 
+        # Update citizen alignments based on wellbeing changes
+        # Must compare against the snapshot before we ran update_citizen_wellbeing
+        for c in state.citizens:
+            opp_push = 0.0
+            # We temporarily swap back the old wellbeing to run `update_mayor_alignment` exactly as designed
+            old_wb = wb_before_map[c.id]
+            new_wb = c.wellbeing
+            c.wellbeing = old_wb
+            c.mayor_alignment = update_mayor_alignment(
+                c, new_wb, state.media_outlets, params.media_freedom, opp_push
+            )
+            c.wellbeing = new_wb
+
+        # Calculate final interim approval using the deterministic function
+        interim_approval = compute_interim_approval(state.citizens, params.media_freedom)
         approval_before = compute_interim_approval(state.citizens, state.city_params.media_freedom)
 
         yield {
@@ -1424,17 +1441,19 @@ class GameSession:
             },
         }
 
-        # Update citizen alignments based on wellbeing changes
-        for c in state.citizens:
-            opp_push = 0.0
-            c.mayor_alignment = update_mayor_alignment(
-                c, c.wellbeing, state.media_outlets, params.media_freedom, opp_push
-            )
-
-        # ── Events (deterministic) ────────────────────────────────────
+        # ── Events (deterministic + ensemble) ─────────────────────────
         threshold_events = check_threshold_events(params, {e.name for e in state.active_events})
         stochastic_events = check_stochastic_events(params, len(state.active_events), rng)
-        newly_triggered = threshold_events + stochastic_events
+        ensemble_events = [
+            ActiveEvent(
+                id=f"ens_crisis_{i}_{current_turn}",
+                name=c,
+                type="crisis",
+                severity=2,
+                turns_remaining=2,
+            ) for i, c in enumerate(crises_list)
+        ]
+        newly_triggered = threshold_events + stochastic_events + ensemble_events
         state.active_events.extend(newly_triggered)
         state.active_events, event_deltas = step_events(state.active_events, rng)
         params = params.apply_delta(event_deltas)
@@ -1463,12 +1482,15 @@ class GameSession:
         scandal_broke = check_scandal_break(
             minister, state.media_outlets, 1 - execution_score, params.media_freedom, rng
         )
-        attack_strategy = pick_attack_strategy(
-            state.opposition_leader, state.city_params.as_dict(), params.as_dict(),
-            execution_score, scandal_broke, bool(state.active_events),
-            state.outstanding_debt, state.city_profile.budget.max_debt,
-            max(1, state.city_profile.game_config.election_turn - current_turn),
-        )
+        if opp_attacks_list:
+            attack_strategy = " / ".join(opp_attacks_list)
+        else:
+            attack_strategy = pick_attack_strategy(
+                state.opposition_leader, state.city_params.as_dict(), params.as_dict(),
+                execution_score, scandal_broke, bool(state.active_events),
+                state.outstanding_debt, state.city_profile.budget.max_debt,
+                max(1, state.city_profile.game_config.election_turn - current_turn),
+            )
         counter_frame = "Delivery Receipts"
 
         state.media_outlets = apply_media_drift(state.media_outlets, interim_approval, 0.0, rng)
