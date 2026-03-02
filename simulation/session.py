@@ -83,6 +83,7 @@ from engine.scoring import check_loss_conditions, compute_scorecard
 from engine.wellbeing import update_citizen_wellbeing
 from llm.llm_client import LLMClient
 from simulation.llm_calls import (
+    amend_policy_option,
     evaluate_policy_implementation,
     generate_advisor_summary,
     generate_citizen_names,
@@ -320,6 +321,19 @@ class GameSession:
         options = generate_policy_options(self.llm, self.state, full_transcript, budget)
         self._pending_policy_options = options
         return options
+
+    def amend_single_policy(self, index: int, transcript: str) -> dict[str, Any]:
+        """Regenerate one pending policy option informed by a discussion transcript."""
+        assert self.state
+        if not self._pending_policy_options:
+            raise ValueError("No pending policy options. Call get_policy_options first.")
+        if index < 0 or index >= len(self._pending_policy_options):
+            raise ValueError(f"Invalid policy index {index}.")
+        existing = self._pending_policy_options[index]
+        budget = self.state.city_profile.budget.max_policy_budget
+        amended = amend_policy_option(self.llm, self.state, existing, transcript, budget)
+        self._pending_policy_options[index] = amended
+        return amended
 
     # ------------------------------------------------------------------
     # Main turn executor

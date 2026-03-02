@@ -203,6 +203,29 @@ def get_policies(game_id: str) -> dict[str, Any]:
     return {"options": options, "turn": session.state.current_turn if session.state else None}
 
 
+class AmendPolicyRequest(BaseModel):
+    index: int
+    transcript: str
+
+
+@router.post("/{game_id}/policies/amend")
+def amend_policy(game_id: str, req: AmendPolicyRequest) -> dict[str, Any]:
+    """Amend a single policy option based on advisory discussion."""
+    session = _get_session(game_id)
+    try:
+        amended = session.amend_single_policy(req.index, req.transcript)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Policy amendment failed: {exc}") from exc
+    return {
+        "amended_index": req.index,
+        "amended_policy": amended,
+        "options": session._pending_policy_options,
+        "turn": session.state.current_turn if session.state else None,
+    }
+
+
 @router.post("/{game_id}/turn")
 def execute_turn(game_id: str, req: TurnRequest) -> dict[str, Any]:
     """Execute a full turn.

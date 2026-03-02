@@ -84,6 +84,15 @@ export interface Policy {
   why_now: string
 }
 
+export type StanceValue = 'approve' | 'disapprove'
+
+export interface AdvisorStance {
+  ministerId: string
+  ministerName: string
+  stance: StanceValue
+  reason: string
+}
+
 export interface DeliveryTarget {
   key: string
   label: string

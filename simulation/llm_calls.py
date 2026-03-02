@@ -449,6 +449,78 @@ def generate_policy_options(
     return options[:3]
 
 
+def amend_policy_option(
+    llm: LLMClient,
+    state: GameState,
+    existing_policy: dict[str, Any],
+    discussion_transcript: str,
+    available_budget: float,
+) -> dict[str, Any]:
+    """Regenerate a single policy option informed by a post-generation discussion transcript."""
+    params = state.city_params.as_dict()
+    params_str = "\n".join(f"  {k.replace('_', ' ').title()}: {v:.1f}" for k, v in params.items())
+    existing_str = json.dumps(existing_policy, indent=2)
+
+    prompt = textwrap.dedent(f"""\
+        City: {state.city_profile.city_name} | Turn: {state.current_turn}/{state.city_profile.game_config.total_turns}
+        Treasury: {state.treasury:.0f} Cr | Debt: {state.outstanding_debt:.0f} Cr
+        Available policy budget: {available_budget:.0f} Cr
+
+        Current city parameters:
+        {params_str}
+
+        The mayor consulted advisors about the following policy draft and wants it amended:
+
+        --- Existing policy draft ---
+        {existing_str}
+        --- End draft ---
+
+        --- Advisory discussion transcript ---
+        {discussion_transcript or "(No discussion provided)"}
+        --- End transcript ---
+
+        Produce one amended version of this policy that incorporates the advisory feedback.
+        Keep the same general intent but adjust specifics (budget, effects, tradeoffs, description)
+        to reflect the discussion. Constraints:
+        1. target_effects: max ±10 per param
+        2. side_effects: max ±5 per param, can be negative
+        3. budget_cost must be within {available_budget:.0f} Cr
+        4. time_profile values must sum to 1.0
+        5. portfolio must be one of: {', '.join(PORTFOLIOS)}
+
+        Return ONLY a single JSON policy object (not an array) with this schema:
+        {{
+          "name": "string",
+          "description": "string",
+          "portfolio": "string",
+          "budget_cost": float,
+          "target_effects": {{"param_key": delta_float}},
+          "side_effects": {{"param_key": delta_float}},
+          "time_profile": {{"turn_0": float, "turn_1": float}},
+          "targets": [{{"key": "string", "label": "string", "unit": "points", "proposed": float, "difficulty": float}}],
+          "tradeoffs": "string",
+          "why_now": "string"
+        }}
+
+        Valid param keys: {', '.join(params.keys())}
+    """)
+
+    raw = llm.chat_text(POLICY_DRAFT_SYSTEM, prompt)
+    try:
+        amended = _extract_json(raw)
+    except ValueError:
+        amended = existing_policy
+    if isinstance(amended, list):
+        amended = amended[0] if amended else existing_policy
+    if not isinstance(amended, dict):
+        amended = existing_policy
+    for key in amended.get("target_effects", {}):
+        amended["target_effects"][key] = max(-10.0, min(10.0, float(amended["target_effects"][key])))
+    for key in amended.get("side_effects", {}):
+        amended["side_effects"][key] = max(-5.0, min(5.0, float(amended["side_effects"][key])))
+    return amended
+
+
 # ---------------------------------------------------------------------------
 # Delivery narrative generation
 # ---------------------------------------------------------------------------
