@@ -1337,7 +1337,6 @@ function LiveMilestoneFeed({ milestones, policyName, approvalVotes, evalReasonin
         const approvalPct = totalW > 0 ? Math.round((approveW / totalW) * 100) : 50
         const approveCt = approvalVotes.filter(v => v.sentiment === 'approve').length
         const disapproveCt = approvalVotes.filter(v => v.sentiment === 'disapprove').length
-        const undecidedCt = approvalVotes.filter(v => v.sentiment === 'undecided').length
         const col = approvalPct >= 50 ? '#22c55e' : '#f87171'
         return (
           <div style={{ marginTop: 2 }}>
@@ -1351,7 +1350,6 @@ function LiveMilestoneFeed({ milestones, policyName, approvalVotes, evalReasonin
             <div style={{ display: 'flex', gap: 10, marginTop: 5 }}>
               <span style={{ fontSize: 9, color: '#22c55e' }}>✓ {approveCt}</span>
               <span style={{ fontSize: 9, color: '#f87171' }}>✗ {disapproveCt}</span>
-              <span style={{ fontSize: 9, color: '#64748b' }}>~ {undecidedCt}</span>
             </div>
           </div>
         )
@@ -1924,13 +1922,13 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
           const before = Math.round(event.approval_before as number)
           const after = Math.round(event.approval as number)
           const dir = after >= before ? '↑' : '↓'
-          const bd = event.breakdown as { approve: number; disapprove: number; undecided: number; total: number }
+          const bd = event.breakdown as { approve: number; disapprove: number; total: number }
           // Update live approval so top bar reflects result before complete event fires
           setLiveApproval(after)
           setAllHeadlines(prev => [...prev, {
             outlet: 'PULSE',
             lean: after >= before ? 'mayor' as const : 'opposition' as const,
-            headline: `Approval ${dir} ${before}% → ${after}% | ${bd.approve} approve · ${bd.disapprove} disapprove · ${bd.undecided} undecided (${bd.total} polled)`,
+            headline: `Approval ${dir} ${before}% → ${after}% | ${bd.approve} approve · ${bd.disapprove} disapprove (${bd.total} polled)`,
             turnNum,
           }])
         }

@@ -1433,7 +1433,7 @@ class GameSession:
             "breakdown": {
                 "approve": len([v for v in approval_votes if v["sentiment"] == "approve"]),
                 "disapprove": len([v for v in approval_votes if v["sentiment"] == "disapprove"]),
-                "undecided": len([v for v in approval_votes if v["sentiment"] == "undecided"]),
+                "undecided": 0,
                 "total": len(approval_votes),
             },
         }

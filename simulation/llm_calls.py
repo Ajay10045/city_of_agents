@@ -1172,6 +1172,16 @@ def poll_citizen_approval(
         f"{k.replace('_', ' ')} {'+' if v>=0 else ''}{v:.1f}" for k, v in changed if abs(v) >= 0.3
     ) or "no significant changes"
 
+    def _binary_sentiment(raw_sentiment: Any) -> str:
+        if isinstance(raw_sentiment, str):
+            s = raw_sentiment.strip().lower()
+            if s == "approve":
+                return "approve"
+            if s == "disapprove":
+                return "disapprove"
+        # No neutral voting allowed in approval poll; tie breaks to approve.
+        return "approve" if wb_delta >= 0 else "disapprove"
+
     prompt = textwrap.dedent(f"""\
         You are: {citizen.name}
         City: {city_name}
@@ -1191,12 +1201,12 @@ def poll_citizen_approval(
 
         Based on all this, give your honest reaction to the Mayor's performance this turn.
         Write as yourself — raw, casual, in your own voice (can mix mother tongue + English).
-        Then vote: approve / disapprove / undecided.
+        Then vote: approve / disapprove.
 
         Return ONLY JSON (no markdown):
         {{
           "reaction": "<your casual in-character quote, 1-2 sentences max>",
-          "sentiment": "approve|disapprove|undecided"
+          "sentiment": "approve|disapprove"
         }}
     """)
 
@@ -1205,9 +1215,7 @@ def poll_citizen_approval(
         result = _extract_json(raw)
         if not isinstance(result, dict):
             raise ValueError("not a dict")
-        sentiment = result.get("sentiment", "undecided")
-        if sentiment not in ("approve", "disapprove", "undecided"):
-            sentiment = "undecided"
+        sentiment = _binary_sentiment(result.get("sentiment"))
         return CitizenVoice(
             citizen_id=citizen.id,
             name=citizen.name,
@@ -1217,8 +1225,8 @@ def poll_citizen_approval(
             sentiment=sentiment,
         )
     except Exception:
-        # Fallback: derive sentiment from wellbeing delta
-        sentiment = "approve" if wb_delta > 0.5 else "disapprove" if wb_delta < -0.5 else "undecided"
+        # Fallback: derive strict binary sentiment from wellbeing delta.
+        sentiment = "approve" if wb_delta >= 0 else "disapprove"
         return CitizenVoice(
             citizen_id=citizen.id,
             name=citizen.name,
