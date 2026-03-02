@@ -1,4 +1,13 @@
+@import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
 @import "tailwindcss";
+
+:root {
+  --coa-bg-deep: #050d1b;
+  --coa-panel: #0b1929;
+  --coa-border: #1c3652;
+  --coa-text: #e2e8f0;
+  --coa-muted: #94a3b8;
+}
 
 * {
   box-sizing: border-box;
@@ -6,8 +15,53 @@
 
 body {
   margin: 0;
-  background-color: #0f1117;
-  color: #e8eaf0;
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background-color: var(--coa-bg-deep);
+  color: var(--coa-text);
+  font-family: 'Rajdhani', 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
+}
+
+.coa-pulse-slow {
+  animation: coaPulse 2.4s ease-in-out infinite;
+}
+
+.coa-pulse-fast {
+  animation: coaPulse 1.2s ease-in-out infinite;
+}
+
+.coa-flicker {
+  animation: coaFlicker 0.9s steps(2, end) infinite;
+}
+
+.coa-shake-soft {
+  animation: coaShake 0.45s ease-in-out infinite;
+}
+
+@keyframes coaPulse {
+  0% { transform: scale(1); opacity: 0.9; }
+  50% { transform: scale(1.06); opacity: 1; }
+  100% { transform: scale(1); opacity: 0.9; }
+}
+
+@keyframes coaFlicker {
+  0% { opacity: 1; }
+  35% { opacity: 0.75; }
+  45% { opacity: 1; }
+  55% { opacity: 0.65; }
+  100% { opacity: 1; }
+}
+
+@keyframes coaShake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-0.8px); }
+  75% { transform: translateX(0.8px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .coa-pulse-slow,
+  .coa-pulse-fast,
+  .coa-flicker,
+  .coa-shake-soft {
+    animation: none !important;
+  }
 }

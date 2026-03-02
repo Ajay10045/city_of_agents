@@ -53,6 +53,21 @@ from engine.events import (
     step_events,
     update_communal_tension,
 )
+from engine.engagement import (
+    build_ui_signals,
+    classify_policy_risk_tone,
+    compute_city_stability,
+    compute_decay_cues,
+    compute_media_climate,
+    detect_near_misses,
+    maybe_generate_micro_events,
+    projected_election_approval,
+    split_delayed_deltas,
+    summarize_cabinet_mood,
+    update_election_risk_shadow,
+    update_identity_trajectory,
+    update_minister_tension_arc,
+)
 from engine.implementation import run_implementation
 from engine.media import apply_media_drift, check_scandal_break, init_media_outlets
 from engine.models import (
@@ -88,6 +103,8 @@ from simulation.llm_calls import (
     generate_citizen_names,
     generate_delivery_narrative,
     generate_media_headlines,
+    generate_promise_delivery_line,
+    generate_brewing_issue_teaser,
     generate_policy_options,
     minister_response,
     poll_citizen_approval,
@@ -318,6 +335,12 @@ class GameSession:
         full_transcript = "\n\n---\n\n".join(self._sealed_transcripts) if self._sealed_transcripts else ""
         budget = self.state.city_profile.budget.max_policy_budget
         options = generate_policy_options(self.llm, self.state, full_transcript, budget)
+        for opt in options:
+            try:
+                pol = Policy(**{k: v for k, v in opt.items() if k in Policy.model_fields})
+                opt["risk_tone"] = classify_policy_risk_tone(pol)
+            except Exception:
+                opt["risk_tone"] = "low"
         self._pending_policy_options = options
         return options
 
@@ -346,7 +369,7 @@ class GameSession:
         _log("phase", "═" * 54)
         _log("phase", f"TURN {state.current_turn}  |  City of {city}  |  Seed: {state.prng_seed + state.current_turn * 1000}")
         _log("phase", "═" * 54)
-        approval_now = compute_overall_approval(state.citizens)
+        approval_now = compute_interim_approval(state.citizens, state.city_params.media_freedom)
         _log("info",  f"Treasury: ₹{state.treasury:.0f} Cr  |  Debt: ₹{state.outstanding_debt:.0f} Cr  |  Approx approval: {approval_now:.1f}%")
 
         # ① Resolve minor action
@@ -380,6 +403,7 @@ class GameSession:
             raise ValueError("No policy options available. Call get_policy_options first.")
         raw_policy = self._pending_policy_options[policy_index % len(self._pending_policy_options)]
         policy = Policy(**{k: v for k, v in raw_policy.items() if k in Policy.model_fields})
+        policy.risk_tone = classify_policy_risk_tone(policy)
 
         # Tag targeted params
         for k in policy.target_effects:
@@ -451,7 +475,6 @@ class GameSession:
         # ⑤ Apply immediate deltas (turn_0 fraction) — both target and side effects share time_profile
         _log("phase", "⑤ APPLY DELTAS")
         time_profile = policy.time_profile or {"turn_0": 1.0}
-        t0_frac = time_profile.get("turn_0", 1.0)
 
         # Merge target + side effects into one combined delta map for time-splitting
         all_policy_deltas: dict[str, float] = {}
@@ -460,24 +483,16 @@ class GameSession:
         for param, val in impl.side_effect_deltas.items():
             all_policy_deltas[param] = all_policy_deltas.get(param, 0.0) + val
 
-        immediate_deltas = {k: v * t0_frac for k, v in all_policy_deltas.items()}
+        immediate_deltas, queued_teasers = split_delayed_deltas(
+            all_deltas=all_policy_deltas,
+            time_profile=time_profile,
+            current_turn=state.current_turn,
+            pending_deltas=state.pending_deltas,
+        )
+        for key in all_policy_deltas.keys():
+            targeted_this_turn.add(key)
         imm_summary = ", ".join(f"{k} {v:+.2f}" for k, v in immediate_deltas.items())
-        _log("info",  f"Immediate (turn_0={t0_frac:.1f}): {imm_summary}")
-
-        # Queue future fractions for both target + side effects
-        queued_summary = []
-        for key, frac in time_profile.items():
-            if key == "turn_0":
-                continue
-            turn_offset = int(key.replace("turn_", ""))
-            apply_turn = state.current_turn + turn_offset
-            carry = state.pending_deltas.setdefault(apply_turn, {})
-            for param, val in all_policy_deltas.items():
-                carry[param] = carry.get(param, 0.0) + val * frac
-                queued_summary.append(f"{param} {val * frac:+.2f} (turn {apply_turn})")
-                targeted_this_turn.add(param)  # prevent decay on params with queued delivery
-        if queued_summary:
-            _log("info",  f"Queued future deltas: {', '.join(queued_summary)}")
+        _log("info",  f"Immediate (turn_0={time_profile.get('turn_0', 1.0):.1f}): {imm_summary}")
 
         # Apply immediate combined deltas (target + side effects)
         params = state.city_params.apply_delta(immediate_deltas)
@@ -793,6 +808,29 @@ class GameSession:
 
         # Ward report (aggregate wellbeing changes by group)
         ward_report = self._compute_ward_report(state.citizens, all_deltas)
+        params, promise_line, highlight_reel, near_miss_events, micro_events, ui_signals = self._apply_engagement_layers(
+            policy=policy,
+            implementing_minister=minister,
+            minor_action_type=m_action.type,
+            params=params,
+            targeted_this_turn=targeted_this_turn,
+            ward_report=ward_report,
+            interim_approval=interim_approval,
+            approval_before=approval_now,
+            execution_score=impl.execution_score,
+            budget_stolen=impl.corruption.budget_stolen,
+            actual_deltas=impl.actual_deltas,
+            side_effect_deltas=impl.side_effect_deltas,
+            citizen_voices=citizen_voices,
+            rng=rng,
+            queued_teasers=queued_teasers,
+        )
+        if micro_events:
+            all_deltas_with_micro = dict(all_deltas)
+            for me in micro_events:
+                for k, v in me.delta.items():
+                    all_deltas_with_micro[k] = all_deltas_with_micro.get(k, 0.0) + v
+            ward_report = self._compute_ward_report(state.citizens, all_deltas_with_micro)
 
         # Commit state
         turn_result = TurnResult(
@@ -822,6 +860,11 @@ class GameSession:
             interest_paid=interest_paid,
             tax_revenue=tax_rev,
             advisor_summary=advisor_summary,
+            promise_delivery_line=promise_line,
+            highlight_reel=highlight_reel,
+            near_miss_events=near_miss_events,
+            micro_events=micro_events,
+            ui_signals=ui_signals,
         )
 
         # Persist to game state
@@ -880,7 +923,7 @@ class GameSession:
         _log("phase", "═" * 54)
         _log("phase", f"TURN {state.current_turn}  |  City of {city}  |  STREAMING")
         _log("phase", "═" * 54)
-        approval_now = compute_overall_approval(state.citizens)
+        approval_now = compute_interim_approval(state.citizens, state.city_params.media_freedom)
 
         # ① Minor action
         m_action = MinorAction(**minor_action)
@@ -902,6 +945,7 @@ class GameSession:
             raise ValueError("No policy options available. Call get_policy_options first.")
         raw_policy = self._pending_policy_options[policy_index % len(self._pending_policy_options)]
         policy = Policy(**{k: v for k, v in raw_policy.items() if k in Policy.model_fields})
+        policy.risk_tone = classify_policy_risk_tone(policy)
         for k in policy.target_effects:
             targeted_this_turn.add(k)
 
@@ -1168,6 +1212,29 @@ class GameSession:
 
         # Assemble TurnResult and commit state
         ward_report = self._compute_ward_report(state.citizens, all_deltas)
+        params, promise_line, highlight_reel, near_miss_events, micro_events, ui_signals = self._apply_engagement_layers(
+            policy=policy,
+            implementing_minister=minister,
+            minor_action_type=m_action.type,
+            params=params,
+            targeted_this_turn=targeted_this_turn,
+            ward_report=ward_report,
+            interim_approval=interim_approval,
+            approval_before=approval_now,
+            execution_score=impl.execution_score,
+            budget_stolen=impl.corruption.budget_stolen,
+            actual_deltas=impl.actual_deltas,
+            side_effect_deltas=impl.side_effect_deltas,
+            citizen_voices=citizen_voices,
+            rng=rng,
+            queued_teasers=[],
+        )
+        if micro_events:
+            all_deltas_with_micro = dict(all_deltas)
+            for me in micro_events:
+                for k, v in me.delta.items():
+                    all_deltas_with_micro[k] = all_deltas_with_micro.get(k, 0.0) + v
+            ward_report = self._compute_ward_report(state.citizens, all_deltas_with_micro)
         turn_result = TurnResult(
             turn=state.current_turn,
             major_policy=policy,
@@ -1195,6 +1262,11 @@ class GameSession:
             interest_paid=interest_paid,
             tax_revenue=tax_rev,
             advisor_summary=advisor_summary,
+            promise_delivery_line=promise_line,
+            highlight_reel=highlight_reel,
+            near_miss_events=near_miss_events,
+            micro_events=micro_events,
+            ui_signals=ui_signals,
         )
 
         state.city_params = params
@@ -1262,6 +1334,7 @@ class GameSession:
 
         policy_dict = self._pending_policy_options[policy_index]
         policy = Policy(**policy_dict) if isinstance(policy_dict, dict) else policy_dict
+        policy.risk_tone = classify_policy_risk_tone(policy)
 
         minor = MinorAction(**minor_action) if isinstance(minor_action, dict) else minor_action
 
@@ -1335,9 +1408,21 @@ class GameSession:
 
         yield {"type": "evaluation", **eval_result}
 
-        # Apply param deltas to city
-        all_deltas = {**actual_deltas, **side_effect_deltas}
-        params = params.apply_delta(all_deltas)
+        # Apply param deltas to city with delayed consequence engine
+        all_policy_deltas = {**actual_deltas, **side_effect_deltas}
+        targeted_this_turn = set(all_policy_deltas.keys())
+        immediate_deltas, queued_teasers = split_delayed_deltas(
+            all_deltas=all_policy_deltas,
+            time_profile=policy.time_profile or {"turn_0": 1.0},
+            current_turn=state.current_turn,
+            pending_deltas=state.pending_deltas,
+        )
+        params = params.apply_delta(immediate_deltas)
+        pending_due = state.pending_deltas.pop(state.current_turn, {})
+        params = params.apply_delta(pending_due)
+        all_deltas = dict(immediate_deltas)
+        for k, v in pending_due.items():
+            all_deltas[k] = all_deltas.get(k, 0.0) + v
 
         # Deterministic wellbeing update per citizen
         wb_before_map = {c.id: c.wellbeing for c in state.citizens}
@@ -1345,7 +1430,7 @@ class GameSession:
             c.wellbeing = update_citizen_wellbeing(c, all_deltas, state.city_profile)
 
         # Recompute ward report with updated wellbeing
-        updated_ward_report = self._compute_ward_report(state.citizens, actual_deltas)
+        updated_ward_report = self._compute_ward_report(state.citizens, all_deltas)
         yield {
             "type": "wellbeing_update",
             "ward_report": [e.model_dump() for e in updated_ward_report],
@@ -1456,7 +1541,7 @@ class GameSession:
         treasury = apply_minor_action_budget(treasury, minor)
         params = apply_corruption_consequences(params, budget_stolen, policy.budget_cost)
         params = apply_maintenance_decay(
-            params, state.targeted_this_turn, state.targeted_last_turn, params.admin_efficiency
+            params, targeted_this_turn, state.targeted_last_turn, params.admin_efficiency
         )
 
         # ── Media + opposition ────────────────────────────────────────
@@ -1525,6 +1610,30 @@ class GameSession:
         )
         yield {"type": "narrative_chunk", "key": "advisor", "value": advisor_summary}
 
+        params, promise_line, highlight_reel, near_miss_events, micro_events, ui_signals = self._apply_engagement_layers(
+            policy=policy,
+            implementing_minister=minister,
+            minor_action_type=minor.type,
+            params=params,
+            targeted_this_turn=targeted_this_turn,
+            ward_report=updated_ward_report,
+            interim_approval=interim_approval,
+            approval_before=approval_before,
+            execution_score=execution_score,
+            budget_stolen=budget_stolen,
+            actual_deltas=actual_deltas,
+            side_effect_deltas=side_effect_deltas,
+            citizen_voices=list(impl_voices) + list(announcement_voices),
+            rng=rng,
+            queued_teasers=queued_teasers,
+        )
+        if micro_events:
+            all_deltas_plus_micro = dict(all_deltas)
+            for me in micro_events:
+                for k, v in me.delta.items():
+                    all_deltas_plus_micro[k] = all_deltas_plus_micro.get(k, 0.0) + v
+            updated_ward_report = self._compute_ward_report(state.citizens, all_deltas_plus_micro)
+
         # ── Assemble TurnResult ───────────────────────────────────────
         delivery_targets = [
             DeliveryTarget(
@@ -1564,6 +1673,11 @@ class GameSession:
             interest_paid=interest_paid,
             tax_revenue=tax_rev,
             advisor_summary=advisor_summary,
+            promise_delivery_line=promise_line,
+            highlight_reel=highlight_reel,
+            near_miss_events=near_miss_events,
+            micro_events=micro_events,
+            ui_signals=ui_signals,
         )
 
         # ── Commit state ──────────────────────────────────────────────
@@ -1572,7 +1686,7 @@ class GameSession:
         state.outstanding_debt = outstanding_debt
         state.communal_tension = new_tension
         state.targeted_last_turn = state.targeted_this_turn
-        state.targeted_this_turn = set(actual_deltas.keys())
+        state.targeted_this_turn = targeted_this_turn
         state.turn_history.append(turn_result)
         state.current_turn += 1
         self._sealed_transcripts = []
@@ -1623,6 +1737,148 @@ class GameSession:
         assert self.state
         return check_loss_conditions(self.state)
 
+    def _apply_engagement_layers(
+        self,
+        *,
+        policy: Policy,
+        implementing_minister: Minister,
+        minor_action_type: str,
+        params,
+        targeted_this_turn: set[str],
+        ward_report: list[WardReportEntry],
+        interim_approval: float,
+        approval_before: float,
+        execution_score: float,
+        budget_stolen: float,
+        actual_deltas: dict[str, float],
+        side_effect_deltas: dict[str, float],
+        citizen_voices: list,
+        rng: random.Random,
+        queued_teasers: list[str] | None = None,
+    ):
+        assert self.state
+        state = self.state
+
+        all_params = set(params.as_dict().keys())
+        protected = targeted_this_turn | state.targeted_last_turn
+        decaying_count = max(0, len(all_params - protected))
+        stability_score, pulse = compute_city_stability(
+            params=params,
+            active_events_count=len(state.active_events),
+            decaying_count=decaying_count,
+            previous_score=state.city_stability_hidden,
+        )
+        state.city_stability_hidden = stability_score
+        state.election_risk_shadow = update_election_risk_shadow(
+            previous_shadow=state.election_risk_shadow,
+            params=params,
+            ward_report=ward_report,
+        )
+
+        archetype = update_identity_trajectory(
+            traj=state.identity_trajectory,
+            policy=policy,
+            minor_action_type=minor_action_type,
+            active_events_count=len(state.active_events),
+            execution_score=execution_score,
+        )
+
+        governance_strength = (params.admin_efficiency + params.anti_corruption + params.media_freedom) / 3.0
+        public_backlash = max(0.0, approval_before - interim_approval)
+        opposition_pressure = max(0.0, approval_before - interim_approval)
+        leakage_rate = budget_stolen / max(policy.budget_cost, 1.0)
+        for m in state.ministers:
+            per_minister_leakage = leakage_rate if m.citizen.id == implementing_minister.citizen.id else leakage_rate * 0.2
+            update_minister_tension_arc(
+                minister=m,
+                leakage_rate=per_minister_leakage,
+                execution_pressure=(1.0 - execution_score) * 100.0 if m.citizen.id == implementing_minister.citizen.id else 8.0,
+                public_backlash=public_backlash,
+                media_freedom=params.media_freedom,
+                opposition_pressure=opposition_pressure,
+                governance_strength=governance_strength,
+                rng=rng,
+            )
+
+        micro_events = maybe_generate_micro_events(state, rng)
+        for me in micro_events:
+            params = params.apply_delta(me.delta)
+
+        media_climate = compute_media_climate(
+            outlets=state.media_outlets,
+            active_events_count=len(state.active_events),
+            interim_approval=interim_approval,
+        )
+        decay_cues = compute_decay_cues(
+            params=params,
+            anti_corruption_drop=params.anti_corruption - state.city_params.anti_corruption,
+        )
+        ui_signals = build_ui_signals(
+            pulse=pulse,
+            media_climate=media_climate,
+            election_shadow=state.election_risk_shadow,
+            cabinet_mood=summarize_cabinet_mood(state.ministers),
+            archetype=archetype,
+            decay_cues=decay_cues,
+        )
+        state.ui_signals = ui_signals
+
+        promise_line = generate_promise_delivery_line(
+            self.llm,
+            policy_name=policy.name,
+            execution_score=execution_score,
+            governance_strength=governance_strength,
+            budget_stolen=budget_stolen,
+        )
+
+        improved = sorted(
+            [(k, v) for k, v in actual_deltas.items() if v > 0],
+            key=lambda item: abs(item[1]),
+            reverse=True,
+        )[:2]
+        backfired_candidates = sorted(
+            [(k, v) for k, v in {**actual_deltas, **side_effect_deltas}.items() if v < 0],
+            key=lambda item: abs(item[1]),
+            reverse=True,
+        )
+        backfired = backfired_candidates[0] if backfired_candidates else None
+        decayed_keys = sorted(
+            [(k, params.as_dict().get(k, 50) - state.city_params.as_dict().get(k, 50)) for k in params.as_dict().keys()],
+            key=lambda item: item[1],
+        )
+        decayed = next(((k, v) for k, v in decayed_keys if v < 0), None)
+        citizen_quote = citizen_voices[0].reaction if citizen_voices else "Citizens are waiting to see if delivery holds."
+        weak_params = [k.replace("_", " ") for k, v in params.as_dict().items() if v < 40][:3]
+        teaser = generate_brewing_issue_teaser(
+            self.llm,
+            city_name=state.city_profile.city_name,
+            weak_params=weak_params,
+            election_risk_shadow=state.election_risk_shadow,
+        )
+        near_miss_events = detect_near_misses(
+            params=params,
+            election_projection=projected_election_approval(interim_approval, state.election_risk_shadow),
+            ministers=state.ministers,
+        )
+
+        highlight_reel = [
+            "What Improved: " + (
+                ", ".join(f"{k.replace('_', ' ')} (+{v:.1f})" for k, v in improved) if improved else "No major gains this turn."
+            ),
+            "What Backfired: " + (
+                f"{backfired[0].replace('_', ' ')} ({backfired[1]:.1f})" if backfired else "No severe backlash this turn."
+            ),
+            "What Decayed: " + (
+                f"{decayed[0].replace('_', ' ')} ({decayed[1]:.1f})" if decayed else "Core systems held steady."
+            ),
+            f'Citizen Voice: "{citizen_quote[:120]}"',
+            teaser,
+        ]
+        if queued_teasers:
+            highlight_reel[4] = queued_teasers[0]
+
+        return params, promise_line, highlight_reel, near_miss_events, micro_events, ui_signals
+
     # ------------------------------------------------------------------
     # Serialisation helpers
     # ------------------------------------------------------------------
@@ -1631,6 +1887,10 @@ class GameSession:
         """Return a serialisable snapshot of current game state."""
         assert self.state
         state = self.state
+        election_projection = projected_election_approval(
+            compute_interim_approval(state.citizens, state.city_params.media_freedom),
+            state.election_risk_shadow,
+        )
         return {
             "game_id": state.game_id,
             "city_name": state.city_profile.city_name,
@@ -1647,10 +1907,12 @@ class GameSession:
             "active_events": [e.model_dump() for e in state.active_events],
             "media_outlets": [o.model_dump() for o in state.media_outlets],
             "interim_approval": compute_interim_approval(state.citizens, state.city_params.media_freedom),
+            "election_projection": election_projection,
             "avg_wellbeing": sum(c.wellbeing.score() for c in state.citizens) / max(len(state.citizens), 1),
             "turn_history_count": len(state.turn_history),
             "last_turn": state.turn_history[-1].model_dump() if state.turn_history else None,
             "ward_report": [e.model_dump() for e in self._compute_ward_report(state.citizens, {})],
+            "ui_signals": state.ui_signals.model_dump(),
         }
 
     # ------------------------------------------------------------------
@@ -1698,6 +1960,11 @@ class GameSession:
             "loyalty": minister.state.loyalty,
             "scandal_exposure": minister.state.scandal_exposure,
             "political_capital": minister.state.political_capital,
+            "corruption_stage": minister.state.corruption_stage,
+            "corruption_progress": minister.state.corruption_progress,
+            "mood_state": minister.state.mood_state,
+            "mood_intensity": minister.state.mood_intensity,
+            "mood_flicker": minister.state.mood_flicker,
         })
         return s
 

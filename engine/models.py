@@ -216,6 +216,11 @@ class MinisterState(BaseModel):
     loyalty: float = 65.0           # 0–100
     scandal_exposure: float = 0.0   # 0–100; accumulates, may break
     political_capital: float = 50.0 # 0–100; high = hard to fire
+    corruption_stage: int = 0       # 0..4 leakage -> inefficiency -> rumors -> threshold
+    corruption_progress: float = 0.0
+    mood_state: Literal["stable", "stressed", "exposed"] = "stable"
+    mood_intensity: float = 0.0
+    mood_flicker: bool = False
 
 
 class Minister(BaseModel):
@@ -250,6 +255,7 @@ class Policy(BaseModel):
     tradeoffs: str
     why_now: str
     consultation_link: str = ""
+    risk_tone: Literal["low", "high", "structural", "transformative"] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -334,6 +340,58 @@ class MediaHeadline(BaseModel):
     headline: str
 
 
+class CityPulseSignal(BaseModel):
+    band: Literal["stable", "fragile", "stressed"] = "stable"
+    trend: Literal["cooling", "steady", "rising"] = "steady"
+    intensity: float = 20.0
+
+
+class MediaClimateSignal(BaseModel):
+    state: Literal["Calm", "Scrutiny", "Frenzy"] = "Calm"
+    animation: Literal["none", "pulse", "shake"] = "none"
+    intensity: float = 10.0
+
+
+class CabinetMoodSummary(BaseModel):
+    stable: int = 0
+    stressed: int = 0
+    exposed: int = 0
+    flicker_count: int = 0
+
+
+class DecayCueSignal(BaseModel):
+    smog_overlay: float = 0.0
+    infra_crack: float = 0.0
+    desaturation: float = 0.0
+    anticorruption_flicker: bool = False
+
+
+class UISignals(BaseModel):
+    city_pulse: CityPulseSignal = Field(default_factory=CityPulseSignal)
+    media_climate: MediaClimateSignal = Field(default_factory=MediaClimateSignal)
+    election_shadow_intensity: float = 0.0
+    cabinet_mood: CabinetMoodSummary = Field(default_factory=CabinetMoodSummary)
+    identity_archetype: Literal["Technocrat", "Populist", "Builder", "Reformer", "Survivor"] = "Survivor"
+    decay_cues: DecayCueSignal = Field(default_factory=DecayCueSignal)
+
+
+class MicroEvent(BaseModel):
+    key: str
+    title: str
+    narrative: str
+    delta: dict[str, float] = Field(default_factory=dict)
+
+
+class IdentityTrajectory(BaseModel):
+    turns_recorded: int = 0
+    governance_investment: float = 0.0
+    housing_jobs_focus: float = 0.0
+    press_usage: float = 0.0
+    crisis_management: float = 0.0
+    populist_quick_wins: float = 0.0
+    archetype: Literal["Technocrat", "Populist", "Builder", "Reformer", "Survivor"] = "Survivor"
+
+
 class WardReportEntry(BaseModel):
     group_type: str    # "income" | "location" | "religion" | "profession"
     group_name: str
@@ -376,6 +434,11 @@ class TurnResult(BaseModel):
     interest_paid: float
     tax_revenue: float
     advisor_summary: str = ""
+    promise_delivery_line: str = ""
+    highlight_reel: list[str] = Field(default_factory=list)
+    near_miss_events: list[str] = Field(default_factory=list)
+    micro_events: list[MicroEvent] = Field(default_factory=list)
+    ui_signals: UISignals = Field(default_factory=UISignals)
 
 
 # ---------------------------------------------------------------------------
@@ -411,6 +474,11 @@ class GameState(BaseModel):
     targeted_last_turn: set[str] = Field(default_factory=set)
     # press_conference cooldown per group: group_name → turn_last_used
     press_conference_cooldowns: dict[str, int] = Field(default_factory=dict)
+    city_stability_hidden: float = 70.0
+    election_risk_shadow: float = 0.0
+    identity_trajectory: IdentityTrajectory = Field(default_factory=IdentityTrajectory)
+    ui_signals: UISignals = Field(default_factory=UISignals)
+    last_micro_event_turn: int = 0
     prng_seed: int = 0
 
 
@@ -430,3 +498,5 @@ class GovernanceScorecard(BaseModel):
     final_score: float
     legacy_title: str
     summary: str
+    legacy_archetype: str = "Survivor"
+    replay_insights: list[str] = Field(default_factory=list)

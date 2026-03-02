@@ -58,9 +58,11 @@ def compute_scorecard(
     """Section 17.2."""
     citizens = state.citizens
 
-    # Final approval (election formula)
+    # Final approval (election formula + hidden election-risk shadow)
     from .political import compute_election_approval
-    final_approval = compute_election_approval(citizens)
+    raw_final_approval = compute_election_approval(citizens)
+    risk_penalty = state.election_risk_shadow * 0.18
+    final_approval = _clamp(raw_final_approval - risk_penalty)
 
     # Wellbeing equity
     scores = [c.wellbeing.score() for c in citizens]
@@ -117,6 +119,35 @@ def compute_scorecard(
     else:
         title = "The Bureaucrat's Friend"
 
+    archetype = state.identity_trajectory.archetype
+    if archetype == "Technocrat" and final_score >= 70:
+        title = "The System Builder"
+    elif archetype == "Builder" and final_score >= 70:
+        title = "The City Builder"
+    elif archetype == "Populist" and final_score < 60:
+        title = "The Crowd Whisperer"
+
+    avg_admin = sum(r.city_params_after.get("admin_efficiency", 50.0) for r in state.turn_history) / max(len(state.turn_history), 1)
+    avg_housing_gain = sum(r.actual_deltas.get("affordable_housing", 0.0) for r in state.turn_history) / max(len(state.turn_history), 1)
+    improved_housing = avg_housing_gain * (1.0 + max(0.0, (avg_admin + 10 - avg_admin) / 100.0) * 0.22)
+    replay_insights = [
+        (
+            f"If Admin Efficiency averaged 10 points higher, housing delivery per turn could have been "
+            f"about {abs(improved_housing):.2f} points stronger."
+        ),
+        (
+            f"If corruption had been controlled earlier, roughly ₹{total_stolen:.1f} Cr in leakage could have stayed in treasury."
+        ),
+    ]
+    if state.election_risk_shadow > 50:
+        replay_insights.append(
+            "Election risk accumulated beneath headline approval; better poor-group trend stability would likely flip close races."
+        )
+    if promise_delivery < 55:
+        replay_insights.append(
+            "Execution consistency was the limiting factor; higher delivery reliability would have amplified policy trust."
+        )
+
     return GovernanceScorecard(
         game_id=state.game_id,
         final_approval=final_approval,
@@ -129,4 +160,6 @@ def compute_scorecard(
         final_score=final_score,
         legacy_title=title,
         summary=f"Mayor of {state.city_profile.city_name} — {title} — Score: {final_score:.1f}/100",
+        legacy_archetype=archetype,
+        replay_insights=replay_insights[:4],
     )

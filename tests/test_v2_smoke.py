@@ -1,7 +1,9 @@
 """Quick smoke test for the v2 agentic turn endpoint."""
 import json
 import sys
-import requests
+import pytest
+
+requests = pytest.importorskip("requests")
 
 BASE = "http://localhost:8000"
 

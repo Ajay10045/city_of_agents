@@ -74,7 +74,12 @@ export default function CitySelectionScreen({ onGameCreated }: Props) {
 
     try {
       // 1. Generate profile from hint
-      const profile = await generateProfile(city.hint)
+      const profile = await generateProfile(city.hint) as Record<string, unknown> & {
+        game_config?: {
+          total_turns?: number
+          election_turn?: number
+        }
+      }
 
       // Override game config based on sliders
       if (profile.game_config) {

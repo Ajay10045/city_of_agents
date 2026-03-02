@@ -946,3 +946,66 @@ def poll_citizen_approval(
             reaction="...",
             sentiment=sentiment,
         )
+
+
+PROMISE_DELIVERY_SYSTEM = textwrap.dedent("""\
+    You write concise, emotionally clear governance dashboard copy.
+    Return exactly one sentence, plain text, no quotes.
+""")
+
+
+def generate_promise_delivery_line(
+    llm: LLMClient,
+    policy_name: str,
+    execution_score: float,
+    governance_strength: float,
+    budget_stolen: float,
+) -> str:
+    prompt = textwrap.dedent(f"""\
+        Policy: {policy_name}
+        Execution score: {execution_score:.2f} (0-1)
+        Governance strength (admin+anti-corruption+media avg): {governance_strength:.1f}/100
+        Budget leakage: ₹{budget_stolen:.1f} Cr
+
+        Write one line for "Promise vs Delivery" under a bar chart.
+        Tone: grounded, non-technical, emotionally clear.
+        Keep it under 12 words.
+    """)
+    try:
+        line = llm.chat_text(PROMISE_DELIVERY_SYSTEM, prompt).strip().splitlines()[0].strip()
+        line = line.strip('"').strip("'")
+        if line:
+            return line[:140]
+    except Exception:
+        pass
+    if execution_score < 0.45:
+        return "Execution bottlenecks reduced impact across the city."
+    if governance_strength > 65 and budget_stolen < 5:
+        return "Strong institutions amplified delivery beyond initial expectations."
+    return "Delivery landed unevenly despite the policy's stated ambition."
+
+
+def generate_brewing_issue_teaser(
+    llm: LLMClient,
+    city_name: str,
+    weak_params: list[str],
+    election_risk_shadow: float,
+) -> str:
+    weak = ", ".join(weak_params[:3]) if weak_params else "service stability"
+    prompt = textwrap.dedent(f"""\
+        City: {city_name}
+        Weak signals: {weak}
+        Election shadow intensity: {election_risk_shadow:.1f}/100
+
+        Write one short teaser line starting with:
+        Potential brewing issue...
+        Keep it tense but not alarmist, max 14 words.
+    """)
+    try:
+        line = llm.chat_text(PROMISE_DELIVERY_SYSTEM, prompt).strip().splitlines()[0].strip()
+        line = line.strip('"').strip("'")
+        if not line.lower().startswith("potential brewing issue"):
+            line = f"Potential brewing issue... {line}"
+        return line[:180]
+    except Exception:
+        return "Potential brewing issue... silent pressure is building in neglected sectors."

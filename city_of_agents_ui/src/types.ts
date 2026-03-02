@@ -44,6 +44,11 @@ export interface Minister extends Citizen {
   loyalty: number
   scandal_exposure: number
   political_capital: number
+  corruption_stage?: number
+  corruption_progress?: number
+  mood_state?: 'stable' | 'stressed' | 'exposed'
+  mood_intensity?: number
+  mood_flicker?: boolean
 }
 
 export interface ActiveEvent {
@@ -82,6 +87,49 @@ export interface Policy {
   targets: PolicyTarget[]
   tradeoffs: string
   why_now: string
+  risk_tone?: 'low' | 'high' | 'structural' | 'transformative'
+}
+
+export interface CityPulseSignal {
+  band: 'stable' | 'fragile' | 'stressed'
+  trend: 'cooling' | 'steady' | 'rising'
+  intensity: number
+}
+
+export interface MediaClimateSignal {
+  state: 'Calm' | 'Scrutiny' | 'Frenzy'
+  animation: 'none' | 'pulse' | 'shake'
+  intensity: number
+}
+
+export interface CabinetMoodSummary {
+  stable: number
+  stressed: number
+  exposed: number
+  flicker_count: number
+}
+
+export interface DecayCueSignal {
+  smog_overlay: number
+  infra_crack: number
+  desaturation: number
+  anticorruption_flicker: boolean
+}
+
+export interface UISignals {
+  city_pulse: CityPulseSignal
+  media_climate: MediaClimateSignal
+  election_shadow_intensity: number
+  cabinet_mood: CabinetMoodSummary
+  identity_archetype: 'Technocrat' | 'Populist' | 'Builder' | 'Reformer' | 'Survivor'
+  decay_cues: DecayCueSignal
+}
+
+export interface MicroEvent {
+  key: string
+  title: string
+  narrative: string
+  delta: Record<string, number>
 }
 
 export interface DeliveryTarget {
@@ -150,6 +198,11 @@ export interface TurnResult {
   interest_paid: number
   tax_revenue: number
   advisor_summary: string
+  promise_delivery_line?: string
+  highlight_reel?: string[]
+  near_miss_events?: string[]
+  micro_events?: MicroEvent[]
+  ui_signals?: UISignals
 }
 
 export interface GameState {
@@ -168,10 +221,12 @@ export interface GameState {
   active_events: ActiveEvent[]
   media_outlets: MediaOutlet[]
   interim_approval: number
+  election_projection?: number
   avg_wellbeing: number
   turn_history_count: number
   last_turn: TurnResult | null
   ward_report: WardReportEntry[]
+  ui_signals?: UISignals
 }
 
 export interface GovernanceScorecard {
@@ -186,4 +241,6 @@ export interface GovernanceScorecard {
   final_score: number
   legacy_title: string
   summary: string
+  legacy_archetype?: string
+  replay_insights?: string[]
 }
