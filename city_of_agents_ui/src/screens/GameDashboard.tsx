@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import {
   ChevronRight, ChevronDown, HelpCircle, Settings, Clock,
   Zap, Send, AlertTriangle, TrendingDown, Droplets,
@@ -8,12 +8,12 @@ import {
 } from 'lucide-react'
 import {
   openConsultation, messageMinister, closeConsultation,
-  getPolicies, executeTurnStreamV2
+  getPolicies, amendPolicy, executeTurnStreamV2
 } from '../api'
 import type {
   GameState, TurnResult, Policy, Minister, ActiveEvent,
   MediaHeadline, CitizenVoice, WardReportEntry,
-  GovernanceScorecard,
+  GovernanceScorecard, AdvisorStance, StanceValue,
 } from '../types'
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -96,6 +96,48 @@ function AgentAvatar({ seed, ministers = [], size = 28, ring = '#1c3652' }: { se
       className="rounded-full object-cover shrink-0"
       style={{ width: size, height: size, border: `1.5px solid ${ring}`, background: '#0b1929' }}
     />
+  )
+}
+
+// ─── Advisor Stance Chip ─────────────────────────────────────────────────────
+
+function AdvisorStanceChip({ stance, ministers }: { stance: AdvisorStance; ministers: Minister[] }) {
+  const [showTip, setShowTip] = useState(false)
+  const stanceColor = stance.stance === 'approve' ? '#22c55e' : '#f87171'
+  const stanceSymbol = stance.stance === 'approve' ? '✓' : '✗'
+  return (
+    <div style={{ position: 'relative', cursor: 'default' }}
+      onMouseEnter={() => setShowTip(true)} onMouseLeave={() => setShowTip(false)}>
+      <AgentAvatar seed={stance.ministerName} ministers={ministers} size={22} ring={stanceColor} />
+      <div style={{
+        position: 'absolute', bottom: -2, right: -2, width: 10, height: 10,
+        background: stanceColor, border: '1.5px solid #0b1929', borderRadius: '50%',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 6, color: '#0b1929', fontWeight: 900, lineHeight: 1,
+      }}>{stanceSymbol}</div>
+      {showTip && (
+        <div style={{
+          position: 'absolute', bottom: 28, left: '50%', transform: 'translateX(-50%)',
+          zIndex: 999, background: '#0a1929', border: `1px solid ${stanceColor}55`,
+          borderRadius: 5, padding: '6px 8px', pointerEvents: 'none',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.8)', minWidth: 160, maxWidth: 220,
+        }}>
+          <div style={{
+            fontSize: 9, fontWeight: 700, fontFamily: "'Rajdhani', sans-serif",
+            color: stanceColor, letterSpacing: '0.06em', marginBottom: 2,
+          }}>
+            {stance.ministerName}
+            <span style={{ color: '#4b6280', fontWeight: 400 }}> {stance.stance.toUpperCase()}</span>
+          </div>
+          <div style={{ fontSize: 9, color: '#94a3b8', lineHeight: 1.4 }}>{stance.reason}</div>
+          <div style={{
+            position: 'absolute', top: '100%', left: '50%', transform: 'translateX(-50%)',
+            width: 0, height: 0, borderLeft: '5px solid transparent',
+            borderRight: '5px solid transparent', borderTop: `5px solid ${stanceColor}55`,
+          }} />
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -363,9 +405,9 @@ function MinisterPickerModal({
 // ─── Policy Modal ─────────────────────────────────────────────────────────────
 
 function PolicyModal({
-  options, onSelect, onClose, loading, error,
+  options, ministers, onSelect, onDiscuss, onClose, loading, error,
 }: {
-  options: Policy[]; onSelect: (i: number) => void; onClose: () => void; loading: boolean; error: string | null
+  options: Policy[]; ministers: Minister[]; onSelect: (i: number) => void; onDiscuss: (policy: Policy, index: number) => void; onClose: () => void; loading: boolean; error: string | null
 }) {
   const PORTFOLIO_COLORS: Record<string, string> = {
     'Health': '#22c55e', 'Infrastructure': '#38bdf8', 'Transport & Roads': '#38bdf8',
@@ -373,6 +415,10 @@ function PolicyModal({
     'Environment': '#4ade80', 'Water & Power': '#60a5fa', 'Commerce': '#eab308',
     'Labor & Employment': '#fb923c',
   }
+  const stancesByPolicy = useMemo(
+    () => options.map(p => mapPolicyAdvisorStances(ministers, p)),
+    [options, ministers]
+  )
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center"
       style={{ background: 'rgba(5,13,27,0.85)', backdropFilter: 'blur(6px)' }}>
@@ -396,6 +442,9 @@ function PolicyModal({
           {options.map((p, i) => {
             const col = PORTFOLIO_COLORS[p.portfolio] ?? '#e8a030'
             const topEffects = Object.entries(p.target_effects).slice(0, 3)
+            const stances = stancesByPolicy[i] ?? []
+            const approveCount = stances.filter(s => s.stance === 'approve').length
+            const againstCount = stances.filter(s => s.stance === 'disapprove').length
             return (
               <div key={i} style={{
                 background: 'rgba(255,255,255,0.03)', border: `1px solid #1c3652`,
@@ -428,19 +477,54 @@ function PolicyModal({
                     </span>
                   ))}
                 </div>
-                <button
-                  onClick={() => onSelect(i)}
-                  disabled={loading}
-                  style={{
-                    marginTop: 'auto', background: loading ? '#1a2a3a' : 'linear-gradient(135deg, #c47d10, #e8a030)',
-                    border: 'none', borderRadius: 4, padding: '8px 0', color: loading ? '#4b6280' : '#040d1b',
-                    fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 12,
-                    letterSpacing: '0.08em', cursor: loading ? 'not-allowed' : 'pointer',
-                    display: 'flex', alignItems: 'center',
-                    justifyContent: 'center', gap: 6
-                  }}>
-                  {loading ? <><Loader2 size={13} className="animate-spin" /> EXECUTING...</> : 'EXECUTE POLICY'}
-                </button>
+                {/* ── Advisor Poll ── */}
+                {stances.length > 0 && (
+                  <div style={{ borderTop: '1px solid #1c3652', paddingTop: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <span style={{
+                        fontSize: 8, fontFamily: "'Rajdhani', sans-serif",
+                        fontWeight: 700, letterSpacing: '0.12em', color: '#4b6280'
+                      }}>ADVISOR POLL</span>
+                      <span style={{ fontSize: 9, fontFamily: "'Share Tech Mono', monospace", color: '#64748b' }}>
+                        <span style={{ color: '#4ade80' }}>{approveCount} For</span>
+                        {' · '}
+                        <span style={{ color: '#f87171' }}>{againstCount} Against</span>
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                      {stances.map(s => (
+                        <AdvisorStanceChip key={s.ministerId} stance={s} ministers={ministers} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div style={{ marginTop: 'auto', display: 'flex', gap: 6 }}>
+                  <button
+                    onClick={() => onDiscuss(p, i)}
+                    disabled={loading}
+                    style={{
+                      flex: 1, background: 'transparent',
+                      border: '1px solid rgba(232,160,48,0.4)', borderRadius: 4, padding: '8px 0',
+                      color: loading ? '#4b6280' : '#e8a030',
+                      fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 11,
+                      letterSpacing: '0.08em', cursor: loading ? 'not-allowed' : 'pointer',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4
+                    }}>
+                    <MessageCircle size={11} /> DISCUSS
+                  </button>
+                  <button
+                    onClick={() => onSelect(i)}
+                    disabled={loading}
+                    style={{
+                      flex: 1, background: loading ? '#1a2a3a' : 'linear-gradient(135deg, #c47d10, #e8a030)',
+                      border: 'none', borderRadius: 4, padding: '8px 0', color: loading ? '#4b6280' : '#040d1b',
+                      fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 11,
+                      letterSpacing: '0.08em', cursor: loading ? 'not-allowed' : 'pointer',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4
+                    }}>
+                    {loading ? <><Loader2 size={13} className="animate-spin" /> EXECUTING...</> : 'EXECUTE POLICY'}
+                  </button>
+                </div>
               </div>
             )
           })}
@@ -570,6 +654,47 @@ function relevanceScore(minister: Minister, msgLower: string): number {
   score += Math.random() * 0.4
 
   return score
+}
+
+function normaliseName(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '')
+}
+
+function mapPolicyAdvisorStances(ministers: Minister[], policy: Policy): AdvisorStance[] {
+  const raw = Array.isArray(policy.advisor_stances) ? policy.advisor_stances : []
+  if (raw.length === 0) return []
+
+  const byName = new Map<string, Minister>()
+  for (const minister of ministers) {
+    byName.set(normaliseName(minister.name), minister)
+  }
+
+  const seen = new Set<string>()
+  const mapped: AdvisorStance[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const rawName = typeof item.minister_name === 'string'
+      ? item.minister_name
+      : (typeof item.ministerName === 'string' ? item.ministerName : '')
+    const minister = byName.get(normaliseName(rawName))
+    if (!minister) continue
+    if (seen.has(minister.id)) continue
+
+    const stanceRaw = typeof item.stance === 'string' ? item.stance.trim().toLowerCase() : ''
+    if (stanceRaw !== 'approve' && stanceRaw !== 'disapprove') continue
+
+    const reason = typeof item.reason === 'string' ? item.reason.trim() : ''
+    if (!reason) continue
+
+    mapped.push({
+      ministerId: minister.id,
+      ministerName: minister.name,
+      stance: stanceRaw as StanceValue,
+      reason,
+    })
+    seen.add(minister.id)
+  }
+  return mapped
 }
 
 // Parse direct @name mentions — returns indices of ministers explicitly addressed
@@ -1212,7 +1337,6 @@ function LiveMilestoneFeed({ milestones, policyName, approvalVotes, evalReasonin
         const approvalPct = totalW > 0 ? Math.round((approveW / totalW) * 100) : 50
         const approveCt = approvalVotes.filter(v => v.sentiment === 'approve').length
         const disapproveCt = approvalVotes.filter(v => v.sentiment === 'disapprove').length
-        const undecidedCt = approvalVotes.filter(v => v.sentiment === 'undecided').length
         const col = approvalPct >= 50 ? '#22c55e' : '#f87171'
         return (
           <div style={{ marginTop: 2 }}>
@@ -1226,7 +1350,6 @@ function LiveMilestoneFeed({ milestones, policyName, approvalVotes, evalReasonin
             <div style={{ display: 'flex', gap: 10, marginTop: 5 }}>
               <span style={{ fontSize: 9, color: '#22c55e' }}>✓ {approveCt}</span>
               <span style={{ fontSize: 9, color: '#f87171' }}>✗ {disapproveCt}</span>
-              <span style={{ fontSize: 9, color: '#64748b' }}>~ {undecidedCt}</span>
             </div>
           </div>
         )
@@ -1267,6 +1390,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
   const [showPolicyModal, setShowPolicyModal] = useState(false)
   const [fetchingPolicies, setFetchingPolicies] = useState(false)
   const [policyError, setPolicyError] = useState<string | null>(null)
+  const [discussingPolicyIndex, setDiscussingPolicyIndex] = useState<number | null>(null)
 
   // Minister picker (v2 flow)
   const [pendingPolicyIndex, setPendingPolicyIndex] = useState<number | null>(null)
@@ -1615,8 +1739,22 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
         await closeConsultation(gameId).catch(() => { })
         activeConsultRef.current = null
       }
-      const res = await getPolicies(gameId)
-      setPolicyOptions(res.options)
+
+      if (discussingPolicyIndex !== null && policyOptions) {
+        // Amend only the discussed policy — collect chat messages since the discussion started as transcript
+        const discussStartIdx = chatMessages.findLastIndex(m => m.isSystem && m.senderRole === 'POLICY REVIEW')
+        const discussionMsgs = discussStartIdx >= 0 ? chatMessages.slice(discussStartIdx + 1) : []
+        const transcript = discussionMsgs
+          .map(m => `${m.sender}: ${m.text}`)
+          .join('\n')
+        const res = await amendPolicy(gameId, discussingPolicyIndex, transcript)
+        setPolicyOptions(res.options)
+        setDiscussingPolicyIndex(null)
+      } else {
+        // Fresh policy generation
+        const res = await getPolicies(gameId)
+        setPolicyOptions(res.options)
+      }
       setShowPolicyModal(true)
     } catch (e: unknown) {
       const errMsg = e instanceof Error ? e.message : String(e)
@@ -1634,7 +1772,37 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
     if (isTurnExecuting) return
     setPendingPolicyIndex(index)
     setShowPolicyModal(false)
+    setDiscussingPolicyIndex(null)
     setShowMinisterPicker(true)
+  }
+
+  // Policy selected for discussion → close modal, inject system message, return to chat
+  function handleDiscussPolicy(policy: Policy, index: number) {
+    setShowPolicyModal(false)
+    setDiscussingPolicyIndex(index)
+    // Keep policyOptions so we can amend in-place later
+    const effectsSummary = Object.entries(policy.target_effects)
+      .map(([k, v]) => `${k.replace(/_/g, ' ')} ${v >= 0 ? '+' : ''}${v}`)
+      .join(', ')
+    const sideEffectsSummary = Object.entries(policy.side_effects)
+      .map(([k, v]) => `${k.replace(/_/g, ' ')} ${v >= 0 ? '+' : ''}${v}`)
+      .join(', ')
+    const summaryText = [
+      `POLICY UNDER DISCUSSION: ${policy.name}`,
+      `Portfolio: ${policy.portfolio} | Budget: ₹${fmtNum(policy.budget_cost)} Cr`,
+      effectsSummary ? `Effects: ${effectsSummary}` : '',
+      sideEffectsSummary ? `Side effects: ${sideEffectsSummary}` : '',
+      policy.description,
+      '',
+      'Discuss this policy with your cabinet. When ready, click "Draft Policy" to get an amended version.',
+    ].filter(Boolean).join('\n')
+
+    setChatMessages(prev => [...prev, {
+      isMayor: false, sender: 'System', senderRole: 'POLICY REVIEW',
+      text: summaryText,
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      ringColor: '#e8a030', seed: 'system', isSystem: true,
+    }])
   }
 
   // Minister chosen → execute turn v2
@@ -1670,6 +1838,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
           const newEntry: TurnEntry = { turn: tr.turn, result: tr, expanded: true }
           setTurnHistory(prev => [newEntry, ...prev.map(e => ({ ...e, expanded: false }))])
           setPolicyOptions(null)
+          setDiscussingPolicyIndex(null)
           setExecutingPolicyName(null)
           setExecutingPolicy(null)
           setPolicyError(null)
@@ -1753,13 +1922,13 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
           const before = Math.round(event.approval_before as number)
           const after = Math.round(event.approval as number)
           const dir = after >= before ? '↑' : '↓'
-          const bd = event.breakdown as { approve: number; disapprove: number; undecided: number; total: number }
+          const bd = event.breakdown as { approve: number; disapprove: number; total: number }
           // Update live approval so top bar reflects result before complete event fires
           setLiveApproval(after)
           setAllHeadlines(prev => [...prev, {
             outlet: 'PULSE',
             lean: after >= before ? 'mayor' as const : 'opposition' as const,
-            headline: `Approval ${dir} ${before}% → ${after}% | ${bd.approve} approve · ${bd.disapprove} disapprove · ${bd.undecided} undecided (${bd.total} polled)`,
+            headline: `Approval ${dir} ${before}% → ${after}% | ${bd.approve} approve · ${bd.disapprove} disapprove (${bd.total} polled)`,
             turnNum,
           }])
         }
@@ -1985,8 +2154,10 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
       {showPolicyModal && policyOptions && (
         <PolicyModal
           options={policyOptions}
+          ministers={gameState.ministers}
           onSelect={handleSelectPolicy}
-          onClose={() => { if (!isTurnExecuting) { setShowPolicyModal(false); setPolicyOptions(null); setPolicyError(null) } }}
+          onDiscuss={handleDiscussPolicy}
+          onClose={() => { if (!isTurnExecuting) { setShowPolicyModal(false); setPolicyOptions(null); setPolicyError(null); setDiscussingPolicyIndex(null) } }}
           loading={isTurnExecuting}
           error={turnError}
         />

@@ -71,6 +71,13 @@ export interface PolicyTarget {
   difficulty: number
 }
 
+export interface PolicyAdvisorStance {
+  minister_name?: string
+  ministerName?: string
+  stance: string
+  reason: string
+}
+
 export interface Policy {
   name: string
   description: string
@@ -82,6 +89,16 @@ export interface Policy {
   targets: PolicyTarget[]
   tradeoffs: string
   why_now: string
+  advisor_stances?: PolicyAdvisorStance[]
+}
+
+export type StanceValue = 'approve' | 'disapprove'
+
+export interface AdvisorStance {
+  ministerId: string
+  ministerName: string
+  stance: StanceValue
+  reason: string
 }
 
 export interface DeliveryTarget {

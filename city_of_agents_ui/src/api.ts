@@ -74,6 +74,13 @@ export function getPolicies(gameId: string) {
   return request<{ options: import('./types').Policy[]; turn: number }>(`/game/${gameId}/policies`)
 }
 
+export function amendPolicy(gameId: string, index: number, transcript: string) {
+  return request<{ amended_index: number; amended_policy: import('./types').Policy; options: import('./types').Policy[]; turn: number }>(`/game/${gameId}/policies/amend`, {
+    method: 'POST',
+    body: JSON.stringify({ index, transcript }),
+  })
+}
+
 // ---- Turn ----
 
 export function executeTurn(

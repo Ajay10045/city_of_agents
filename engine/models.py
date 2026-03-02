@@ -238,6 +238,12 @@ class PolicyTarget(BaseModel):
     delivered: float | None = None  # filled in after execution
 
 
+class AdvisorStance(BaseModel):
+    minister_name: str
+    stance: str            # "approve" or "disapprove"
+    reason: str            # 1-sentence reason in the minister's voice
+
+
 class Policy(BaseModel):
     name: str
     description: str
@@ -250,6 +256,7 @@ class Policy(BaseModel):
     tradeoffs: str
     why_now: str
     consultation_link: str = ""
+    advisor_stances: list[AdvisorStance] = []
 
 
 # ---------------------------------------------------------------------------
