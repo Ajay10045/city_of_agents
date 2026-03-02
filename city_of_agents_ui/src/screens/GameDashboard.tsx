@@ -416,7 +416,7 @@ function PolicyModal({
     'Labor & Employment': '#fb923c',
   }
   const stancesByPolicy = useMemo(
-    () => options.map(p => computeAdvisorStances(ministers, p)),
+    () => options.map(p => mapPolicyAdvisorStances(ministers, p)),
     [options, ministers]
   )
   return (
@@ -656,97 +656,45 @@ function relevanceScore(minister: Minister, msgLower: string): number {
   return score
 }
 
-// ─── Portfolio → city_params owned (for advisor stance scoring) ───────────────
-const PORTFOLIO_PARAMS: Record<string, string[]> = {
-  'Finance & Economy': ['jobs_and_commerce', 'admin_efficiency'],
-  'Infrastructure': ['transit_and_roads', 'water_power_sanitation'],
-  'Health & Education': ['hospitals_and_clinics', 'schools_and_universities'],
-  'Housing & Community': ['affordable_housing', 'community_and_spaces'],
-  'Home Affairs': ['police_and_emergency', 'courts_and_legal'],
-  'Environment': ['air_quality_and_pollution'],
-  'Governance Reform': ['admin_efficiency', 'anti_corruption', 'media_freedom'],
-  'Health': ['hospitals_and_clinics', 'air_quality_and_pollution'],
-  'Education': ['schools_and_universities'],
-  'Transport & Roads': ['transit_and_roads'],
-  'Housing': ['affordable_housing', 'community_and_spaces'],
-  'Security & Law': ['police_and_emergency', 'courts_and_legal'],
-  'Commerce': ['jobs_and_commerce'],
-  'Water & Power': ['water_power_sanitation'],
-  'Labor & Employment': ['jobs_and_commerce'],
+function normaliseName(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '')
 }
 
-function computeAdvisorStances(ministers: Minister[], policy: Policy): AdvisorStance[] {
-  return ministers.map(m => {
-    let score = 0
-    const cap = (m.capability ?? {}) as Record<string, number>
-    const per = (m.personality ?? {}) as Record<string, number>
-    const loyalty = m.loyalty ?? 50
-    const ownedParams = [
-      ...(PORTFOLIO_PARAMS[m.portfolio] ?? []),
-      ...(m.extra_portfolios ?? []).flatMap(ep => PORTFOLIO_PARAMS[ep] ?? []),
-    ]
+function mapPolicyAdvisorStances(ministers: Minister[], policy: Policy): AdvisorStance[] {
+  const raw = Array.isArray(policy.advisor_stances) ? policy.advisor_stances : []
+  if (raw.length === 0) return []
 
-    // Signal 1: Portfolio match
-    if (m.portfolio === policy.portfolio || (m.extra_portfolios ?? []).includes(policy.portfolio)) {
-      score += 35
-    } else {
-      const policyKws = PORTFOLIO_KEYWORDS[policy.portfolio] ?? []
-      const myKws = PORTFOLIO_KEYWORDS[m.portfolio] ?? []
-      if (policyKws.some(k => myKws.includes(k))) score += 10
-    }
+  const byName = new Map<string, Minister>()
+  for (const minister of ministers) {
+    byName.set(normaliseName(minister.name), minister)
+  }
 
-    // Signal 2: Budget sensitivity
-    const budgetFrac = Math.min(policy.budget_cost / 2000, 1)
-    if ((per.ambition ?? 50) > 65) score += budgetFrac * 15
-    if ((per.integrity ?? 50) > 65 && budgetFrac > 0.5) score -= 12
+  const seen = new Set<string>()
+  const mapped: AdvisorStance[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const rawName = typeof item.minister_name === 'string'
+      ? item.minister_name
+      : (typeof item.ministerName === 'string' ? item.ministerName : '')
+    const minister = byName.get(normaliseName(rawName))
+    if (!minister) continue
+    if (seen.has(minister.id)) continue
 
-    // Signal 3: Target effects on owned params
-    for (const param of ownedParams) {
-      if (param in policy.target_effects) score += policy.target_effects[param] * 1.5
-    }
+    const stanceRaw = typeof item.stance === 'string' ? item.stance.trim().toLowerCase() : ''
+    if (stanceRaw !== 'approve' && stanceRaw !== 'disapprove') continue
 
-    // Signal 4: Side effects harming owned params
-    for (const param of ownedParams) {
-      if (param in policy.side_effects) score += policy.side_effects[param] * 2.0
-    }
+    const reason = typeof item.reason === 'string' ? item.reason.trim() : ''
+    if (!reason) continue
 
-    // Signal 5: Risk appetite vs side effect magnitude
-    const sideEffectMag = Object.values(policy.side_effects).reduce((a, v) => a + Math.abs(v), 0)
-    if ((per.risk_appetite ?? 50) < 35) score -= sideEffectMag * 0.4
-    if ((per.risk_appetite ?? 50) > 65) score += sideEffectMag * 0.15
-
-    // Signal 6: Loyalty
-    if (loyalty < 40) score -= 8
-
-    // Signal 7: Empathy boost for community-facing policies
-    const communityParams = ['community_and_spaces', 'affordable_housing', 'hospitals_and_clinics']
-    if ((per.empathy ?? 50) > 65) {
-      for (const p of communityParams) {
-        if (p in policy.target_effects) score += policy.target_effects[p] * 0.8
-      }
-    }
-
-    // Determine stance — binary: approve or disapprove
-    const stance: StanceValue = score >= 5 ? 'approve' : 'disapprove'
-
-    // Generate reason
-    let reason: string
-    const portfolioMatch = m.portfolio === policy.portfolio || (m.extra_portfolios ?? []).includes(policy.portfolio)
-    const hasTurfHarm = ownedParams.some(p => (policy.side_effects[p] ?? 0) < -1)
-    if (stance === 'approve') {
-      if (portfolioMatch) reason = `Directly advances my ${m.portfolio} mandate.`
-      else if ((per.empathy ?? 50) > 65) reason = `Community impact aligns with my values.`
-      else if ((per.ambition ?? 50) > 65) reason = `High-profile initiative — I want to be part of this.`
-      else reason = `Sound policy direction for the city.`
-    } else {
-      if (hasTurfHarm) reason = `This could damage key metrics in my portfolio.`
-      else if (loyalty < 40) reason = `I have reservations about the Mayor's approach.`
-      else if ((per.integrity ?? 50) > 65 && budgetFrac > 0.5) reason = `Budget exposure is too high — fiscal risk.`
-      else reason = `I have concerns about implementation feasibility.`
-    }
-
-    return { ministerId: m.id, ministerName: m.name, stance, reason }
-  })
+    mapped.push({
+      ministerId: minister.id,
+      ministerName: minister.name,
+      stance: stanceRaw as StanceValue,
+      reason,
+    })
+    seen.add(minister.id)
+  }
+  return mapped
 }
 
 // Parse direct @name mentions — returns indices of ministers explicitly addressed

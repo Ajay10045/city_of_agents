@@ -6,6 +6,7 @@ Side-effect free: no game-state mutation here.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import textwrap
@@ -27,6 +28,8 @@ from engine.models import (
     WellbeingState,
 )
 from llm.llm_client import LLMClient
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -64,6 +67,189 @@ def _extract_json(text: str) -> Any:
 
 def _clamp(v: float, lo: float = 0.0, hi: float = 100.0) -> float:
     return max(lo, min(hi, v))
+
+
+def _normalise_name(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.strip().lower())
+
+
+def _normalise_stance(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stance = value.strip().lower()
+    if stance.startswith("disapprove"):
+        return "disapprove"
+    if stance.startswith("approve"):
+        return "approve"
+    return None
+
+
+def _minister_profile_for_policy_prompt(minister: Minister) -> str:
+    c = minister.citizen
+    p = c.personality
+    cap = c.capability
+    traits = []
+    if p.integrity > 65:
+        traits.append("high-integrity")
+    elif p.integrity < 35:
+        traits.append("low-integrity")
+    if p.empathy > 60:
+        traits.append("empathetic")
+    if p.ambition > 65:
+        traits.append("ambitious")
+    if p.risk_appetite > 60:
+        traits.append("risk-taking")
+    elif p.risk_appetite < 35:
+        traits.append("cautious")
+    if p.corruption_tolerance > 60:
+        traits.append("tolerant-of-corruption")
+    trait_str = ", ".join(traits) if traits else "balanced"
+    return (
+        f"  - {c.name} | Portfolio: {minister.portfolio}"
+        f"{' + ' + ', '.join(minister.extra_portfolios) if minister.extra_portfolios else ''}"
+        f" | Loyalty: {minister.state.loyalty:.0f} | Competence: {cap.competence:.0f}"
+        f" | Personality: {trait_str}"
+        f" | Ideology: {c.demographics.ideology_economic}/{c.demographics.ideology_social}"
+    )
+
+
+def _normalise_advisor_stances(
+    raw_stances: Any,
+    ministers: list[Minister],
+) -> list[dict[str, str]]:
+    if not isinstance(raw_stances, list):
+        return []
+
+    minister_name_by_key: dict[str, str] = {}
+    for minister in ministers:
+        name = minister.citizen.name
+        minister_name_by_key[_normalise_name(name)] = name
+
+    normalised: list[dict[str, str]] = []
+    seen_ministers: set[str] = set()
+    for item in raw_stances:
+        if not isinstance(item, dict):
+            continue
+
+        raw_name = item.get("minister_name")
+        if not isinstance(raw_name, str) or not raw_name.strip():
+            raw_name = item.get("ministerName")
+        if not isinstance(raw_name, str) or not raw_name.strip():
+            continue
+
+        canonical_name = minister_name_by_key.get(_normalise_name(raw_name))
+        if not canonical_name or canonical_name in seen_ministers:
+            continue
+
+        stance = _normalise_stance(item.get("stance"))
+        if stance is None:
+            continue
+
+        reason = item.get("reason")
+        if not isinstance(reason, str):
+            continue
+        reason = reason.strip()
+        if not reason:
+            continue
+
+        normalised.append(
+            {
+                "minister_name": canonical_name,
+                "stance": stance,
+                "reason": reason,
+            }
+        )
+        seen_ministers.add(canonical_name)
+
+    return normalised
+
+
+def _advisor_stances_complete(stances: list[dict[str, str]], ministers: list[Minister]) -> bool:
+    required = {m.citizen.name for m in ministers}
+    provided = {s.get("minister_name", "") for s in stances}
+    return provided == required and len(stances) == len(required)
+
+
+def _repair_policy_advisor_stances_once(
+    llm: LLMClient,
+    policy: dict[str, Any],
+    ministers: list[Minister],
+    ministers_str: str,
+) -> list[dict[str, Any]]:
+    minister_names = [m.citizen.name for m in ministers]
+    prompt = textwrap.dedent(f"""\
+        Repair ONLY the advisor_stances for this policy.
+
+        Policy JSON:
+        {json.dumps(policy, ensure_ascii=True, indent=2)}
+
+        Cabinet (with personality profiles):
+        {ministers_str}
+
+        Requirements:
+        - Return EXACTLY {len(minister_names)} stances.
+        - One entry per minister, no duplicates, no extras.
+        - minister_name must exactly match one of:
+          {json.dumps(minister_names, ensure_ascii=True)}
+        - stance must be "approve" or "disapprove".
+        - reason must be exactly one sentence, in that minister's voice, and mention a concrete personality/portfolio tradeoff for this policy.
+
+        Return ONLY valid JSON in one of these forms:
+        {{
+          "advisor_stances": [
+            {{"minister_name": "string", "stance": "approve|disapprove", "reason": "string"}}
+          ]
+        }}
+        OR just the array itself.
+    """)
+    raw = llm.chat_text(POLICY_DRAFT_SYSTEM, prompt)
+    try:
+        parsed = _extract_json(raw)
+    except ValueError:
+        return []
+    if isinstance(parsed, dict):
+        stances = parsed.get("advisor_stances", [])
+        return stances if isinstance(stances, list) else []
+    if isinstance(parsed, list):
+        return parsed
+    return []
+
+
+def _finalise_policy_advisor_stances(
+    llm: LLMClient,
+    policy: dict[str, Any],
+    ministers: list[Minister],
+    ministers_str: str,
+) -> None:
+    stances = _normalise_advisor_stances(policy.get("advisor_stances", []), ministers)
+    if _advisor_stances_complete(stances, ministers):
+        policy["advisor_stances"] = stances
+        return
+
+    logger.info(
+        "advisor_stance_repair_triggered policy=%s provided=%d required=%d",
+        policy.get("name", "<unknown>"),
+        len(stances),
+        len(ministers),
+    )
+
+    repaired_raw = _repair_policy_advisor_stances_once(llm, policy, ministers, ministers_str)
+    repaired_stances = _normalise_advisor_stances(repaired_raw, ministers)
+    if _advisor_stances_complete(repaired_stances, ministers):
+        logger.info(
+            "advisor_stance_repair_succeeded policy=%s count=%d",
+            policy.get("name", "<unknown>"),
+            len(repaired_stances),
+        )
+    else:
+        logger.warning(
+            "advisor_stance_repair_incomplete policy=%s provided=%d required=%d",
+            policy.get("name", "<unknown>"),
+            len(repaired_stances),
+            len(ministers),
+        )
+
+    policy["advisor_stances"] = repaired_stances
 
 
 # ---------------------------------------------------------------------------
@@ -375,11 +561,8 @@ def generate_policy_options(
             f"  - {e.name} ({e.type}, {e.turns_remaining} turns left)" for e in state.active_events
         )
 
-    ministers_str = "\n".join(
-        f"  - {m.citizen.name} ({m.portfolio}): loyalty={m.state.loyalty:.0f}, "
-        f"competence={m.citizen.capability.competence:.0f}"
-        for m in state.ministers
-    )
+    ministers_str = "\n".join(_minister_profile_for_policy_prompt(m) for m in state.ministers)
+    minister_names = [m.citizen.name for m in state.ministers]
 
     prompt = textwrap.dedent(f"""\
         City: {state.city_profile.city_name} | Turn: {state.current_turn}/{state.city_profile.game_config.total_turns}
@@ -389,7 +572,7 @@ def generate_policy_options(
         Current city parameters:
         {params_str}
 
-        Cabinet:
+        Cabinet (with personality profiles):
         {ministers_str}
 
         {active_events_str}
@@ -405,6 +588,9 @@ def generate_policy_options(
         3. Have realistic budget cost (within available budget)
         4. Have a time_profile (effects spread over turns, e.g. 60% turn_0, 40% turn_1)
         5. Have clear trade-offs and a reason why it's relevant now
+        6. Include advisor_stances: for EACH minister, generate their stance ("approve" or "disapprove") and a 1-sentence reason IN THEIR VOICE reflecting their personality, portfolio concerns, and ideology. An ambitious minister speaks differently from a cautious one. A minister whose portfolio is harmed should voice specific concerns about their area.
+        7. advisor_stances MUST contain exactly {len(minister_names)} entries, with one entry for each minister and exact names from this list: {json.dumps(minister_names, ensure_ascii=True)}.
+        8. Every advisor reason must mention at least one concrete personality/portfolio tradeoff for this specific policy (not generic praise/criticism).
 
         Return ONLY a JSON array of 3 policy objects with this schema:
         [
@@ -426,7 +612,15 @@ def generate_policy_options(
               }}
             ],
             "tradeoffs": "string — honest description of costs and risks",
-            "why_now": "string — why this is relevant this specific turn"
+            "why_now": "string — why this is relevant this specific turn",
+            "advisor_stances": [
+              // Exactly one entry per minister: {', '.join(minister_names)}
+              {{
+                "minister_name": "string — must exactly match one listed minister name",
+                "stance": "approve" or "disapprove",
+                "reason": "string — 1 sentence in the minister's voice, specific to this policy and their personality/portfolio"
+              }}
+            ]
           }}
         ]
 
@@ -446,6 +640,7 @@ def generate_policy_options(
             opt["target_effects"][key] = max(-10.0, min(10.0, float(opt["target_effects"][key])))
         for key in opt.get("side_effects", {}):
             opt["side_effects"][key] = max(-5.0, min(5.0, float(opt["side_effects"][key])))
+        _finalise_policy_advisor_stances(llm, opt, state.ministers, ministers_str)
     return options[:3]
 
 
@@ -460,6 +655,9 @@ def amend_policy_option(
     params = state.city_params.as_dict()
     params_str = "\n".join(f"  {k.replace('_', ' ').title()}: {v:.1f}" for k, v in params.items())
     existing_str = json.dumps(existing_policy, indent=2)
+    minister_names = [m.citizen.name for m in state.ministers]
+
+    ministers_str = "\n".join(_minister_profile_for_policy_prompt(m) for m in state.ministers)
 
     prompt = textwrap.dedent(f"""\
         City: {state.city_profile.city_name} | Turn: {state.current_turn}/{state.city_profile.game_config.total_turns}
@@ -468,6 +666,9 @@ def amend_policy_option(
 
         Current city parameters:
         {params_str}
+
+        Cabinet:
+        {ministers_str}
 
         The mayor consulted advisors about the following policy draft and wants it amended:
 
@@ -487,6 +688,9 @@ def amend_policy_option(
         3. budget_cost must be within {available_budget:.0f} Cr
         4. time_profile values must sum to 1.0
         5. portfolio must be one of: {', '.join(PORTFOLIOS)}
+        6. Include advisor_stances for each minister — stance and a 1-sentence reason in their voice
+        7. advisor_stances MUST contain exactly {len(minister_names)} entries with exact names from: {json.dumps(minister_names, ensure_ascii=True)}
+        8. Every advisor reason must mention at least one concrete personality/portfolio tradeoff for this specific policy.
 
         Return ONLY a single JSON policy object (not an array) with this schema:
         {{
@@ -499,7 +703,11 @@ def amend_policy_option(
           "time_profile": {{"turn_0": float, "turn_1": float}},
           "targets": [{{"key": "string", "label": "string", "unit": "points", "proposed": float, "difficulty": float}}],
           "tradeoffs": "string",
-          "why_now": "string"
+          "why_now": "string",
+          "advisor_stances": [
+            // Exactly one per minister: {', '.join(minister_names)}
+            {{"minister_name": "string — exact listed minister name", "stance": "approve" or "disapprove", "reason": "string — 1 sentence in minister's voice"}}
+          ]
         }}
 
         Valid param keys: {', '.join(params.keys())}
@@ -518,6 +726,7 @@ def amend_policy_option(
         amended["target_effects"][key] = max(-10.0, min(10.0, float(amended["target_effects"][key])))
     for key in amended.get("side_effects", {}):
         amended["side_effects"][key] = max(-5.0, min(5.0, float(amended["side_effects"][key])))
+    _finalise_policy_advisor_stances(llm, amended, state.ministers, ministers_str)
     return amended
 
 
