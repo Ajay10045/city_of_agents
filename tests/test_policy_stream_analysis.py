@@ -1,140 +1,171 @@
 from __future__ import annotations
 
-import time
+import json
 from typing import Any
 
-import simulation.llm_calls as llm_calls
-from simulation.llm_calls import POLICY_REASONING_SYSTEM_STREAM, generate_policy_options_stream
+from simulation.llm_calls import POLICY_DRAFT_SYSTEM_STREAM, generate_policy_options_stream
 from tests.test_policy_advisor_stances import _build_state
 
 
-class ScriptedReasoningLLM:
-    def __init__(self, scripts: list[list[str]], chunk_delay: float = 0.0) -> None:
+class ScriptedPolicyStreamLLM:
+    def __init__(self, scripts: list[list[str]]) -> None:
         self.model = "stub-model"
         self.scripts = scripts
-        self.chunk_delay = chunk_delay
         self.stream_calls: list[tuple[str, str]] = []
+        self.repair_calls: list[tuple[str, str]] = []
 
     def chat_text_stream(self, system: str, user: str):
         self.stream_calls.append((system, user))
         idx = len(self.stream_calls) - 1
-        if idx < len(self.scripts):
-            chunks = self.scripts[idx]
-        elif self.scripts:
-            chunks = self.scripts[-1]
-        else:
-            chunks = []
+        chunks = self.scripts[idx] if idx < len(self.scripts) else []
         for chunk in chunks:
-            if self.chunk_delay > 0:
-                time.sleep(self.chunk_delay)
             yield chunk
 
+    def chat_text(self, system: str, user: str) -> str:
+        # Used only by advisor stance repair path.
+        self.repair_calls.append((system, user))
+        return json.dumps({"advisor_stances": []})
 
-def _run_stream(
-    monkeypatch: Any,
-    *,
-    scripts: list[list[str]],
-    policy_delay: float,
-    policy_options: list[dict[str, Any]] | None = None,
-) -> tuple[ScriptedReasoningLLM, list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
-    state = _build_state()
-    llm = ScriptedReasoningLLM(scripts=scripts, chunk_delay=0.01)
-    opts = policy_options or [{"name": "Generated Option", "advisor_stances": []}]
-    policy_calls: list[dict[str, Any]] = []
 
-    def _fake_generate_policy_options(
-        policy_llm: Any,
-        inner_state: Any,
-        consultation_transcript: str,
-        available_budget: float,
-    ) -> list[dict[str, Any]]:
-        policy_calls.append(
+def _policy_json(name: str, m1: str, m2: str) -> str:
+    payload = {
+        "name": name,
+        "description": f"{name} description.",
+        "portfolio": "Infrastructure",
+        "budget_cost": 220.0,
+        "target_effects": {"transit_and_roads": 6.0},
+        "side_effects": {"jobs_and_commerce": -1.5},
+        "time_profile": {"turn_0": 0.6, "turn_1": 0.4},
+        "targets": [
             {
-                "policy_llm": policy_llm,
-                "state_id": id(inner_state),
-                "transcript": consultation_transcript,
-                "budget": available_budget,
+                "key": "transit_and_roads",
+                "label": "Transit and Roads",
+                "unit": "points",
+                "proposed": 6.0,
+                "difficulty": 0.5,
             }
-        )
-        time.sleep(policy_delay)
-        return opts
+        ],
+        "tradeoffs": "Temporary disruption during rollout.",
+        "why_now": "Peak-hour congestion is worsening.",
+        "advisor_stances": [
+            {
+                "minister_name": m1,
+                "stance": "approve",
+                "reason": "This aligns with my delivery backlog and is executable this quarter.",
+            },
+            {
+                "minister_name": m2,
+                "stance": "disapprove",
+                "reason": "Hospital access may get harder during lane closures.",
+            },
+        ],
+    }
+    return json.dumps(payload)
 
-    monkeypatch.setattr(llm_calls, "generate_policy_options", _fake_generate_policy_options)
+
+def _run_stream(scripts: list[list[str]]) -> tuple[ScriptedPolicyStreamLLM, list[dict[str, Any]]]:
+    state = _build_state()
+    llm = ScriptedPolicyStreamLLM(scripts)
     events = list(generate_policy_options_stream(llm, state, consultation_transcript="", available_budget=600))
-    thinking_events = [e for e in events if e["type"] == "thinking"]
+    return llm, events
+
+
+def test_policy_stream_generates_three_policies_sequentially_with_linked_reasoning() -> None:
+    state = _build_state()
+    m1 = state.ministers[0].citizen.name
+    m2 = state.ministers[1].citizen.name
+    llm, events = _run_stream(
+        [
+            [f"<analysis>## POLICY 1 — Rapid Bus Corridors\n- **Why now:** congestion is acute.\n</analysis>{_policy_json('Rapid Bus Corridors', m1, m2)}"],
+            [f"<analysis>## POLICY 2 — Clinic Access Lanes\n- **Plan logic:** protect ambulance movement.\n</analysis>{_policy_json('Clinic Access Lanes', m1, m2)}"],
+            [f"<analysis>## POLICY 3 — Freight Decongestion Sprint\n- **Council vote:** mixed support.\n</analysis>{_policy_json('Freight Decongestion Sprint', m1, m2)}"],
+        ]
+    )
+
+    thinking = "".join(e["chunk"] for e in events if e["type"] == "thinking")
     policy_events = [e for e in events if e["type"] == "policies"]
-    return llm, policy_calls, thinking_events, policy_events
 
-
-def test_policy_stream_emits_thinking_while_policy_future_pending(monkeypatch: Any) -> None:
-    llm, policy_calls, thinking_events, policy_events = _run_stream(
-        monkeypatch,
-        scripts=[
-            [
-                "Transit is weak and demands immediate focus. ",
-                "Cabinet execution risk is manageable with sequencing.",
-            ]
-        ],
-        policy_delay=0.08,
-    )
-
-    assert llm.stream_calls
-    assert llm.stream_calls[0][0] == POLICY_REASONING_SYSTEM_STREAM
-    assert policy_calls and len(policy_calls) == 1
-    assert len(thinking_events) >= 1
-    assert policy_events and len(policy_events) == 1
-    assert thinking_events[0]["chunk"].strip()
-
-
-def test_policy_stream_runs_continuation_passes_until_policies_ready(monkeypatch: Any) -> None:
-    llm, _, thinking_events, policy_events = _run_stream(
-        monkeypatch,
-        scripts=[
-            ["First pass: immediate pressure is transit reliability. "],
-            ["Second pass: budget trade-off could strain clinic staffing. "],
-            ["Third pass: sequence implementation to reduce backlash."],
-        ],
-        policy_delay=0.25,
-    )
-
-    thinking = "".join(event["chunk"] for event in thinking_events)
-    assert len(llm.stream_calls) >= 2
-    assert "First pass" in thinking
-    assert "Second pass" in thinking
+    assert len(llm.stream_calls) == 3
+    assert all(call[0] == POLICY_DRAFT_SYSTEM_STREAM for call in llm.stream_calls)
+    assert "## POLICY 1 — Rapid Bus Corridors" in thinking
+    assert "## POLICY 2 — Clinic Access Lanes" in thinking
+    assert "## POLICY 3 — Freight Decongestion Sprint" in thinking
     assert len(policy_events) == 1
+    assert [p["name"] for p in policy_events[0]["options"]] == [
+        "Rapid Bus Corridors",
+        "Clinic Access Lanes",
+        "Freight Decongestion Sprint",
+    ]
 
 
-def test_policy_stream_filters_json_like_reasoning_output(monkeypatch: Any) -> None:
-    _, _, thinking_events, policy_events = _run_stream(
-        monkeypatch,
-        scripts=[
-            ['Readable reasoning stays visible.\n{"name":"leak"}'],
-            ["Follow-up reasoning without structured output."],
-        ],
-        policy_delay=0.15,
+def test_policy_stream_prompts_include_previously_drafted_policies() -> None:
+    state = _build_state()
+    m1 = state.ministers[0].citizen.name
+    m2 = state.ministers[1].citizen.name
+    llm, _ = _run_stream(
+        [
+            [f"<analysis>## POLICY 1 — Alpha\n- note\n</analysis>{_policy_json('Alpha', m1, m2)}"],
+            [f"<analysis>## POLICY 2 — Beta\n- note\n</analysis>{_policy_json('Beta', m1, m2)}"],
+            [f"<analysis>## POLICY 3 — Gamma\n- note\n</analysis>{_policy_json('Gamma', m1, m2)}"],
+        ]
     )
 
-    thinking = "".join(event["chunk"] for event in thinking_events)
-    assert "Readable reasoning stays visible." in thinking
-    assert "Follow-up reasoning" in thinking
+    assert len(llm.stream_calls) == 3
+    assert '"name": "Alpha"' in llm.stream_calls[1][1]
+    assert '"name": "Alpha"' in llm.stream_calls[2][1]
+    assert '"name": "Beta"' in llm.stream_calls[2][1]
+
+
+def test_policy_stream_filters_json_when_analysis_close_tag_missing() -> None:
+    state = _build_state()
+    m1 = state.ministers[0].citizen.name
+    m2 = state.ministers[1].citizen.name
+    llm, events = _run_stream(
+        [
+            [f"<analysis>## POLICY 1 — No close tag\n- Thinking line.\n{_policy_json('No Close Tag Policy', m1, m2)}"],
+            [f"<analysis>## POLICY 2 — Valid\n- line\n</analysis>{_policy_json('Valid Policy Two', m1, m2)}"],
+            [f"<analysis>## POLICY 3 — Valid\n- line\n</analysis>{_policy_json('Valid Policy Three', m1, m2)}"],
+        ]
+    )
+
+    thinking = "".join(e["chunk"] for e in events if e["type"] == "thinking")
+    policy_events = [e for e in events if e["type"] == "policies"]
+
+    assert "No close tag" in thinking
     assert "{" not in thinking
     assert '"name"' not in thinking
     assert len(policy_events) == 1
+    assert len(policy_events[0]["options"]) == 3
 
 
-def test_policy_stream_emits_single_policies_event_from_generator_result(monkeypatch: Any) -> None:
-    expected_options = [
-        {"name": "Option A", "advisor_stances": []},
-        {"name": "Option B", "advisor_stances": []},
-    ]
-    _, policy_calls, _, policy_events = _run_stream(
-        monkeypatch,
-        scripts=[["Reasoning while backend drafts options."]],
-        policy_delay=0.05,
-        policy_options=expected_options,
+def test_policy_stream_injects_policy_header_fallback_if_analysis_missing_header() -> None:
+    state = _build_state()
+    m1 = state.ministers[0].citizen.name
+    m2 = state.ministers[1].citizen.name
+    llm, events = _run_stream(
+        [
+            [f"<analysis>- generic bullet without header\n</analysis>{_policy_json('Fallback Header Policy', m1, m2)}"],
+            [f"<analysis>## POLICY 2 — B\n- line\n</analysis>{_policy_json('B Policy', m1, m2)}"],
+            [f"<analysis>## POLICY 3 — C\n- line\n</analysis>{_policy_json('C Policy', m1, m2)}"],
+        ]
     )
 
-    assert len(policy_calls) == 1
+    thinking = "".join(e["chunk"] for e in events if e["type"] == "thinking")
+    assert "## POLICY 1 — Fallback Header Policy" in thinking
+    assert "- **Council vote:** 1 For · 1 Against" in thinking
+
+
+def test_policy_stream_emits_single_final_policies_event() -> None:
+    state = _build_state()
+    m1 = state.ministers[0].citizen.name
+    m2 = state.ministers[1].citizen.name
+    _, events = _run_stream(
+        [
+            [f"<analysis>## POLICY 1 — A\n- line\n</analysis>{_policy_json('A', m1, m2)}"],
+            [f"<analysis>## POLICY 2 — B\n- line\n</analysis>{_policy_json('B', m1, m2)}"],
+            [f"<analysis>## POLICY 3 — C\n- line\n</analysis>{_policy_json('C', m1, m2)}"],
+        ]
+    )
+    policy_events = [e for e in events if e["type"] == "policies"]
     assert len(policy_events) == 1
-    assert policy_events[0]["options"] == expected_options
 

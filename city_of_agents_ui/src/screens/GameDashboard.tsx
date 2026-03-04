@@ -10,6 +10,7 @@ import {
   openConsultation, messageMinister, closeConsultation,
   getPolicies, amendPolicy, executeTurnStreamV2, streamTurnBriefing
 } from '../api'
+import { parseReasoning, renderReasoningInline } from '../utils/reasoningFormat'
 import type {
   GameState, TurnResult, Policy, Minister, ActiveEvent,
   MediaHeadline, CitizenVoice, WardReportEntry,
@@ -23,6 +24,8 @@ const PANEL = {
   border: '1px solid #1c3652',
   borderRadius: 6,
 } as const
+
+const BRIEFING_THINKING_MAX_CHARS = 12000
 
 const HDR_LABEL = {
   fontFamily: "'Rajdhani', sans-serif",
@@ -1425,6 +1428,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
   const briefingQueueRef = useRef<{ type: string; text: string; delayMs: number }[]>([])
   const briefingQueueRunningRef = useRef(false)
   const briefingQueueCancelledRef = useRef(false)
+  const reasoningBlocks = useMemo(() => parseReasoning(briefingThinking), [briefingThinking])
 
   // Game over
   const [gameOver, setGameOver] = useState(false)
@@ -1609,7 +1613,11 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
           }
 
           if (type === 'thinking') {
-            setBriefingThinking(prev => prev + (event.chunk as string))
+            setBriefingThinking(prev => {
+              const appended = prev + (event.chunk as string)
+              if (appended.length <= BRIEFING_THINKING_MAX_CHARS) return appended
+              return appended.slice(appended.length - BRIEFING_THINKING_MAX_CHARS)
+            })
             briefingThinkingRef.current?.scrollTo({ top: briefingThinkingRef.current.scrollHeight, behavior: 'smooth' })
           }
 
@@ -2311,7 +2319,55 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                   fontSize: 11, color: '#64748b', lineHeight: 1.5,
                   whiteSpace: 'pre-wrap', wordBreak: 'break-word',
                 }}>
-                  {briefingThinking}
+                  {reasoningBlocks.length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                      {reasoningBlocks.map((block, idx) => {
+                        if (block.kind === 'header') {
+                          const headerText = (block.raw || '').toUpperCase()
+                          const isPolicyHeader = headerText.startsWith('POLICY ')
+                          return (
+                            <div key={`h-${idx}`} style={{
+                              color: isPolicyHeader ? '#f0c040' : '#8bb7e5',
+                              fontSize: isPolicyHeader ? 11 : 10,
+                              fontFamily: "'Rajdhani', sans-serif",
+                              letterSpacing: '0.08em',
+                              fontWeight: 700,
+                              textTransform: 'uppercase',
+                              marginTop: idx === 0 ? 0 : (isPolicyHeader ? 8 : 2),
+                              paddingTop: isPolicyHeader ? 6 : 0,
+                              borderTop: isPolicyHeader ? '1px solid rgba(232,160,48,0.25)' : 'none',
+                            }}>
+                              {renderReasoningInline(block.parts, `h-${idx}`)}
+                            </div>
+                          )
+                        }
+
+                        if (block.kind === 'bullet') {
+                          return (
+                            <div key={`b-${idx}`} style={{
+                              display: 'grid',
+                              gridTemplateColumns: '10px 1fr',
+                              gap: 6,
+                              alignItems: 'start',
+                            }}>
+                              <span style={{ color: '#e8a030', fontSize: 10, lineHeight: 1.5 }}>•</span>
+                              <span style={{ color: '#9eb2c8' }}>
+                                {renderReasoningInline(block.parts, `b-${idx}`)}
+                              </span>
+                            </div>
+                          )
+                        }
+
+                        return (
+                          <div key={`t-${idx}`} style={{ color: '#94a3b8' }}>
+                            {renderReasoningInline(block.parts, `t-${idx}`)}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    briefingThinking
+                  )}
                 </div>
               </div>
             )}
