@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from 'react'
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import {
   ChevronRight, ChevronDown, HelpCircle, Settings, Clock,
   Zap, Send, AlertTriangle, TrendingDown, Droplets,
@@ -8,7 +8,7 @@ import {
 } from 'lucide-react'
 import {
   openConsultation, messageMinister, closeConsultation,
-  getPolicies, amendPolicy, executeTurnStreamV2
+  getPolicies, amendPolicy, executeTurnStreamV2, streamTurnBriefing
 } from '../api'
 import type {
   GameState, TurnResult, Policy, Minister, ActiveEvent,
@@ -1413,6 +1413,19 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
   const [allVoices, setAllVoices] = useState<(CitizenVoice & { turnNum: number })[]>([])
   const [allHeadlines, setAllHeadlines] = useState<(MediaHeadline & { turnNum: number; isBreaking?: boolean })[]>([])
 
+  // Turn-start briefing
+  const [briefingLoading, setBriefingLoading] = useState(true)
+  const [briefingStage, setBriefingStage] = useState(0) // 0-4 progress steps
+  const [briefingStatus, setBriefingStatus] = useState('Initializing...')
+  const [briefingItems, setBriefingItems] = useState<{ type: string; text: string }[]>([])
+  const [briefingThinking, setBriefingThinking] = useState('')
+  const briefingFetchedForTurn = useRef<number>(0)
+  const briefingFeedEndRef = useRef<HTMLDivElement>(null)
+  const briefingThinkingRef = useRef<HTMLDivElement>(null)
+  const briefingQueueRef = useRef<{ type: string; text: string; delayMs: number }[]>([])
+  const briefingQueueRunningRef = useRef(false)
+  const briefingQueueCancelledRef = useRef(false)
+
   // Game over
   const [gameOver, setGameOver] = useState(false)
   const [scorecard, setScorecard] = useState<GovernanceScorecard | null>(null)
@@ -1485,6 +1498,150 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
       }
     }
   }
+
+  // ── Auto-briefing + auto-policies on turn start ──────────────────────────
+  const processBriefingQueue = useCallback(async () => {
+    if (briefingQueueRunningRef.current) return
+    briefingQueueRunningRef.current = true
+    try {
+      while (!briefingQueueCancelledRef.current && briefingQueueRef.current.length > 0) {
+        const next = briefingQueueRef.current.shift()
+        if (!next) continue
+        setBriefingItems(prev => [...prev, { type: next.type, text: next.text }])
+        briefingFeedEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+        await new Promise(r => setTimeout(r, next.delayMs))
+      }
+    } finally {
+      briefingQueueRunningRef.current = false
+    }
+  }, [])
+
+  const enqueueBriefingItems = useCallback((
+    items: { type: string; text: string }[],
+    delayMs = 600,
+  ) => {
+    for (const item of items) {
+      briefingQueueRef.current.push({ ...item, delayMs })
+    }
+    void processBriefingQueue()
+  }, [processBriefingQueue])
+
+  const waitForBriefingQueueDrain = useCallback(async (maxWaitMs = 6000) => {
+    const started = Date.now()
+    while (Date.now() - started < maxWaitMs) {
+      const pending = briefingQueueRef.current.length
+      const running = briefingQueueRunningRef.current
+      if (!running && pending === 0) return
+      await new Promise(r => setTimeout(r, 50))
+    }
+  }, [])
+
+  useEffect(() => {
+    // Keep queue active even if this effect returns early (important for React StrictMode double-invoke).
+    briefingQueueCancelledRef.current = false
+
+    const turn = gameState.current_turn
+    if (briefingFetchedForTurn.current >= turn) return
+    if (isTurnExecuting) return
+    if (gameOver) return
+
+    briefingQueueRef.current = []
+    briefingQueueRunningRef.current = false
+    briefingFetchedForTurn.current = turn
+    setBriefingLoading(true)
+    setBriefingStage(0)
+    setBriefingStatus('Initializing...')
+    setBriefingThinking('')
+    setBriefingItems([])
+
+    const run = async () => {
+      try {
+        for await (const event of streamTurnBriefing(gameId)) {
+          const type = event.type as string
+
+          if (type === 'city_snapshot') {
+            setBriefingStage(1)
+            setBriefingStatus('City snapshot loaded')
+            const worst = (event.worst_3 as { key: string; value: number }[]) || []
+            const best = (event.best_3 as { key: string; value: number }[]) || []
+            const items: { type: string; text: string }[] = []
+            for (const w of worst) {
+              items.push({ type: 'alert', text: `⚠ ${w.key.replace(/_/g, ' ')} at ${w.value}` })
+            }
+            for (const b of best) {
+              items.push({ type: 'good', text: `✓ ${b.key.replace(/_/g, ' ')} at ${b.value}` })
+            }
+            const activeEvents = (event.active_events as { name: string }[]) || []
+            for (const e of activeEvents) {
+              items.push({ type: 'crisis', text: `🔴 Active crisis: ${e.name}` })
+            }
+            enqueueBriefingItems(items, 500)
+          }
+
+          if (type === 'status') {
+            setBriefingStatus(event.message as string)
+          }
+
+          if (type === 'headlines') {
+            setBriefingStage(2)
+            const headlines = (event.headlines as MediaHeadline[]) || []
+            setAllHeadlines(prev => [
+              ...prev,
+              ...headlines.map(h => ({ ...h, turnNum: turn })),
+            ])
+            enqueueBriefingItems(
+              headlines.map(h => ({ type: 'headline', text: `📰 ${h.outlet}: ${h.headline}` })),
+              500,
+            )
+          }
+
+          if (type === 'voices') {
+            setBriefingStage(3)
+            const voices = (event.voices as CitizenVoice[]) || []
+            setAllVoices(prev => [
+              ...prev,
+              ...voices.map(v => ({ ...v, turnNum: turn })),
+            ])
+            enqueueBriefingItems(
+              voices.map(v => ({ type: 'voice', text: `💬 ${v.name}: "${v.reaction}"` })),
+              500,
+            )
+          }
+
+          if (type === 'thinking') {
+            setBriefingThinking(prev => prev + (event.chunk as string))
+            briefingThinkingRef.current?.scrollTo({ top: briefingThinkingRef.current.scrollHeight, behavior: 'smooth' })
+          }
+
+          if (type === 'policies') {
+            setBriefingStage(4)
+            setBriefingStatus('Briefing complete — policy options ready')
+            setPolicyOptions((event.options as Policy[]) || [])
+          }
+
+          if (type === 'complete') {
+            await waitForBriefingQueueDrain(6000)
+            await new Promise(r => setTimeout(r, 300))
+            setBriefingLoading(false)
+            setShowPolicyModal(true)
+          }
+
+          if (type === 'error') {
+            console.error('Briefing stream error:', event.message)
+            setBriefingLoading(false)
+          }
+        }
+      } catch (err) {
+        console.error('Briefing stream failed:', err)
+        setBriefingLoading(false)
+      }
+    }
+    void run()
+    return () => {
+      briefingQueueCancelledRef.current = true
+      briefingQueueRef.current = []
+    }
+  }, [gameState.current_turn, isTurnExecuting, gameOver, gameId, enqueueBriefingItems, waitForBriefingQueueDrain])
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [chatMessages])
   const mediaHoveredRef = useRef(false)
@@ -2035,6 +2192,138 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
       style={{ background: '#050d1b', color: '#fff', fontFamily: "'Inter', 'Segoe UI', sans-serif" }}>
 
       {/* Modals */}
+
+      {/* Briefing loading overlay */}
+      {briefingLoading && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9000,
+          background: 'rgba(5,13,27,0.95)',
+          display: 'flex', flexDirection: 'column',
+          alignItems: 'center', justifyContent: 'center',
+        }}>
+          <div style={{ width: 480, maxWidth: '90vw' }}>
+            {/* Title */}
+            <div style={{
+              fontFamily: "'Rajdhani', sans-serif", fontWeight: 700,
+              fontSize: 22, letterSpacing: '0.12em', color: '#e8a030',
+              textAlign: 'center', marginBottom: 16,
+            }}>
+              CITY BRIEFING — TURN {gameState.current_turn}
+            </div>
+
+            {/* Progress bar */}
+            <div style={{
+              width: '100%', height: 6, background: '#1c3652',
+              borderRadius: 3, marginBottom: 8, overflow: 'hidden',
+            }}>
+              <div style={{
+                height: '100%', borderRadius: 3,
+                background: 'linear-gradient(90deg, #e8a030, #f59e0b)',
+                width: `${(briefingStage / 4) * 100}%`,
+                transition: 'width 0.5s ease',
+              }} />
+            </div>
+
+            {/* Stage labels */}
+            <div style={{
+              display: 'flex', justifyContent: 'space-between', marginBottom: 20,
+              fontFamily: "'Share Tech Mono', monospace", fontSize: 10, color: '#475569',
+            }}>
+              {['Snapshot', 'Media', 'Chatter', 'Policies'].map((label, i) => (
+                <span key={label} style={{
+                  color: briefingStage > i ? '#e8a030' : briefingStage === i ? '#94a3b8' : '#334155',
+                  fontWeight: briefingStage === i ? 700 : 400,
+                }}>
+                  {briefingStage > i ? '✓ ' : ''}{label}
+                </span>
+              ))}
+            </div>
+
+            {/* Current status */}
+            <div style={{
+              fontFamily: "'Share Tech Mono', monospace",
+              fontSize: 12, color: '#94a3b8', textAlign: 'center',
+              marginBottom: 16, display: 'flex', alignItems: 'center',
+              justifyContent: 'center', gap: 8,
+            }}>
+              {briefingStage < 4 && (
+                <div style={{
+                  width: 14, height: 14, borderRadius: '50%',
+                  border: '2px solid #1c3652', borderTopColor: '#e8a030',
+                  animation: 'spin 1s linear infinite',
+                }} />
+              )}
+              {briefingStatus}
+            </div>
+
+            {/* Live feed of items */}
+            <div style={{
+              ...PANEL, padding: '12px 16px',
+              maxHeight: 360, overflowY: 'auto',
+              display: 'flex', flexDirection: 'column', gap: 2,
+            }}>
+              {briefingItems.length === 0 && (
+                <div style={{ fontSize: 12, color: '#334155', textAlign: 'center', padding: 12 }}>
+                  Connecting to city feeds...
+                </div>
+              )}
+              {briefingItems.map((item, i) => (
+                <div key={i} style={{
+                  fontFamily: "'Share Tech Mono', monospace",
+                  fontSize: 13, lineHeight: 1.6,
+                  color: item.type === 'alert' ? '#f59e0b'
+                    : item.type === 'crisis' ? '#f87171'
+                    : item.type === 'good' ? '#22c55e'
+                    : item.type === 'headline' ? '#60a5fa'
+                    : item.type === 'voice' ? '#a78bfa'
+                    : '#94a3b8',
+                  padding: '6px 0',
+                  borderBottom: '1px solid rgba(28,54,82,0.3)',
+                  animation: 'briefingFadeIn 0.5s ease',
+                }}>
+                  {item.text}
+                </div>
+              ))}
+              <div ref={briefingFeedEndRef} />
+            </div>
+
+            {/* Model thinking / reasoning stream */}
+            {briefingThinking && (
+              <div ref={briefingThinkingRef} style={{
+                ...PANEL, padding: '10px 14px', marginTop: 10,
+                maxHeight: 160, overflowY: 'auto',
+              }}>
+                <div style={{
+                  ...HDR_LABEL, fontSize: 10, marginBottom: 6,
+                  display: 'flex', alignItems: 'center', gap: 6,
+                }}>
+                  {briefingStage < 4 && (
+                    <div style={{
+                      width: 8, height: 8, borderRadius: '50%',
+                      background: '#e8a030',
+                      animation: 'pulse 1s ease-in-out infinite',
+                    }} />
+                  )}
+                  MODEL REASONING
+                </div>
+                <div style={{
+                  fontFamily: "'Share Tech Mono', monospace",
+                  fontSize: 11, color: '#64748b', lineHeight: 1.5,
+                  whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                }}>
+                  {briefingThinking}
+                </div>
+              </div>
+            )}
+          </div>
+          <style>{`
+            @keyframes spin { to { transform: rotate(360deg) } }
+            @keyframes briefingFadeIn { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: translateY(0) } }
+            @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.3 } }
+          `}</style>
+        </div>
+      )}
+
       {gameOver && scorecard && <ScorecardOverlay sc={scorecard} />}
 
       {/* Minister Info Popup — rendered as fixed overlay but visually near left panel */}
@@ -2880,7 +3169,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
             >
               {allHeadlines.length === 0 && (
                 <div style={{ fontSize: 11, color: '#334155', textAlign: 'center', padding: '8px 0' }}>
-                  Headlines appear after first turn
+                  {briefingLoading ? 'Loading city briefing...' : 'No headlines yet'}
                 </div>
               )}
               {allHeadlines.length > 0 && [0, 1].map(copy => (
@@ -2942,7 +3231,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
             >
               {allVoices.length === 0 && (
                 <div style={{ fontSize: 11, color: '#334155', textAlign: 'center', padding: '8px 0' }}>
-                  Citizen voices appear after first turn
+                  {briefingLoading ? 'Loading city briefing...' : 'No citizen voices yet'}
                 </div>
               )}
               {allVoices.length > 0 && [0, 1].map(copy => (

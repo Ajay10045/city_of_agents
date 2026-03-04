@@ -11,6 +11,8 @@ import os
 import re
 import textwrap
 import hashlib
+import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from engine.models import (
@@ -531,6 +533,17 @@ POLICY_DRAFT_SYSTEM = textwrap.dedent("""\
     Always return valid JSON.
 """)
 
+POLICY_REASONING_SYSTEM_STREAM = textwrap.dedent("""\
+    You are a senior policy advisor for a city governance simulation game.
+    You generate realistic, balanced policy options based on the current city
+    situation and minister consultation. Policies must have trade-offs and
+    uncertainty — no silver bullets.
+
+    Return concise, high-signal policy analysis in plain English.
+    Do not output JSON, XML tags, markdown code fences, or schema text.
+    Write like a strategist briefing the mayor in real time.
+""")
+
 PORTFOLIOS = [
     "Infrastructure",
     "Health & Education",
@@ -542,29 +555,43 @@ PORTFOLIOS = [
 ]
 
 
-def generate_policy_options(
-    llm: LLMClient,
+def _build_policy_prompt_context(
     state: GameState,
     consultation_transcript: str,
     available_budget: float,
-) -> list[dict[str, Any]]:
-    """Generate 3 policy options for the current turn, informed by consultation transcript.
-
-    Returns list of 3 policy dicts matching Policy schema.
-    """
+) -> dict[str, Any]:
     params = state.city_params.as_dict()
     params_str = "\n".join(f"  {k.replace('_', ' ').title()}: {v:.1f}" for k, v in params.items())
-
     active_events_str = ""
     if state.active_events:
         active_events_str = "Active events:\n" + "\n".join(
             f"  - {e.name} ({e.type}, {e.turns_remaining} turns left)" for e in state.active_events
         )
-
     ministers_str = "\n".join(_minister_profile_for_policy_prompt(m) for m in state.ministers)
     minister_names = [m.citizen.name for m in state.ministers]
+    return {
+        "state": state,
+        "params": params,
+        "params_str": params_str,
+        "active_events_str": active_events_str,
+        "ministers_str": ministers_str,
+        "minister_names": minister_names,
+        "consultation_transcript": consultation_transcript or "(No consultation this turn)",
+        "available_budget": available_budget,
+    }
 
-    prompt = textwrap.dedent(f"""\
+
+def _build_policy_options_prompt(context: dict[str, Any]) -> str:
+    state: GameState = context["state"]
+    params: dict[str, Any] = context["params"]
+    params_str: str = context["params_str"]
+    active_events_str: str = context["active_events_str"]
+    ministers_str: str = context["ministers_str"]
+    minister_names: list[str] = context["minister_names"]
+    consultation_transcript: str = context["consultation_transcript"]
+    available_budget: float = context["available_budget"]
+
+    return textwrap.dedent(f"""\
         City: {state.city_profile.city_name} | Turn: {state.current_turn}/{state.city_profile.game_config.total_turns}
         Treasury: {state.treasury:.0f} Cr | Debt: {state.outstanding_debt:.0f} Cr
         Available policy budget: {available_budget:.0f} Cr
@@ -578,7 +605,7 @@ def generate_policy_options(
         {active_events_str}
 
         --- Minister consultation transcript ---
-        {consultation_transcript or "(No consultation this turn)"}
+        {consultation_transcript}
         --- End transcript ---
 
         Generate exactly 3 distinct policy options for this turn.
@@ -627,6 +654,107 @@ def generate_policy_options(
         Valid param keys: {', '.join(params.keys())}
     """)
 
+
+def _build_policy_reasoning_prompt(context: dict[str, Any], pass_index: int) -> str:
+    state: GameState = context["state"]
+    params_str: str = context["params_str"]
+    active_events_str: str = context["active_events_str"]
+    ministers_str: str = context["ministers_str"]
+    consultation_transcript: str = context["consultation_transcript"]
+    available_budget: float = context["available_budget"]
+
+    if pass_index == 1:
+        cadence = "Provide 4-6 concise sentences."
+        focus = "Cover city strengths/weaknesses, immediate priorities, minister execution dynamics, and event pressure."
+    else:
+        cadence = "Provide 2-4 concise NEW sentences."
+        focus = "Continue with fresh, non-repetitive updates on trade-offs, sequencing, implementation risk, and cabinet alignment."
+
+    return textwrap.dedent(f"""\
+        City: {state.city_profile.city_name} | Turn: {state.current_turn}/{state.city_profile.game_config.total_turns}
+        Treasury: {state.treasury:.0f} Cr | Debt: {state.outstanding_debt:.0f} Cr
+        Available policy budget: {available_budget:.0f} Cr
+
+        Current city parameters:
+        {params_str}
+
+        Cabinet (with personality profiles):
+        {ministers_str}
+
+        {active_events_str}
+
+        --- Minister consultation transcript ---
+        {consultation_transcript}
+        --- End transcript ---
+
+        Write only human-readable strategic reasoning for the mayor.
+        {cadence}
+        {focus}
+        Do NOT output JSON, lists of keys, markup tags, or schema text.
+    """)
+
+
+def _clone_llms_for_policy_stream(base_llm: Any) -> tuple[Any, Any]:
+    if isinstance(base_llm, LLMClient):
+        return LLMClient(model=base_llm.model), LLMClient(model=base_llm.model)
+    logger.debug(
+        "policy_stream_llm_clone_skipped llm_type=%s; using supplied instance for both tasks",
+        type(base_llm).__name__,
+    )
+    return base_llm, base_llm
+
+
+def _probable_json_start_index(text: str) -> int:
+    leading = len(text) - len(text.lstrip())
+    stripped = text.lstrip()
+    if stripped.startswith("{") or stripped.startswith("["):
+        return leading
+    m = re.search(r"\n\s*[\[{]\s*(?:[\[{]|\")", text)
+    if m:
+        return m.start() + 1
+    return -1
+
+
+def _iter_smoothed_thinking_chunks(text: str, max_chars: int = 120) -> list[str]:
+    out: list[str] = []
+    pending = text
+    while pending:
+        if len(pending) <= max_chars:
+            out.append(pending)
+            break
+        window = pending[: max_chars + 1]
+        split_at = max(
+            window.rfind(". "),
+            window.rfind("? "),
+            window.rfind("! "),
+            window.rfind("\n"),
+            window.rfind("; "),
+            window.rfind(", "),
+            window.rfind(" "),
+        )
+        if split_at <= 0:
+            split_at = max_chars
+        else:
+            split_at += 1
+        out.append(pending[:split_at])
+        pending = pending[split_at:]
+    return [chunk for chunk in out if chunk]
+
+
+def generate_policy_options(
+    llm: LLMClient,
+    state: GameState,
+    consultation_transcript: str,
+    available_budget: float,
+) -> list[dict[str, Any]]:
+    """Generate 3 policy options for the current turn, informed by consultation transcript.
+
+    Returns list of 3 policy dicts matching Policy schema.
+    """
+    context = _build_policy_prompt_context(state, consultation_transcript, available_budget)
+    ministers_str = context["ministers_str"]
+    prompt = _build_policy_options_prompt(context)
+
     raw = llm.chat_text(POLICY_DRAFT_SYSTEM, prompt)
     try:
         options = _extract_json(raw)
@@ -642,6 +770,93 @@ def generate_policy_options(
             opt["side_effects"][key] = max(-5.0, min(5.0, float(opt["side_effects"][key])))
         _finalise_policy_advisor_stances(llm, opt, state.ministers, ministers_str)
     return options[:3]
+
+
+def generate_policy_options_stream(
+    llm: LLMClient,
+    state: GameState,
+    consultation_transcript: str,
+    available_budget: float,
+):
+    """Stream policy generation — yields thinking chunks, then parsed policies.
+
+    Yields dicts with:
+      {"type": "thinking", "chunk": str}  — strategist reasoning chunks only
+      {"type": "policies", "options": list}  — final parsed policies
+    """
+    context = _build_policy_prompt_context(state, consultation_transcript, available_budget)
+    policy_llm, reasoning_llm = _clone_llms_for_policy_stream(llm)
+    reasoning_pass = 0
+    emitted_chunks = 0
+    emitted_chars = 0
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        policies_future = executor.submit(
+            generate_policy_options,
+            policy_llm,
+            state,
+            consultation_transcript,
+            available_budget,
+        )
+
+        while not policies_future.done():
+            reasoning_pass += 1
+            pass_chunks = 0
+            pass_chars = 0
+            leaked_json = False
+            prompt = _build_policy_reasoning_prompt(context, reasoning_pass)
+            logger.debug("policy_reasoning_stream_pass_started pass=%d", reasoning_pass)
+            try:
+                for raw_chunk in reasoning_llm.chat_text_stream(POLICY_REASONING_SYSTEM_STREAM, prompt):
+                    if policies_future.done():
+                        break
+
+                    safe_text = raw_chunk
+                    json_start = _probable_json_start_index(raw_chunk)
+                    if json_start != -1:
+                        safe_text = raw_chunk[:json_start]
+                        leaked_json = True
+
+                    for out in _iter_smoothed_thinking_chunks(safe_text):
+                        pass_chunks += 1
+                        pass_chars += len(out)
+                        emitted_chunks += 1
+                        emitted_chars += len(out)
+                        yield {"type": "thinking", "chunk": out}
+
+                    if leaked_json:
+                        logger.warning(
+                            "policy_reasoning_stream_json_guard pass=%d chunk_prefix=%r",
+                            reasoning_pass,
+                            raw_chunk[:80],
+                        )
+                        break
+            except Exception:
+                logger.exception("policy_reasoning_stream_pass_failed pass=%d", reasoning_pass)
+
+            logger.debug(
+                "policy_reasoning_stream_pass_completed pass=%d chunks=%d chars=%d",
+                reasoning_pass,
+                pass_chunks,
+                pass_chars,
+            )
+
+            if not policies_future.done() and pass_chunks == 0:
+                logger.warning("policy_reasoning_stream_pass_empty pass=%d", reasoning_pass)
+                time.sleep(0.15)
+
+        options = policies_future.result()
+
+    if not isinstance(options, list):
+        options = [options] if isinstance(options, dict) else []
+    logger.info(
+        "policy_reasoning_stream_finished passes=%d chunks=%d chars=%d options=%d",
+        reasoning_pass,
+        emitted_chunks,
+        emitted_chars,
+        len(options[:3]),
+    )
+    yield {"type": "policies", "options": options[:3]}
 
 
 def amend_policy_option(
@@ -842,6 +1057,68 @@ def generate_media_headlines(
     return headlines
 
 
+def generate_situational_headlines(
+    llm: LLMClient,
+    outlets: list[MediaOutletState],
+    city_name: str,
+    city_params: dict[str, float],
+    treasury: float,
+    active_events: list[ActiveEvent],
+    turn: int,
+) -> list[MediaHeadline]:
+    """Generate headlines about the city's current state (not a specific policy)."""
+    # Sort params to find worst and best
+    sorted_params = sorted(city_params.items(), key=lambda x: x[1])
+    worst_3 = ", ".join(f"{k.replace('_', ' ').title()} ({v:.0f})" for k, v in sorted_params[:3])
+    best_3 = ", ".join(f"{k.replace('_', ' ').title()} ({v:.0f})" for k, v in sorted_params[-3:])
+    events_str = ", ".join(e.name for e in active_events) if active_events else "none"
+    outlets_desc = "\n".join(
+        f"  {o.name} (lean={o.lean}, sensationalism={o.sensationalism:.0f})"
+        for o in outlets
+    )
+
+    prompt = textwrap.dedent(f"""\
+        City: {city_name} — Turn {turn}
+        Treasury: {treasury:.0f} Cr
+        Weakest areas: {worst_3}
+        Strongest areas: {best_3}
+        Active crises/events: {events_str}
+
+        Media outlets:
+        {outlets_desc}
+
+        Generate one realistic headline for each outlet about the current state of
+        the city — infrastructure, public services, economy, governance, or social
+        conditions. Each headline should reflect the outlet's political lean and
+        sensationalism level. Do NOT reference any specific policy — these are
+        situational headlines about what's happening in the city right now.
+
+        Return a JSON array:
+        [
+          {{"outlet": "outlet name", "lean": "mayor|opposition|neutral", "headline": "string"}}
+        ]
+
+        One entry per outlet. Outlet names must match exactly.
+    """)
+    raw = llm.chat_text(HEADLINES_SYSTEM, prompt)
+    data = _extract_json(raw)
+    if not isinstance(data, list):
+        data = []
+    headlines = []
+    outlet_names = {o.name: o.lean for o in outlets}
+    for item in data:
+        if isinstance(item, dict) and "outlet" in item and "headline" in item:
+            lean = item.get("lean") or outlet_names.get(item["outlet"], "neutral")
+            if lean not in ("mayor", "opposition", "neutral"):
+                lean = "neutral"
+            headlines.append(MediaHeadline(
+                outlet=item["outlet"],
+                lean=lean,
+                headline=item["headline"],
+            ))
+    return headlines
+
+
 # ---------------------------------------------------------------------------
 # Citizen reaction sampling
 # ---------------------------------------------------------------------------
@@ -922,6 +1199,86 @@ def sample_citizen_reactions(
         ]
 
         One entry per citizen, in the same order as the input list.
+    """)
+    raw = llm.chat_text(CITIZEN_VOICES_SYSTEM, prompt)
+    data = _extract_json(raw)
+    if not isinstance(data, list):
+        data = []
+
+    voices = []
+    for item, c in zip(data, sampled_citizens):
+        if not isinstance(item, dict):
+            continue
+        sentiment = item.get("sentiment", "undecided")
+        if sentiment not in ("approve", "disapprove", "undecided"):
+            sentiment = "undecided"
+        voices.append(CitizenVoice(
+            citizen_id=c["id"],
+            name=item.get("name") or c["name"],
+            demographics_summary=c["demographics"],
+            ideology=c["ideology"],
+            reaction=item.get("reaction", ""),
+            sentiment=sentiment,
+        ))
+    return voices
+
+
+def generate_situational_chatter(
+    llm: LLMClient,
+    sampled_citizens: list[dict[str, Any]],
+    city_name: str,
+    city_params: dict[str, float],
+    languages: list[str] | None = None,
+) -> list[CitizenVoice]:
+    """Generate citizen chatter about daily city life (not reacting to a policy)."""
+    sorted_params = sorted(city_params.items(), key=lambda x: x[1])
+    worst_3 = ", ".join(f"{k.replace('_', ' ').title()} ({v:.0f}/100)" for k, v in sorted_params[:3])
+
+    citizens_str = "\n".join(
+        f"  {i+1}. {c['name']} — {c['demographics']} | ideology: {c['ideology']} | "
+        f"wellbeing: {c['wellbeing']:.0f}/100"
+        + (f" | personality: {c['personality']}" if c.get('personality') else "")
+        for i, c in enumerate(sampled_citizens)
+    )
+
+    lang_note = ""
+    if languages:
+        lang_note = f"\n        City languages: {', '.join(languages)}. Citizens may naturally mix these with English.\n"
+
+    prompt = textwrap.dedent(f"""\
+        City: {city_name}
+        Weakest city areas: {worst_3}
+        {lang_note}
+        Citizens:
+        {citizens_str}
+
+        These citizens are chatting about daily life in {city_name} — NOT reacting
+        to any specific government policy. They are talking about what they experience
+        every day: traffic, water supply, safety, jobs, prices, pollution, schools,
+        hospitals, community life, etc.
+
+        Write one casual, raw reaction per citizen — like WhatsApp forwards, chai-stall
+        chatter, or auto-rickshaw conversation. Match their demographics and personality.
+
+        Style rules:
+        - Mix mother tongue with English naturally (Hinglish, Tanglish, etc.)
+        - Use slang and colloquialisms
+        - Be specific to THEIR situation — a poor daily-wage worker talks differently
+          than a middle-class professional
+        - Keep it 1-2 sentences MAX. Short, punchy, real.
+        - Sentiment: approve (things are okay), disapprove (frustrated), undecided
+
+        Return a JSON array:
+        [
+          {{
+            "citizen_id": "string",
+            "name": "string",
+            "reaction": "raw casual quote in their voice",
+            "sentiment": "approve|disapprove|undecided"
+          }}
+        ]
+
+        One entry per citizen, same order as input.
     """)
     raw = llm.chat_text(CITIZEN_VOICES_SYSTEM, prompt)
     data = _extract_json(raw)

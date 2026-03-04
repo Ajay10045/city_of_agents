@@ -290,6 +290,34 @@ class LLMClient:
         )
         return self._extract_anthropic_text(response)
 
+    def chat_text_stream(self, system: str, user: str):
+        """Send a prompt and yield text chunks as they arrive."""
+        if self.provider in {"openai", "deepseek", "ollama"}:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                temperature=self.temperature,
+                stream=True,
+            )
+            for chunk in response:
+                delta = chunk.choices[0].delta if chunk.choices else None
+                if delta and delta.content:
+                    yield delta.content
+
+        else:  # anthropic
+            with self.client.messages.stream(
+                model=self.model,
+                system=system,
+                messages=[{"role": "user", "content": user}],
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+            ) as stream:
+                for text in stream.text_stream:
+                    yield text
+
     def chat_messages(self, messages: list[dict[str, str]]) -> str:
         """Multi-turn chat. Returns plain text.
 
