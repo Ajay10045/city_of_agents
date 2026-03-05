@@ -561,6 +561,7 @@ interface TurnEntry {
   turn: number
   result: TurnResult
   expanded: boolean
+  voteBreakdown?: { approve: number; disapprove: number; total: number }
 }
 
 // ─── Portfolio image map ───────────────────────────────────────────────────────
@@ -971,6 +972,15 @@ function TurnPhaseCard({
                   </div>
                 </div>
               </div>
+              {entry.voteBreakdown && (
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
+                  <span style={{ fontSize: 9, color: '#22c55e', fontFamily: "'Share Tech Mono', monospace" }}>✓ {entry.voteBreakdown.approve} approve</span>
+                  <span style={{ fontSize: 9, color: '#4b6280' }}>·</span>
+                  <span style={{ fontSize: 9, color: '#f87171', fontFamily: "'Share Tech Mono', monospace" }}>✗ {entry.voteBreakdown.disapprove} disapprove</span>
+                  <span style={{ fontSize: 9, color: '#4b6280' }}>·</span>
+                  <span style={{ fontSize: 9, color: '#4b6280', fontFamily: "'Share Tech Mono', monospace" }}>{entry.voteBreakdown.total} polled</span>
+                </div>
+              )}
               {(() => {
                 if (!tr.ward_report || tr.ward_report.length === 0) return null;
                 const sorted = [...tr.ward_report].sort((a, b) => b.avg_wellbeing_delta - a.avg_wellbeing_delta);
@@ -1410,7 +1420,15 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
   const [liveApprovalVotes, setLiveApprovalVotes] = useState<{ sentiment: string; weight: number }[]>([])
   const [liveEvalReasoning, setLiveEvalReasoning] = useState<string | null>(null)
   // Live approval — updated from approval_final event so top bar updates before complete
-  const [liveApproval, setLiveApproval] = useState<number | null>(null)
+  // Initialized from initialState so the number is always visible (never resets to blank)
+  const [liveApproval, setLiveApproval] = useState<number | null>(initialState.interim_approval)
+  // Approval at end of the previous turn — stable baseline for the delta indicator.
+  // Null on turn 1 (no prior turn), so delta is hidden until the first turn completes.
+  const prevTurnApprovalRef = useRef<number | null>(
+    initialState.last_turn?.interim_approval ?? null
+  )
+  // Holds the approval_final breakdown until complete fires and attaches it to TurnEntry
+  const pendingVoteBreakdownRef = useRef<{ approve: number; disapprove: number; total: number } | null>(null)
 
   // Accumulated feed: voices + media accumulate turn-over-turn with a turn number tag
   const [allVoices, setAllVoices] = useState<(CitizenVoice & { turnNum: number })[]>([])
@@ -1422,6 +1440,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
   const [briefingStatus, setBriefingStatus] = useState('Initializing...')
   const [briefingItems, setBriefingItems] = useState<{ type: string; text: string }[]>([])
   const [briefingThinking, setBriefingThinking] = useState('')
+  const [briefingUnlockedTurn, setBriefingUnlockedTurn] = useState(initialState.current_turn)
   const briefingFetchedForTurn = useRef<number>(0)
   const briefingFeedEndRef = useRef<HTMLDivElement>(null)
   const briefingThinkingRef = useRef<HTMLDivElement>(null)
@@ -1546,6 +1565,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
 
     const turn = gameState.current_turn
     if (briefingFetchedForTurn.current >= turn) return
+    if (briefingUnlockedTurn < turn) return
     if (isTurnExecuting) return
     if (gameOver) return
 
@@ -1580,6 +1600,21 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
               items.push({ type: 'crisis', text: `🔴 Active crisis: ${e.name}` })
             }
             enqueueBriefingItems(items, 500)
+          }
+
+          if (type === 'mayor_summary') {
+            const electedOn = String(event.elected_on ?? '').trim()
+            const peopleLike = String(event.people_like ?? '').trim()
+            const peopleDislike = String(event.people_dislike ?? '').trim()
+            const mediaLike = String(event.media_like ?? '').trim()
+            const mediaDislike = String(event.media_dislike ?? '').trim()
+            const items: { type: string; text: string }[] = []
+            if (electedOn) items.push({ type: 'mandate', text: `🗳 Mandate: ${electedOn}` })
+            if (peopleLike) items.push({ type: 'people_like', text: `👍 People like: ${peopleLike}` })
+            if (peopleDislike) items.push({ type: 'people_dislike', text: `👎 People dislike: ${peopleDislike}` })
+            if (mediaLike) items.push({ type: 'media_like', text: `📰 Media likes: ${mediaLike}` })
+            if (mediaDislike) items.push({ type: 'media_dislike', text: `🎯 Media dislikes: ${mediaDislike}` })
+            if (items.length > 0) enqueueBriefingItems(items, 500)
           }
 
           if (type === 'status') {
@@ -1649,7 +1684,22 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
       briefingQueueCancelledRef.current = true
       briefingQueueRef.current = []
     }
-  }, [gameState.current_turn, isTurnExecuting, gameOver, gameId, enqueueBriefingItems, waitForBriefingQueueDrain])
+  }, [gameState.current_turn, briefingUnlockedTurn, isTurnExecuting, gameOver, gameId, enqueueBriefingItems, waitForBriefingQueueDrain])
+
+  const canPlayNextTurn = !briefingLoading
+    && !isTurnExecuting
+    && !gameOver
+    && briefingFetchedForTurn.current < gameState.current_turn
+    && briefingUnlockedTurn < gameState.current_turn
+
+  const handlePlayNextTurn = useCallback(() => {
+    if (!canPlayNextTurn) return
+    setShowPolicyModal(false)
+    setPolicyOptions(null)
+    setPolicyError(null)
+    setDiscussingPolicyIndex(null)
+    setBriefingUnlockedTurn(gameState.current_turn)
+  }, [canPlayNextTurn, gameState.current_turn])
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [chatMessages])
   const mediaHoveredRef = useRef(false)
@@ -1985,7 +2035,8 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
     setLiveMilestones([])
     setLiveApprovalVotes([])
     setLiveEvalReasoning(null)
-    setLiveApproval(null)
+    // Freeze baseline before this turn runs — persists through the complete event so delta stays correct
+    prevTurnApprovalRef.current = liveApproval ?? gameState.interim_approval
     hasChatThisTurnRef.current = false
 
     const selectedPolicy = policyOptions?.[index] ?? null
@@ -2000,7 +2051,11 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
 
           setGameState(newState)
           setLastTurn(tr)
-          const newEntry: TurnEntry = { turn: tr.turn, result: tr, expanded: true }
+          const newEntry: TurnEntry = {
+            turn: tr.turn, result: tr, expanded: true,
+            voteBreakdown: pendingVoteBreakdownRef.current ?? undefined,
+          }
+          pendingVoteBreakdownRef.current = null
           setTurnHistory(prev => [newEntry, ...prev.map(e => ({ ...e, expanded: false }))])
           setPolicyOptions(null)
           setDiscussingPolicyIndex(null)
@@ -2088,6 +2143,8 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
           const after = Math.round(event.approval as number)
           const dir = after >= before ? '↑' : '↓'
           const bd = event.breakdown as { approve: number; disapprove: number; total: number }
+          // Stash breakdown so it can be attached to TurnEntry when complete fires
+          pendingVoteBreakdownRef.current = bd
           // Update live approval so top bar reflects result before complete event fires
           setLiveApproval(after)
           setAllHeadlines(prev => [...prev, {
@@ -2149,8 +2206,12 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
 
   // Use liveApproval (from approval_final event) when available for real-time top bar update
   const approval = liveApproval ?? gameState.interim_approval
-  const prevApproval = lastTurn ? lastTurn.approval_before : gameState.interim_approval
-  const approvalDelta = approval - prevApproval
+  // Delta vs previous turn's end. prevTurnApprovalRef is frozen at each turn start so it
+  // doesn't chase liveApproval — avoids the delta collapsing to 0 after complete fires.
+  // Null on the very first turn (no prior turn) → delta hidden.
+  const approvalDelta = prevTurnApprovalRef.current !== null
+    ? approval - prevTurnApprovalRef.current
+    : 0
   const crises = gameState.active_events.filter(e => e.type === 'crisis')
   const opportunities = gameState.active_events.filter(e => e.type === 'opportunity')
   const allCrises: ActiveEvent[] = [...crises, ...opportunities]
@@ -2282,6 +2343,11 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                   color: item.type === 'alert' ? '#f59e0b'
                     : item.type === 'crisis' ? '#f87171'
                     : item.type === 'good' ? '#22c55e'
+                    : item.type === 'mandate' ? '#f0c040'
+                    : item.type === 'people_like' ? '#4ade80'
+                    : item.type === 'people_dislike' ? '#fb7185'
+                    : item.type === 'media_like' ? '#60a5fa'
+                    : item.type === 'media_dislike' ? '#fda4af'
                     : item.type === 'headline' ? '#60a5fa'
                     : item.type === 'voice' ? '#a78bfa'
                     : '#94a3b8',
@@ -2627,6 +2693,30 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
 
         {/* Controls */}
         <div className="flex items-center gap-2 ml-auto shrink-0">
+          {canPlayNextTurn && (
+            <button
+              onClick={handlePlayNextTurn}
+              className="shrink-0"
+              style={{
+                height: 34,
+                padding: '0 14px',
+                borderRadius: 7,
+                border: '1px solid rgba(255, 205, 96, 0.75)',
+                background: 'linear-gradient(135deg, #f59e0b 0%, #eab308 100%)',
+                color: '#1a1200',
+                fontFamily: "'Rajdhani', sans-serif",
+                fontSize: 12,
+                fontWeight: 800,
+                letterSpacing: '0.08em',
+                cursor: 'pointer',
+                boxShadow: '0 0 16px rgba(245,158,11,0.45), inset 0 1px 0 rgba(255,255,255,0.35)',
+                textTransform: 'uppercase',
+              }}
+              title={`Start turn ${gameState.current_turn} briefing`}
+            >
+              Play Next Turn
+            </button>
+          )}
           {[{ Icon: Clock, label: 'History' }, { Icon: HelpCircle, label: 'Help' }, { Icon: Settings, label: 'Settings' }]
             .map(({ Icon, label }) => (
               <button key={label} title={label}
