@@ -89,6 +89,7 @@ from simulation.llm_calls import (
     generate_citizen_names,
     generate_delivery_narrative,
     generate_media_headlines,
+    generate_mayor_briefing_summary,
     generate_policy_options,
     minister_response,
     poll_citizen_approval,
@@ -119,6 +120,7 @@ class GameSession:
         self._escalations: int = 0
         self._resolutions: int = 0
         self._initial_gov_params: dict[str, float] = {}
+        self._mayor_elected_on_summary: str | None = None
 
     # ------------------------------------------------------------------
     # Factory: start a new game
@@ -361,6 +363,31 @@ class GameSession:
             "best_3": [{"key": k, "value": round(v, 1)} for k, v in sorted_params[-3:]],
             "active_events": [e.model_dump() for e in state.active_events],
         }
+
+        _log("llm", "→ generate_mayor_briefing_summary() ...")
+        mayor_summary = generate_mayor_briefing_summary(
+            self.llm,
+            state,
+            self._mayor_elected_on_summary,
+        )
+        if mayor_summary:
+            if not self._mayor_elected_on_summary:
+                self._mayor_elected_on_summary = mayor_summary["elected_on"]
+                _log("info", "Mayor mandate summary cached from fresh output.")
+            else:
+                mayor_summary["elected_on"] = self._mayor_elected_on_summary
+                _log("info", "Mayor mandate summary reused from cache.")
+            yield {
+                "type": "mayor_summary",
+                "elected_on": mayor_summary["elected_on"],
+                "people_like": mayor_summary["people_like"],
+                "people_dislike": mayor_summary["people_dislike"],
+                "media_like": mayor_summary["media_like"],
+                "media_dislike": mayor_summary["media_dislike"],
+            }
+            _log("llm", "✓ mayor_briefing_summary emitted")
+        else:
+            _log("bad", "Mayor briefing summary unavailable this turn; continuing stream.")
 
         # ② Media headlines
         yield {"type": "status", "message": "Scanning media outlets..."}

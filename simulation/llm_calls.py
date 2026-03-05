@@ -27,6 +27,7 @@ from engine.models import (
     WardReportEntry,
     WellbeingState,
 )
+from engine.political import compute_interim_approval
 from llm.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
@@ -1477,6 +1478,199 @@ def generate_situational_chatter(
             sentiment=sentiment,
         ))
     return voices
+
+
+# ---------------------------------------------------------------------------
+# Briefing mayor summary
+# ---------------------------------------------------------------------------
+
+MAYOR_BRIEFING_SUMMARY_SYSTEM = textwrap.dedent("""\
+    You are a political strategy analyst writing a concise mayor briefing card.
+    Use only the provided signals. Be concrete, non-generic, and politically plausible.
+    Return valid JSON only.
+""")
+
+
+def _build_mayor_briefing_signals(state: GameState) -> dict[str, Any]:
+    params = state.city_params.as_dict()
+    sorted_params = sorted(params.items(), key=lambda x: x[1])
+    worst_3 = [f"{k.replace('_', ' ')} ({v:.1f})" for k, v in sorted_params[:3]]
+    best_3 = [f"{k.replace('_', ' ')} ({v:.1f})" for k, v in sorted_params[-3:]]
+
+    approval_pct = compute_interim_approval(state.citizens, state.city_params.media_freedom)
+
+    group_weighted: dict[str, dict[str, float]] = {}
+    for citizen in state.citizens:
+        group = citizen.demographics.profession or "Unknown"
+        weighted = group_weighted.setdefault(group, {"weight": 0.0, "approval_sum": 0.0})
+        weight = citizen.population_weight if citizen.population_weight > 0 else 1.0
+        weighted["weight"] += weight
+        weighted["approval_sum"] += weight * ((citizen.mayor_alignment + 100.0) / 2.0)
+
+    group_scores: list[tuple[str, float]] = []
+    for group_name, weighted in group_weighted.items():
+        denom = weighted["weight"] if weighted["weight"] > 0 else 1.0
+        group_scores.append((group_name, weighted["approval_sum"] / denom))
+    group_scores.sort(key=lambda x: x[1], reverse=True)
+    top_supportive = {
+        "group": group_scores[0][0] if group_scores else "n/a",
+        "approval": round(group_scores[0][1], 1) if group_scores else 50.0,
+    }
+    top_skeptical = {
+        "group": group_scores[-1][0] if group_scores else "n/a",
+        "approval": round(group_scores[-1][1], 1) if group_scores else 50.0,
+    }
+
+    def _clip(text: str, max_len: int = 120) -> str:
+        text = re.sub(r"\s+", " ", text).strip()
+        if len(text) <= max_len:
+            return text
+        cut = text[:max_len].rstrip()
+        at = cut.rfind(" ")
+        if at >= 20:
+            cut = cut[:at]
+        return cut.rstrip(".,;:") + "..."
+
+    last_turn = state.turn_history[-1] if state.turn_history else None
+    voice_examples: list[dict[str, str]] = []
+    if last_turn and last_turn.citizen_voices:
+        for voice in last_turn.citizen_voices[:5]:
+            voice_examples.append(
+                {
+                    "name": voice.name,
+                    "sentiment": voice.sentiment,
+                    "reaction": _clip(voice.reaction, 90),
+                }
+            )
+
+    headline_examples: list[dict[str, str]] = []
+    if last_turn and last_turn.media_headlines:
+        for headline in last_turn.media_headlines[:5]:
+            headline_examples.append(
+                {
+                    "outlet": headline.outlet,
+                    "lean": headline.lean,
+                    "headline": _clip(headline.headline, 95),
+                }
+            )
+
+    lean_weight = {"mayor": 0.0, "opposition": 0.0, "neutral": 0.0}
+    for outlet in state.media_outlets:
+        weight = max(0.0, float(outlet.reach)) * max(0.0, float(outlet.trust_rating))
+        lean_weight[outlet.lean] = lean_weight.get(outlet.lean, 0.0) + weight
+    lean_total = sum(lean_weight.values())
+    lean_split = {
+        key: round((value / lean_total) * 100.0, 1) if lean_total > 0 else 0.0
+        for key, value in lean_weight.items()
+    }
+
+    by_influence = sorted(
+        state.media_outlets,
+        key=lambda o: (o.reach * o.trust_rating),
+        reverse=True,
+    )
+    media_like_outlets = [o.name for o in by_influence if o.lean == "mayor"][:2]
+    media_dislike_outlets = [o.name for o in by_influence if o.lean == "opposition"][:2]
+
+    return {
+        "city_name": state.city_profile.city_name,
+        "turn": state.current_turn,
+        "approval_pct": round(approval_pct, 1),
+        "worst_3": worst_3,
+        "best_3": best_3,
+        "active_events": [
+            {
+                "name": event.name,
+                "type": event.type,
+                "severity": event.severity,
+                "turns_remaining": event.turns_remaining,
+            }
+            for event in state.active_events
+        ],
+        "top_supportive_group": top_supportive,
+        "top_skeptical_group": top_skeptical,
+        "voice_examples": voice_examples,
+        "media_lean_split": lean_split,
+        "media_like_outlets": media_like_outlets,
+        "media_dislike_outlets": media_dislike_outlets,
+        "headline_examples": headline_examples,
+    }
+
+
+def generate_mayor_briefing_summary(
+    llm: LLMClient,
+    state: GameState,
+    elected_on_context: str | None = None,
+) -> dict[str, str] | None:
+    """Generate a compact mayor mandate/likes-dislikes briefing summary.
+
+    Returns None on any parse/validation failure.
+    """
+    signals = _build_mayor_briefing_signals(state)
+    locked_mandate = (elected_on_context or "").strip()
+    mandate_instruction = (
+        f'Use this exact elected_on text verbatim: "{locked_mandate}". '
+        "Do not paraphrase it."
+        if locked_mandate
+        else "Generate elected_on as one concise sentence about the mayor's mandate."
+    )
+
+    prompt = textwrap.dedent(f"""\
+        City briefing inputs (JSON):
+        {json.dumps(signals, ensure_ascii=True, indent=2)}
+
+        Task:
+        - Write 5 short lines (single sentence each) describing mayor narrative context.
+        - {mandate_instruction}
+        - people_like / people_dislike must be grounded in current citizen sentiment signals.
+        - media_like / media_dislike must be grounded in outlet lean and headline signals.
+        - Keep each line under 22 words. No fluff.
+
+        Return ONLY valid JSON with this exact schema:
+        {{
+          "elected_on": "string",
+          "people_like": "string",
+          "people_dislike": "string",
+          "media_like": "string",
+          "media_dislike": "string"
+        }}
+    """)
+
+    try:
+        raw = llm.chat_text(MAYOR_BRIEFING_SUMMARY_SYSTEM, prompt)
+    except Exception as exc:
+        logger.warning("mayor_briefing_summary_llm_error: %s", exc)
+        return None
+
+    try:
+        parsed = _extract_json(raw)
+    except ValueError:
+        logger.warning("mayor_briefing_summary_parse_failed")
+        return None
+
+    if not isinstance(parsed, dict):
+        logger.warning("mayor_briefing_summary_not_object")
+        return None
+
+    required = [
+        "elected_on",
+        "people_like",
+        "people_dislike",
+        "media_like",
+        "media_dislike",
+    ]
+    cleaned: dict[str, str] = {}
+    for key in required:
+        value = parsed.get(key)
+        if not isinstance(value, str) or not value.strip():
+            logger.warning("mayor_briefing_summary_missing_field field=%s", key)
+            return None
+        cleaned[key] = re.sub(r"\s+", " ", value).strip()
+
+    if locked_mandate:
+        cleaned["elected_on"] = locked_mandate
+
+    return cleaned
 
 
 # ---------------------------------------------------------------------------
