@@ -89,10 +89,14 @@ from simulation.llm_calls import (
     generate_citizen_names,
     generate_delivery_narrative,
     generate_media_headlines,
+    generate_mayor_briefing_summary,
     generate_policy_options,
     minister_response,
     poll_citizen_approval,
     sample_citizen_reactions,
+    generate_situational_headlines,
+    generate_situational_chatter,
+    generate_policy_options_stream,
 )
 
 
@@ -116,6 +120,7 @@ class GameSession:
         self._escalations: int = 0
         self._resolutions: int = 0
         self._initial_gov_params: dict[str, float] = {}
+        self._mayor_elected_on_summary: str | None = None
 
     # ------------------------------------------------------------------
     # Factory: start a new game
@@ -334,6 +339,100 @@ class GameSession:
         amended = amend_policy_option(self.llm, self.state, existing, transcript, budget)
         self._pending_policy_options[index] = amended
         return amended
+
+    # ------------------------------------------------------------------
+    # Turn briefing (situational media + city chatter)
+    # ------------------------------------------------------------------
+
+    def generate_turn_briefing_stream(self):
+        """Yield SSE events as briefing components are generated."""
+        assert self.state
+        state = self.state
+        rng = random.Random(state.prng_seed + state.current_turn * 500)
+
+        # ① City snapshot
+        params = state.city_params.as_dict()
+        sorted_params = sorted(params.items(), key=lambda x: x[1])
+        yield {
+            "type": "city_snapshot",
+            "city_name": state.city_profile.city_name,
+            "turn": state.current_turn,
+            "treasury": state.treasury,
+            "params": params,
+            "worst_3": [{"key": k, "value": round(v, 1)} for k, v in sorted_params[:3]],
+            "best_3": [{"key": k, "value": round(v, 1)} for k, v in sorted_params[-3:]],
+            "active_events": [e.model_dump() for e in state.active_events],
+        }
+
+        _log("llm", "→ generate_mayor_briefing_summary() ...")
+        mayor_summary = generate_mayor_briefing_summary(
+            self.llm,
+            state,
+            self._mayor_elected_on_summary,
+        )
+        if mayor_summary:
+            if not self._mayor_elected_on_summary:
+                self._mayor_elected_on_summary = mayor_summary["elected_on"]
+                _log("info", "Mayor mandate summary cached from fresh output.")
+            else:
+                mayor_summary["elected_on"] = self._mayor_elected_on_summary
+                _log("info", "Mayor mandate summary reused from cache.")
+            yield {
+                "type": "mayor_summary",
+                "elected_on": mayor_summary["elected_on"],
+                "people_like": mayor_summary["people_like"],
+                "people_dislike": mayor_summary["people_dislike"],
+                "media_like": mayor_summary["media_like"],
+                "media_dislike": mayor_summary["media_dislike"],
+            }
+            _log("llm", "✓ mayor_briefing_summary emitted")
+        else:
+            _log("bad", "Mayor briefing summary unavailable this turn; continuing stream.")
+
+        # ② Media headlines
+        yield {"type": "status", "message": "Scanning media outlets..."}
+        headlines = generate_situational_headlines(
+            self.llm, state.media_outlets, state.city_profile.city_name,
+            params, state.treasury,
+            state.active_events, state.current_turn,
+        )
+        yield {
+            "type": "headlines",
+            "headlines": [h.model_dump() for h in headlines],
+        }
+
+        # ③ City chatter
+        yield {"type": "status", "message": "Listening to city chatter..."}
+        minister_ids = {m.citizen.id for m in state.ministers}
+        eligible = [c for c in state.citizens if c.id not in minister_ids]
+        sampled = rng.sample(eligible, min(5, len(eligible)))
+        sampled_dicts = [self._citizen_for_reaction(c) for c in sampled]
+        voices = generate_situational_chatter(
+            self.llm, sampled_dicts, state.city_profile.city_name,
+            params, state.city_profile.languages,
+        )
+        yield {
+            "type": "voices",
+            "voices": [v.model_dump() for v in voices],
+        }
+
+        # ④ Policy options (streaming with thinking)
+        yield {"type": "status", "message": "Drafting policy options..."}
+        full_transcript = "\n\n---\n\n".join(self._sealed_transcripts) if self._sealed_transcripts else ""
+        budget = state.city_profile.budget.max_policy_budget
+        for event in generate_policy_options_stream(self.llm, state, full_transcript, budget):
+            if event["type"] == "thinking":
+                yield {"type": "thinking", "chunk": event["chunk"]}
+            elif event["type"] == "policies":
+                self._pending_policy_options = event["options"]
+                yield {
+                    "type": "policies",
+                    "options": event["options"],
+                    "turn": state.current_turn,
+                }
+
+        # ⑤ Done
+        yield {"type": "complete"}
 
     # ------------------------------------------------------------------
     # Main turn executor

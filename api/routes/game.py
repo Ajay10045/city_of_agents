@@ -226,6 +226,23 @@ def amend_policy(game_id: str, req: AmendPolicyRequest) -> dict[str, Any]:
     }
 
 
+@router.get("/{game_id}/briefing")
+def get_turn_briefing(game_id: str) -> StreamingResponse:
+    """Stream situational briefing: city snapshot → headlines → chatter → policies."""
+    session = _get_session(game_id)
+
+    def _stream():
+        try:
+            for event in session.generate_turn_briefing_stream():
+                yield f"data: {json.dumps(event)}\n\n"
+        except Exception as exc:
+            traceback.print_exc()
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+
+    return StreamingResponse(_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
 @router.post("/{game_id}/turn")
 def execute_turn(game_id: str, req: TurnRequest) -> dict[str, Any]:
     """Execute a full turn.

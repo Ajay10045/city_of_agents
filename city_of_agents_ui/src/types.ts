@@ -204,3 +204,12 @@ export interface GovernanceScorecard {
   legacy_title: string
   summary: string
 }
+
+export interface BriefingMayorSummaryEvent {
+  type: 'mayor_summary'
+  elected_on: string
+  people_like: string
+  people_dislike: string
+  media_like: string
+  media_dislike: string
+}

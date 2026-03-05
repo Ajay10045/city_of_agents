@@ -27,6 +27,7 @@ from engine.models import (
     WardReportEntry,
     WellbeingState,
 )
+from engine.political import compute_interim_approval
 from llm.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
@@ -531,6 +532,18 @@ POLICY_DRAFT_SYSTEM = textwrap.dedent("""\
     Always return valid JSON.
 """)
 
+POLICY_DRAFT_SYSTEM_STREAM = textwrap.dedent("""\
+    You are a senior policy advisor for a city governance simulation game.
+    You generate realistic, balanced policy options based on the current city
+    situation and minister consultation. Policies must have trade-offs and
+    uncertainty — no silver bullets.
+
+    You are drafting ONE policy at a time.
+    First output concise policy reasoning inside <analysis>...</analysis>.
+    Then output one valid JSON policy object.
+    Do not output JSON inside <analysis>.
+""")
+
 PORTFOLIOS = [
     "Infrastructure",
     "Health & Education",
@@ -542,29 +555,43 @@ PORTFOLIOS = [
 ]
 
 
-def generate_policy_options(
-    llm: LLMClient,
+def _build_policy_prompt_context(
     state: GameState,
     consultation_transcript: str,
     available_budget: float,
-) -> list[dict[str, Any]]:
-    """Generate 3 policy options for the current turn, informed by consultation transcript.
-
-    Returns list of 3 policy dicts matching Policy schema.
-    """
+) -> dict[str, Any]:
     params = state.city_params.as_dict()
     params_str = "\n".join(f"  {k.replace('_', ' ').title()}: {v:.1f}" for k, v in params.items())
-
     active_events_str = ""
     if state.active_events:
         active_events_str = "Active events:\n" + "\n".join(
             f"  - {e.name} ({e.type}, {e.turns_remaining} turns left)" for e in state.active_events
         )
-
     ministers_str = "\n".join(_minister_profile_for_policy_prompt(m) for m in state.ministers)
     minister_names = [m.citizen.name for m in state.ministers]
+    return {
+        "state": state,
+        "params": params,
+        "params_str": params_str,
+        "active_events_str": active_events_str,
+        "ministers_str": ministers_str,
+        "minister_names": minister_names,
+        "consultation_transcript": consultation_transcript or "(No consultation this turn)",
+        "available_budget": available_budget,
+    }
 
-    prompt = textwrap.dedent(f"""\
+
+def _build_policy_options_prompt(context: dict[str, Any]) -> str:
+    state: GameState = context["state"]
+    params: dict[str, Any] = context["params"]
+    params_str: str = context["params_str"]
+    active_events_str: str = context["active_events_str"]
+    ministers_str: str = context["ministers_str"]
+    minister_names: list[str] = context["minister_names"]
+    consultation_transcript: str = context["consultation_transcript"]
+    available_budget: float = context["available_budget"]
+
+    return textwrap.dedent(f"""\
         City: {state.city_profile.city_name} | Turn: {state.current_turn}/{state.city_profile.game_config.total_turns}
         Treasury: {state.treasury:.0f} Cr | Debt: {state.outstanding_debt:.0f} Cr
         Available policy budget: {available_budget:.0f} Cr
@@ -578,7 +605,7 @@ def generate_policy_options(
         {active_events_str}
 
         --- Minister consultation transcript ---
-        {consultation_transcript or "(No consultation this turn)"}
+        {consultation_transcript}
         --- End transcript ---
 
         Generate exactly 3 distinct policy options for this turn.
@@ -627,6 +654,205 @@ def generate_policy_options(
         Valid param keys: {', '.join(params.keys())}
     """)
 
+
+def _build_single_policy_stream_prompt(
+    context: dict[str, Any],
+    policy_index: int,
+    drafted_options: list[dict[str, Any]],
+) -> str:
+    state: GameState = context["state"]
+    params: dict[str, Any] = context["params"]
+    params_str: str = context["params_str"]
+    active_events_str: str = context["active_events_str"]
+    ministers_str: str = context["ministers_str"]
+    minister_names: list[str] = context["minister_names"]
+    consultation_transcript: str = context["consultation_transcript"]
+    available_budget: float = context["available_budget"]
+    drafted_summary = [
+        {
+            "name": o.get("name", ""),
+            "portfolio": o.get("portfolio", ""),
+            "target_effects": o.get("target_effects", {}),
+            "budget_cost": o.get("budget_cost", 0),
+        }
+        for o in drafted_options
+        if isinstance(o, dict)
+    ]
+
+    return textwrap.dedent(f"""\
+        City: {state.city_profile.city_name} | Turn: {state.current_turn}/{state.city_profile.game_config.total_turns}
+        Treasury: {state.treasury:.0f} Cr | Debt: {state.outstanding_debt:.0f} Cr
+        Available policy budget: {available_budget:.0f} Cr
+
+        Current city parameters:
+        {params_str}
+
+        Cabinet (with personality profiles):
+        {ministers_str}
+
+        {active_events_str}
+
+        --- Minister consultation transcript ---
+        {consultation_transcript}
+        --- End transcript ---
+
+        You are drafting policy #{policy_index} of 3.
+        Already drafted policies (must stay distinct from these):
+        {json.dumps(drafted_summary, ensure_ascii=True)}
+
+        First output policy-specific reasoning in <analysis> tags using markdown-lite:
+        <analysis>
+        ## POLICY {policy_index} — Working Title
+        - **Why now:** one line
+        - **Plan logic:** top target + key side effect + tradeoff
+        - **Council vote:** X For · Y Against
+        - *For:* minister + short reason
+        - *Against:* minister + short reason
+        </analysis>
+
+        Then output ONE JSON policy object with this schema:
+        {{
+          "name": "string — short policy name",
+          "description": "string — 2-3 sentences describing the policy",
+          "portfolio": "one of: {', '.join(PORTFOLIOS)}",
+          "budget_cost": float,
+          "target_effects": {{"param_key": delta_float}},  // max ±10 per param
+          "side_effects": {{"param_key": delta_float}},    // max ±5 per param, can be negative
+          "time_profile": {{"turn_0": float, "turn_1": float}},  // must sum to 1.0
+          "targets": [
+            {{
+              "key": "param_key",
+              "label": "Human-readable label",
+              "unit": "points",
+              "proposed": delta_float,
+              "difficulty": float
+            }}
+          ],
+          "tradeoffs": "string",
+          "why_now": "string",
+          "advisor_stances": [
+            {{
+              "minister_name": "exact minister name",
+              "stance": "approve" or "disapprove",
+              "reason": "1 sentence in minister voice"
+            }}
+          ]
+        }}
+
+        Constraints:
+        - This policy must be distinct from already drafted ones by portfolio mix, targets, and tradeoff profile.
+        - budget_cost must be <= {available_budget:.0f}
+        - advisor_stances MUST contain exactly {len(minister_names)} entries with exact names from:
+          {json.dumps(minister_names, ensure_ascii=True)}
+        - reasons must reference personality/portfolio tradeoffs.
+        - Valid param keys: {', '.join(params.keys())}
+        - Do NOT include any text outside <analysis>...</analysis> and the JSON object.
+    """)
+
+
+def _probable_json_start_index(text: str) -> int:
+    leading = len(text) - len(text.lstrip())
+    stripped = text.lstrip()
+    if stripped.startswith("{") or stripped.startswith("["):
+        return leading
+    m = re.search(r"\n\s*[\[{]\s*(?:[\[{]|\")", text)
+    if m:
+        return m.start() + 1
+    return -1
+
+
+def _iter_smoothed_thinking_chunks(text: str, max_chars: int = 120) -> list[str]:
+    out: list[str] = []
+    pending = text
+    while pending:
+        if len(pending) <= max_chars:
+            out.append(pending)
+            break
+        window = pending[: max_chars + 1]
+        split_at = max(
+            window.rfind(". "),
+            window.rfind("? "),
+            window.rfind("! "),
+            window.rfind("\n"),
+            window.rfind("; "),
+            window.rfind(", "),
+            window.rfind(" "),
+        )
+        if split_at <= 0:
+            split_at = max_chars
+        else:
+            split_at += 1
+        out.append(pending[:split_at])
+        pending = pending[split_at:]
+    return [chunk for chunk in out if chunk]
+
+
+def _clean_reasoning_line(text: Any, fallback: str = "") -> str:
+    if not isinstance(text, str):
+        return fallback
+    cleaned = re.sub(r"\s+", " ", text).strip()
+    return cleaned or fallback
+
+
+def _shorten_reason(text: str, max_len: int = 120) -> str:
+    if len(text) <= max_len:
+        return text
+    cut = text[:max_len].rstrip()
+    last_space = cut.rfind(" ")
+    if last_space >= 20:
+        cut = cut[:last_space]
+    return cut.rstrip(".,;:") + "..."
+
+
+def _policy_vote_summary(policy: dict[str, Any]) -> dict[str, Any]:
+    stances = policy.get("advisor_stances", [])
+    if not isinstance(stances, list):
+        stances = []
+
+    approve: list[tuple[str, str]] = []
+    disapprove: list[tuple[str, str]] = []
+    for stance in stances:
+        if not isinstance(stance, dict):
+            continue
+        name_raw = stance.get("minister_name") or stance.get("ministerName")
+        name = _clean_reasoning_line(name_raw, "Unnamed Minister")
+        reason = _clean_reasoning_line(stance.get("reason"), "No reason provided.")
+        vote = _normalise_stance(stance.get("stance"))
+        if vote == "approve":
+            approve.append((name, reason))
+        elif vote == "disapprove":
+            disapprove.append((name, reason))
+
+    summary: dict[str, Any] = {
+        "for_count": len(approve),
+        "against_count": len(disapprove),
+        "for_line": None,
+        "against_line": None,
+        "limited": len(approve) + len(disapprove) == 0,
+    }
+    if approve:
+        n, r = approve[0]
+        summary["for_line"] = f"{n} — {_shorten_reason(r, 110)}"
+    if disapprove:
+        n, r = disapprove[0]
+        summary["against_line"] = f"{n} — {_shorten_reason(r, 110)}"
+    return summary
+
+
+def generate_policy_options(
+    llm: LLMClient,
+    state: GameState,
+    consultation_transcript: str,
+    available_budget: float,
+) -> list[dict[str, Any]]:
+    """Generate 3 policy options for the current turn, informed by consultation transcript.
+
+    Returns list of 3 policy dicts matching Policy schema.
+    """
+    context = _build_policy_prompt_context(state, consultation_transcript, available_budget)
+    ministers_str = context["ministers_str"]
+    prompt = _build_policy_options_prompt(context)
+
     raw = llm.chat_text(POLICY_DRAFT_SYSTEM, prompt)
     try:
         options = _extract_json(raw)
@@ -642,6 +868,172 @@ def generate_policy_options(
             opt["side_effects"][key] = max(-5.0, min(5.0, float(opt["side_effects"][key])))
         _finalise_policy_advisor_stances(llm, opt, state.ministers, ministers_str)
     return options[:3]
+
+
+def generate_policy_options_stream(
+    llm: LLMClient,
+    state: GameState,
+    consultation_transcript: str,
+    available_budget: float,
+):
+    """Stream policy generation in linked sequential mode (1 policy per LLM call).
+
+    Yields dicts with:
+      {"type": "thinking", "chunk": str}  — analysis text from <analysis>...</analysis>
+      {"type": "policies", "options": list}  — final parsed policies
+    """
+    context = _build_policy_prompt_context(state, consultation_transcript, available_budget)
+    ministers_str = context["ministers_str"]
+    options: list[dict[str, Any]] = []
+    total_chunks = 0
+    total_chars = 0
+
+    analysis_open = "<analysis>"
+    analysis_close = "</analysis>"
+
+    for policy_idx in range(1, 4):
+        if policy_idx > 1:
+            total_chunks += 1
+            total_chars += 1
+            yield {"type": "thinking", "chunk": "\n"}
+
+        prompt = _build_single_policy_stream_prompt(context, policy_idx, options)
+        logger.debug("policy_stream_draft_started index=%d", policy_idx)
+
+        raw_chunks: list[str] = []
+        parse_buffer = ""
+        in_analysis = False
+        found_open = False
+        found_close = False
+        emitted_this_policy = 0
+        emitted_this_chars = 0
+
+        for chunk in llm.chat_text_stream(POLICY_DRAFT_SYSTEM_STREAM, prompt):
+            raw_chunks.append(chunk)
+            parse_buffer += chunk
+
+            while True:
+                if not in_analysis:
+                    start_idx = parse_buffer.find(analysis_open)
+                    if start_idx == -1:
+                        keep = len(analysis_open) - 1
+                        if len(parse_buffer) > keep:
+                            parse_buffer = parse_buffer[-keep:]
+                        break
+
+                    found_open = True
+                    in_analysis = True
+                    parse_buffer = parse_buffer[start_idx + len(analysis_open):]
+                    continue
+
+                end_idx = parse_buffer.find(analysis_close)
+                if end_idx == -1:
+                    json_idx = _probable_json_start_index(parse_buffer)
+                    if json_idx != -1:
+                        safe_text = parse_buffer[:json_idx]
+                        if safe_text:
+                            for out in _iter_smoothed_thinking_chunks(safe_text):
+                                emitted_this_policy += 1
+                                emitted_this_chars += len(out)
+                                total_chunks += 1
+                                total_chars += len(out)
+                                yield {"type": "thinking", "chunk": out}
+                        parse_buffer = ""
+                        in_analysis = False
+                        break
+
+                    keep = len(analysis_close) - 1
+                    emit_upto = max(0, len(parse_buffer) - keep)
+                    if emit_upto > 0:
+                        out_text = parse_buffer[:emit_upto]
+                        for out in _iter_smoothed_thinking_chunks(out_text):
+                            emitted_this_policy += 1
+                            emitted_this_chars += len(out)
+                            total_chunks += 1
+                            total_chars += len(out)
+                            yield {"type": "thinking", "chunk": out}
+                        parse_buffer = parse_buffer[emit_upto:]
+                    break
+
+                found_close = True
+                out_text = parse_buffer[:end_idx]
+                if out_text:
+                    for out in _iter_smoothed_thinking_chunks(out_text):
+                        emitted_this_policy += 1
+                        emitted_this_chars += len(out)
+                        total_chunks += 1
+                        total_chars += len(out)
+                        yield {"type": "thinking", "chunk": out}
+                parse_buffer = parse_buffer[end_idx + len(analysis_close):]
+                in_analysis = False
+                break
+
+        if not found_open:
+            logger.warning("policy_stream_missing_analysis index=%d", policy_idx)
+        elif not found_close:
+            logger.warning("policy_stream_unclosed_analysis index=%d", policy_idx)
+
+        raw = "".join(raw_chunks)
+        try:
+            parsed = _extract_json(raw)
+        except ValueError:
+            logger.warning("policy_stream_json_parse_failed index=%d", policy_idx)
+            parsed = {}
+
+        if isinstance(parsed, list):
+            policy_raw = parsed[0] if parsed and isinstance(parsed[0], dict) else {}
+        elif isinstance(parsed, dict):
+            policy_raw = parsed
+        else:
+            policy_raw = {}
+
+        if not isinstance(policy_raw, dict) or not policy_raw:
+            logger.warning("policy_stream_empty_policy index=%d", policy_idx)
+            continue
+
+        for key in policy_raw.get("target_effects", {}):
+            policy_raw["target_effects"][key] = max(-10.0, min(10.0, float(policy_raw["target_effects"][key])))
+        for key in policy_raw.get("side_effects", {}):
+            policy_raw["side_effects"][key] = max(-5.0, min(5.0, float(policy_raw["side_effects"][key])))
+        _finalise_policy_advisor_stances(llm, policy_raw, state.ministers, ministers_str)
+
+        options.append(policy_raw)
+
+        vote = _policy_vote_summary(policy_raw)
+        if not re.search(rf"(^|\n)\s*##\s*POLICY\s*{policy_idx}\b", raw, flags=re.IGNORECASE):
+            policy_name = _clean_reasoning_line(policy_raw.get("name"), f"Policy {policy_idx}")
+            fallback_line = f"## POLICY {policy_idx} — {policy_name}\n"
+            for out in _iter_smoothed_thinking_chunks(fallback_line):
+                emitted_this_policy += 1
+                emitted_this_chars += len(out)
+                total_chunks += 1
+                total_chars += len(out)
+                yield {"type": "thinking", "chunk": out}
+
+        vote_line = f"- **Council vote:** {vote['for_count']} For · {vote['against_count']} Against\n"
+        for out in _iter_smoothed_thinking_chunks(vote_line):
+            emitted_this_policy += 1
+            emitted_this_chars += len(out)
+            total_chunks += 1
+            total_chars += len(out)
+            yield {"type": "thinking", "chunk": out}
+
+        logger.debug(
+            "policy_stream_draft_completed index=%d name=%r thinking_chunks=%d thinking_chars=%d stance_count=%d",
+            policy_idx,
+            policy_raw.get("name"),
+            emitted_this_policy,
+            emitted_this_chars,
+            len(policy_raw.get("advisor_stances", [])) if isinstance(policy_raw.get("advisor_stances", []), list) else 0,
+        )
+
+    logger.info(
+        "policy_stream_finished policies=%d thinking_chunks=%d thinking_chars=%d",
+        len(options[:3]),
+        total_chunks,
+        total_chars,
+    )
+    yield {"type": "policies", "options": options[:3]}
 
 
 def amend_policy_option(
@@ -842,6 +1234,68 @@ def generate_media_headlines(
     return headlines
 
 
+def generate_situational_headlines(
+    llm: LLMClient,
+    outlets: list[MediaOutletState],
+    city_name: str,
+    city_params: dict[str, float],
+    treasury: float,
+    active_events: list[ActiveEvent],
+    turn: int,
+) -> list[MediaHeadline]:
+    """Generate headlines about the city's current state (not a specific policy)."""
+    # Sort params to find worst and best
+    sorted_params = sorted(city_params.items(), key=lambda x: x[1])
+    worst_3 = ", ".join(f"{k.replace('_', ' ').title()} ({v:.0f})" for k, v in sorted_params[:3])
+    best_3 = ", ".join(f"{k.replace('_', ' ').title()} ({v:.0f})" for k, v in sorted_params[-3:])
+    events_str = ", ".join(e.name for e in active_events) if active_events else "none"
+    outlets_desc = "\n".join(
+        f"  {o.name} (lean={o.lean}, sensationalism={o.sensationalism:.0f})"
+        for o in outlets
+    )
+
+    prompt = textwrap.dedent(f"""\
+        City: {city_name} — Turn {turn}
+        Treasury: {treasury:.0f} Cr
+        Weakest areas: {worst_3}
+        Strongest areas: {best_3}
+        Active crises/events: {events_str}
+
+        Media outlets:
+        {outlets_desc}
+
+        Generate one realistic headline for each outlet about the current state of
+        the city — infrastructure, public services, economy, governance, or social
+        conditions. Each headline should reflect the outlet's political lean and
+        sensationalism level. Do NOT reference any specific policy — these are
+        situational headlines about what's happening in the city right now.
+
+        Return a JSON array:
+        [
+          {{"outlet": "outlet name", "lean": "mayor|opposition|neutral", "headline": "string"}}
+        ]
+
+        One entry per outlet. Outlet names must match exactly.
+    """)
+    raw = llm.chat_text(HEADLINES_SYSTEM, prompt)
+    data = _extract_json(raw)
+    if not isinstance(data, list):
+        data = []
+    headlines = []
+    outlet_names = {o.name: o.lean for o in outlets}
+    for item in data:
+        if isinstance(item, dict) and "outlet" in item and "headline" in item:
+            lean = item.get("lean") or outlet_names.get(item["outlet"], "neutral")
+            if lean not in ("mayor", "opposition", "neutral"):
+                lean = "neutral"
+            headlines.append(MediaHeadline(
+                outlet=item["outlet"],
+                lean=lean,
+                headline=item["headline"],
+            ))
+    return headlines
+
+
 # ---------------------------------------------------------------------------
 # Citizen reaction sampling
 # ---------------------------------------------------------------------------
@@ -944,6 +1398,279 @@ def sample_citizen_reactions(
             sentiment=sentiment,
         ))
     return voices
+
+
+def generate_situational_chatter(
+    llm: LLMClient,
+    sampled_citizens: list[dict[str, Any]],
+    city_name: str,
+    city_params: dict[str, float],
+    languages: list[str] | None = None,
+) -> list[CitizenVoice]:
+    """Generate citizen chatter about daily city life (not reacting to a policy)."""
+    sorted_params = sorted(city_params.items(), key=lambda x: x[1])
+    worst_3 = ", ".join(f"{k.replace('_', ' ').title()} ({v:.0f}/100)" for k, v in sorted_params[:3])
+
+    citizens_str = "\n".join(
+        f"  {i+1}. {c['name']} — {c['demographics']} | ideology: {c['ideology']} | "
+        f"wellbeing: {c['wellbeing']:.0f}/100"
+        + (f" | personality: {c['personality']}" if c.get('personality') else "")
+        for i, c in enumerate(sampled_citizens)
+    )
+
+    lang_note = ""
+    if languages:
+        lang_note = f"\n        City languages: {', '.join(languages)}. Citizens may naturally mix these with English.\n"
+
+    prompt = textwrap.dedent(f"""\
+        City: {city_name}
+        Weakest city areas: {worst_3}
+        {lang_note}
+        Citizens:
+        {citizens_str}
+
+        These citizens are chatting about daily life in {city_name} — NOT reacting
+        to any specific government policy. They are talking about what they experience
+        every day: traffic, water supply, safety, jobs, prices, pollution, schools,
+        hospitals, community life, etc.
+
+        Write one casual, raw reaction per citizen — like WhatsApp forwards, chai-stall
+        chatter, or auto-rickshaw conversation. Match their demographics and personality.
+
+        Style rules:
+        - Mix mother tongue with English naturally (Hinglish, Tanglish, etc.)
+        - Use slang and colloquialisms
+        - Be specific to THEIR situation — a poor daily-wage worker talks differently
+          than a middle-class professional
+        - Keep it 1-2 sentences MAX. Short, punchy, real.
+        - Sentiment: approve (things are okay), disapprove (frustrated), undecided
+
+        Return a JSON array:
+        [
+          {{
+            "citizen_id": "string",
+            "name": "string",
+            "reaction": "raw casual quote in their voice",
+            "sentiment": "approve|disapprove|undecided"
+          }}
+        ]
+
+        One entry per citizen, same order as input.
+    """)
+    raw = llm.chat_text(CITIZEN_VOICES_SYSTEM, prompt)
+    data = _extract_json(raw)
+    if not isinstance(data, list):
+        data = []
+
+    voices = []
+    for item, c in zip(data, sampled_citizens):
+        if not isinstance(item, dict):
+            continue
+        sentiment = item.get("sentiment", "undecided")
+        if sentiment not in ("approve", "disapprove", "undecided"):
+            sentiment = "undecided"
+        voices.append(CitizenVoice(
+            citizen_id=c["id"],
+            name=item.get("name") or c["name"],
+            demographics_summary=c["demographics"],
+            ideology=c["ideology"],
+            reaction=item.get("reaction", ""),
+            sentiment=sentiment,
+        ))
+    return voices
+
+
+# ---------------------------------------------------------------------------
+# Briefing mayor summary
+# ---------------------------------------------------------------------------
+
+MAYOR_BRIEFING_SUMMARY_SYSTEM = textwrap.dedent("""\
+    You are a political strategy analyst writing a concise mayor briefing card.
+    Use only the provided signals. Be concrete, non-generic, and politically plausible.
+    Return valid JSON only.
+""")
+
+
+def _build_mayor_briefing_signals(state: GameState) -> dict[str, Any]:
+    params = state.city_params.as_dict()
+    sorted_params = sorted(params.items(), key=lambda x: x[1])
+    worst_3 = [f"{k.replace('_', ' ')} ({v:.1f})" for k, v in sorted_params[:3]]
+    best_3 = [f"{k.replace('_', ' ')} ({v:.1f})" for k, v in sorted_params[-3:]]
+
+    approval_pct = compute_interim_approval(state.citizens, state.city_params.media_freedom)
+
+    group_weighted: dict[str, dict[str, float]] = {}
+    for citizen in state.citizens:
+        group = citizen.demographics.profession or "Unknown"
+        weighted = group_weighted.setdefault(group, {"weight": 0.0, "approval_sum": 0.0})
+        weight = citizen.population_weight if citizen.population_weight > 0 else 1.0
+        weighted["weight"] += weight
+        weighted["approval_sum"] += weight * ((citizen.mayor_alignment + 100.0) / 2.0)
+
+    group_scores: list[tuple[str, float]] = []
+    for group_name, weighted in group_weighted.items():
+        denom = weighted["weight"] if weighted["weight"] > 0 else 1.0
+        group_scores.append((group_name, weighted["approval_sum"] / denom))
+    group_scores.sort(key=lambda x: x[1], reverse=True)
+    top_supportive = {
+        "group": group_scores[0][0] if group_scores else "n/a",
+        "approval": round(group_scores[0][1], 1) if group_scores else 50.0,
+    }
+    top_skeptical = {
+        "group": group_scores[-1][0] if group_scores else "n/a",
+        "approval": round(group_scores[-1][1], 1) if group_scores else 50.0,
+    }
+
+    def _clip(text: str, max_len: int = 120) -> str:
+        text = re.sub(r"\s+", " ", text).strip()
+        if len(text) <= max_len:
+            return text
+        cut = text[:max_len].rstrip()
+        at = cut.rfind(" ")
+        if at >= 20:
+            cut = cut[:at]
+        return cut.rstrip(".,;:") + "..."
+
+    last_turn = state.turn_history[-1] if state.turn_history else None
+    voice_examples: list[dict[str, str]] = []
+    if last_turn and last_turn.citizen_voices:
+        for voice in last_turn.citizen_voices[:5]:
+            voice_examples.append(
+                {
+                    "name": voice.name,
+                    "sentiment": voice.sentiment,
+                    "reaction": _clip(voice.reaction, 90),
+                }
+            )
+
+    headline_examples: list[dict[str, str]] = []
+    if last_turn and last_turn.media_headlines:
+        for headline in last_turn.media_headlines[:5]:
+            headline_examples.append(
+                {
+                    "outlet": headline.outlet,
+                    "lean": headline.lean,
+                    "headline": _clip(headline.headline, 95),
+                }
+            )
+
+    lean_weight = {"mayor": 0.0, "opposition": 0.0, "neutral": 0.0}
+    for outlet in state.media_outlets:
+        weight = max(0.0, float(outlet.reach)) * max(0.0, float(outlet.trust_rating))
+        lean_weight[outlet.lean] = lean_weight.get(outlet.lean, 0.0) + weight
+    lean_total = sum(lean_weight.values())
+    lean_split = {
+        key: round((value / lean_total) * 100.0, 1) if lean_total > 0 else 0.0
+        for key, value in lean_weight.items()
+    }
+
+    by_influence = sorted(
+        state.media_outlets,
+        key=lambda o: (o.reach * o.trust_rating),
+        reverse=True,
+    )
+    media_like_outlets = [o.name for o in by_influence if o.lean == "mayor"][:2]
+    media_dislike_outlets = [o.name for o in by_influence if o.lean == "opposition"][:2]
+
+    return {
+        "city_name": state.city_profile.city_name,
+        "turn": state.current_turn,
+        "approval_pct": round(approval_pct, 1),
+        "worst_3": worst_3,
+        "best_3": best_3,
+        "active_events": [
+            {
+                "name": event.name,
+                "type": event.type,
+                "severity": event.severity,
+                "turns_remaining": event.turns_remaining,
+            }
+            for event in state.active_events
+        ],
+        "top_supportive_group": top_supportive,
+        "top_skeptical_group": top_skeptical,
+        "voice_examples": voice_examples,
+        "media_lean_split": lean_split,
+        "media_like_outlets": media_like_outlets,
+        "media_dislike_outlets": media_dislike_outlets,
+        "headline_examples": headline_examples,
+    }
+
+
+def generate_mayor_briefing_summary(
+    llm: LLMClient,
+    state: GameState,
+    elected_on_context: str | None = None,
+) -> dict[str, str] | None:
+    """Generate a compact mayor mandate/likes-dislikes briefing summary.
+
+    Returns None on any parse/validation failure.
+    """
+    signals = _build_mayor_briefing_signals(state)
+    locked_mandate = (elected_on_context or "").strip()
+    mandate_instruction = (
+        f'Use this exact elected_on text verbatim: "{locked_mandate}". '
+        "Do not paraphrase it."
+        if locked_mandate
+        else "Generate elected_on as one concise sentence about the mayor's mandate."
+    )
+
+    prompt = textwrap.dedent(f"""\
+        City briefing inputs (JSON):
+        {json.dumps(signals, ensure_ascii=True, indent=2)}
+
+        Task:
+        - Write 5 short lines (single sentence each) describing mayor narrative context.
+        - {mandate_instruction}
+        - people_like / people_dislike must be grounded in current citizen sentiment signals.
+        - media_like / media_dislike must be grounded in outlet lean and headline signals.
+        - Keep each line under 22 words. No fluff.
+
+        Return ONLY valid JSON with this exact schema:
+        {{
+          "elected_on": "string",
+          "people_like": "string",
+          "people_dislike": "string",
+          "media_like": "string",
+          "media_dislike": "string"
+        }}
+    """)
+
+    try:
+        raw = llm.chat_text(MAYOR_BRIEFING_SUMMARY_SYSTEM, prompt)
+    except Exception as exc:
+        logger.warning("mayor_briefing_summary_llm_error: %s", exc)
+        return None
+
+    try:
+        parsed = _extract_json(raw)
+    except ValueError:
+        logger.warning("mayor_briefing_summary_parse_failed")
+        return None
+
+    if not isinstance(parsed, dict):
+        logger.warning("mayor_briefing_summary_not_object")
+        return None
+
+    required = [
+        "elected_on",
+        "people_like",
+        "people_dislike",
+        "media_like",
+        "media_dislike",
+    ]
+    cleaned: dict[str, str] = {}
+    for key in required:
+        value = parsed.get(key)
+        if not isinstance(value, str) or not value.strip():
+            logger.warning("mayor_briefing_summary_missing_field field=%s", key)
+            return None
+        cleaned[key] = re.sub(r"\s+", " ", value).strip()
+
+    if locked_mandate:
+        cleaned["elected_on"] = locked_mandate
+
+    return cleaned
 
 
 # ---------------------------------------------------------------------------
