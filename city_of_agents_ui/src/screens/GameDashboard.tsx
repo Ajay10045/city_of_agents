@@ -719,6 +719,9 @@ function parseMentioned(msg: string, ministers: Minister[]): number[] {
 
 const BROADCAST_RE = /(?:^|\s)@\s*(?:all|everyone)(?:\s|$)/i
 
+// Phrases that signal the mayor wants to draft / finalise the policy
+const DRAFT_INTENT_RE = /\b(draft|finali[sz]e|conclud|let'?s\s+(do\s+it|go ahead|proceed|wrap\s*up)|ok\s+approved|approved|let'?s\s+draft|draft\s+(the\s+)?polic|update\s+(the\s+)?polic|amend\s+(the\s+)?polic)\b/i
+
 /**
  * Select which ministers should respond.
  *
@@ -1438,16 +1441,22 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
   const [briefingLoading, setBriefingLoading] = useState(true)
   const [briefingStage, setBriefingStage] = useState(0) // 0-4 progress steps
   const [briefingStatus, setBriefingStatus] = useState('Initializing...')
-  const [briefingItems, setBriefingItems] = useState<{ type: string; text: string }[]>([])
   const [briefingThinking, setBriefingThinking] = useState('')
   const [briefingUnlockedTurn, setBriefingUnlockedTurn] = useState(initialState.current_turn)
   const briefingFetchedForTurn = useRef<number>(0)
-  const briefingFeedEndRef = useRef<HTMLDivElement>(null)
   const briefingThinkingRef = useRef<HTMLDivElement>(null)
-  const briefingQueueRef = useRef<{ type: string; text: string; delayMs: number }[]>([])
-  const briefingQueueRunningRef = useRef(false)
   const briefingQueueCancelledRef = useRef(false)
   const reasoningBlocks = useMemo(() => parseReasoning(briefingThinking), [briefingThinking])
+  // Minister briefing scene
+  const [briefingLines, setBriefingLines] = useState<{ minister_name: string; portfolio: string; line: string }[]>([])
+  const [briefingVisibleLines, setBriefingVisibleLines] = useState<
+    { minister_name: string; portfolio: string; line: string; typewriterText: string; done: boolean }[]
+  >([])
+  const briefingSceneScrollRef = useRef<HTMLDivElement>(null)
+  // Loading ticker
+  const [briefingTickerItems, setBriefingTickerItems] = useState<{ type: string; text: string; id: number }[]>([])
+  const briefingTickerIdRef = useRef(0)
+  const briefingTickerEndRef = useRef<HTMLDivElement>(null)
 
   // Game over
   const [gameOver, setGameOver] = useState(false)
@@ -1523,41 +1532,6 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
   }
 
   // ── Auto-briefing + auto-policies on turn start ──────────────────────────
-  const processBriefingQueue = useCallback(async () => {
-    if (briefingQueueRunningRef.current) return
-    briefingQueueRunningRef.current = true
-    try {
-      while (!briefingQueueCancelledRef.current && briefingQueueRef.current.length > 0) {
-        const next = briefingQueueRef.current.shift()
-        if (!next) continue
-        setBriefingItems(prev => [...prev, { type: next.type, text: next.text }])
-        briefingFeedEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-        await new Promise(r => setTimeout(r, next.delayMs))
-      }
-    } finally {
-      briefingQueueRunningRef.current = false
-    }
-  }, [])
-
-  const enqueueBriefingItems = useCallback((
-    items: { type: string; text: string }[],
-    delayMs = 600,
-  ) => {
-    for (const item of items) {
-      briefingQueueRef.current.push({ ...item, delayMs })
-    }
-    void processBriefingQueue()
-  }, [processBriefingQueue])
-
-  const waitForBriefingQueueDrain = useCallback(async (maxWaitMs = 6000) => {
-    const started = Date.now()
-    while (Date.now() - started < maxWaitMs) {
-      const pending = briefingQueueRef.current.length
-      const running = briefingQueueRunningRef.current
-      if (!running && pending === 0) return
-      await new Promise(r => setTimeout(r, 50))
-    }
-  }, [])
 
   useEffect(() => {
     // Keep queue active even if this effect returns early (important for React StrictMode double-invoke).
@@ -1569,56 +1543,41 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
     if (isTurnExecuting) return
     if (gameOver) return
 
-    briefingQueueRef.current = []
-    briefingQueueRunningRef.current = false
     briefingFetchedForTurn.current = turn
     setBriefingLoading(true)
     setBriefingStage(0)
-    setBriefingStatus('Initializing...')
     setBriefingThinking('')
-    setBriefingItems([])
+    setBriefingLines([])
+    setBriefingVisibleLines([])
+    setBriefingTickerItems([])
+    briefingTickerIdRef.current = 0
 
     const run = async () => {
       try {
         for await (const event of streamTurnBriefing(gameId)) {
           const type = event.type as string
 
+          const pushTickerItems = async (items: { type: string; text: string }[], delayMs = 350) => {
+            for (const item of items) {
+              if (briefingQueueCancelledRef.current) return
+              const id = ++briefingTickerIdRef.current
+              setBriefingTickerItems(prev => [...prev, { ...item, id }])
+              briefingTickerEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+              await new Promise(r => setTimeout(r, delayMs))
+            }
+          }
+
           if (type === 'city_snapshot') {
             setBriefingStage(1)
-            setBriefingStatus('City snapshot loaded')
             const worst = (event.worst_3 as { key: string; value: number }[]) || []
             const best = (event.best_3 as { key: string; value: number }[]) || []
-            const items: { type: string; text: string }[] = []
-            for (const w of worst) {
-              items.push({ type: 'alert', text: `⚠ ${w.key.replace(/_/g, ' ')} at ${w.value}` })
-            }
-            for (const b of best) {
-              items.push({ type: 'good', text: `✓ ${b.key.replace(/_/g, ' ')} at ${b.value}` })
-            }
-            const activeEvents = (event.active_events as { name: string }[]) || []
-            for (const e of activeEvents) {
-              items.push({ type: 'crisis', text: `🔴 Active crisis: ${e.name}` })
-            }
-            enqueueBriefingItems(items, 500)
-          }
-
-          if (type === 'mayor_summary') {
-            const electedOn = String(event.elected_on ?? '').trim()
-            const peopleLike = String(event.people_like ?? '').trim()
-            const peopleDislike = String(event.people_dislike ?? '').trim()
-            const mediaLike = String(event.media_like ?? '').trim()
-            const mediaDislike = String(event.media_dislike ?? '').trim()
-            const items: { type: string; text: string }[] = []
-            if (electedOn) items.push({ type: 'mandate', text: `🗳 Mandate: ${electedOn}` })
-            if (peopleLike) items.push({ type: 'people_like', text: `👍 People like: ${peopleLike}` })
-            if (peopleDislike) items.push({ type: 'people_dislike', text: `👎 People dislike: ${peopleDislike}` })
-            if (mediaLike) items.push({ type: 'media_like', text: `📰 Media likes: ${mediaLike}` })
-            if (mediaDislike) items.push({ type: 'media_dislike', text: `🎯 Media dislikes: ${mediaDislike}` })
-            if (items.length > 0) enqueueBriefingItems(items, 500)
-          }
-
-          if (type === 'status') {
-            setBriefingStatus(event.message as string)
+            const crises = (event.active_events as { name: string }[]) || []
+            const items: { type: string; text: string }[] = [
+              ...worst.map(w => ({ type: 'alert', text: `⚠ ${w.key.replace(/_/g, ' ')} at ${w.value}` })),
+              ...best.map(b => ({ type: 'good', text: `✓ ${b.key.replace(/_/g, ' ')} at ${b.value}` })),
+              ...crises.map(c => ({ type: 'crisis', text: `🔴 Active crisis: ${c.name}` })),
+            ]
+            void pushTickerItems(items, 350)
           }
 
           if (type === 'headlines') {
@@ -1628,9 +1587,9 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
               ...prev,
               ...headlines.map(h => ({ ...h, turnNum: turn })),
             ])
-            enqueueBriefingItems(
+            void pushTickerItems(
               headlines.map(h => ({ type: 'headline', text: `📰 ${h.outlet}: ${h.headline}` })),
-              500,
+              400,
             )
           }
 
@@ -1641,10 +1600,44 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
               ...prev,
               ...voices.map(v => ({ ...v, turnNum: turn })),
             ])
-            enqueueBriefingItems(
-              voices.map(v => ({ type: 'voice', text: `💬 ${v.name}: "${v.reaction}"` })),
-              500,
+            void pushTickerItems(
+              voices.map(v => ({ type: 'voice', text: `💬 ${v.reaction}` })),
+              400,
             )
+          }
+
+          if (type === 'minister_briefing') {
+            const lines = event.lines as { minister_name: string; portfolio: string; line: string }[]
+            setBriefingLines(lines)
+            setBriefingVisibleLines([])
+            let step = 0
+            const showNext = async () => {
+              if (briefingQueueCancelledRef.current) return
+              // Append this minister's entry (starts empty)
+              setBriefingVisibleLines(prev => [
+                ...prev,
+                { ...lines[step], typewriterText: '', done: false },
+              ])
+              await new Promise(r => setTimeout(r, 50)) // let React render the entry
+              const lineText = lines[step].line
+              for (let ci = 1; ci <= lineText.length; ci++) {
+                if (briefingQueueCancelledRef.current) return
+                const captured = ci
+                setBriefingVisibleLines(prev => prev.map((e, i) =>
+                  i === step ? { ...e, typewriterText: lineText.slice(0, captured) } : e
+                ))
+                briefingSceneScrollRef.current?.scrollTo({ top: briefingSceneScrollRef.current.scrollHeight, behavior: 'smooth' })
+                await new Promise(r => setTimeout(r, 28))
+              }
+              // Mark done
+              setBriefingVisibleLines(prev => prev.map((e, i) =>
+                i === step ? { ...e, done: true } : e
+              ))
+              await new Promise(r => setTimeout(r, 600))
+              step++
+              if (step < lines.length) await showNext()
+            }
+            void showNext()
           }
 
           if (type === 'thinking') {
@@ -1663,7 +1656,6 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
           }
 
           if (type === 'complete') {
-            await waitForBriefingQueueDrain(6000)
             await new Promise(r => setTimeout(r, 300))
             setBriefingLoading(false)
             setShowPolicyModal(true)
@@ -1682,9 +1674,8 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
     void run()
     return () => {
       briefingQueueCancelledRef.current = true
-      briefingQueueRef.current = []
     }
-  }, [gameState.current_turn, briefingUnlockedTurn, isTurnExecuting, gameOver, gameId, enqueueBriefingItems, waitForBriefingQueueDrain])
+  }, [gameState.current_turn, briefingUnlockedTurn, isTurnExecuting, gameOver, gameId])
 
   const canPlayNextTurn = !briefingLoading
     && !isTurnExecuting
@@ -1840,7 +1831,28 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
       ? `[Cabinet Meeting, Turn ${gameState.current_turn} — The Mayor addresses the full cabinet:]\nMayor: ${mayorMsg}`
       : `Mayor: ${mayorMsg}`
 
-    const fullMsg = turnCtx
+    // If a policy is under discussion, inject its full details so all advisors have context
+    const discussingPolicy = (discussingPolicyIndex !== null && policyOptions)
+      ? policyOptions[discussingPolicyIndex]
+      : null
+    const policyCtx = discussingPolicy
+      ? [
+          `[Policy under cabinet review: "${discussingPolicy.name}" (${discussingPolicy.portfolio})]`,
+          `Budget: ₹${fmtNum(discussingPolicy.budget_cost)} Cr`,
+          `Description: ${discussingPolicy.description}`,
+          Object.keys(discussingPolicy.target_effects).length > 0
+            ? `Target effects: ${Object.entries(discussingPolicy.target_effects).map(([k, v]) => `${k.replace(/_/g, ' ')} ${v >= 0 ? '+' : ''}${v}`).join(', ')}`
+            : '',
+          Object.keys(discussingPolicy.side_effects).length > 0
+            ? `Side effects: ${Object.entries(discussingPolicy.side_effects).map(([k, v]) => `${k.replace(/_/g, ' ')} ${v >= 0 ? '+' : ''}${v}`).join(', ')}`
+            : '',
+          discussingPolicy.tradeoffs ? `Tradeoffs: ${discussingPolicy.tradeoffs}` : '',
+          discussingPolicy.why_now ? `Why now: ${discussingPolicy.why_now}` : '',
+        ].filter(Boolean).join('\n')
+      : ''
+
+    const fullMsg = (policyCtx ? `${policyCtx}\n\n` : '')
+      + turnCtx
       + (mediaCtx ? `[Recent media coverage:\n${mediaCtx}]\n` : '')
       + (cityChatterCtx ? `[What citizens are saying:\n${cityChatterCtx}]\n` : '')
       + (priorSessionCtx ? `[Council room — earlier this session:\n${priorSessionCtx}]\n\n` : '')
@@ -1933,6 +1945,13 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
         }
       }
       console.log(`[Advisory Chat] Loop complete. ${roundReplies.length} replies collected.`)
+
+      // Auto-trigger Draft Policy if the mayor's message signals intent to finalise
+      // and a policy discussion is currently active
+      if (discussingPolicyIndex !== null && DRAFT_INTENT_RE.test(msg)) {
+        console.log('[Advisory Chat] Draft intent detected — auto-triggering handleDraftPolicy')
+        handleDraftPolicy()
+      }
     } catch (e: unknown) {
       const errMsg = e instanceof Error ? e.message : String(e)
       console.error(`[Advisory Chat] OUTER catch:`, e)
@@ -1992,9 +2011,15 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
   }
 
   // Policy selected for discussion → close modal, inject system message, return to chat
-  function handleDiscussPolicy(policy: Policy, index: number) {
+  async function handleDiscussPolicy(policy: Policy, index: number) {
     setShowPolicyModal(false)
     setDiscussingPolicyIndex(index)
+    // Force-close any open minister consultation so the next open starts fresh with
+    // policy context already in scope — prevents stale history without policy grounding
+    if (activeConsultRef.current) {
+      await closeConsultation(gameId).catch(() => { })
+      activeConsultRef.current = null
+    }
     // Keep policyOptions so we can amend in-place later
     const effectsSummary = Object.entries(policy.target_effects)
       .map(([k, v]) => `${k.replace(/_/g, ' ')} ${v >= 0 ? '+' : ''}${v}`)
@@ -2280,86 +2305,151 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
               CITY BRIEFING — TURN {gameState.current_turn}
             </div>
 
-            {/* Progress bar */}
-            <div style={{
-              width: '100%', height: 6, background: '#1c3652',
-              borderRadius: 3, marginBottom: 8, overflow: 'hidden',
-            }}>
-              <div style={{
-                height: '100%', borderRadius: 3,
-                background: 'linear-gradient(90deg, #e8a030, #f59e0b)',
-                width: `${(briefingStage / 4) * 100}%`,
-                transition: 'width 0.5s ease',
-              }} />
-            </div>
+            {briefingLines.length === 0 ? (
+              /* ── Phase 1: Loading — progress bar + live ticker ── */
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {/* Progress bar */}
+                <div>
+                  <div style={{
+                    width: '100%', height: 4, background: '#0d1f33',
+                    borderRadius: 2, overflow: 'hidden', marginBottom: 6,
+                  }}>
+                    <div style={{
+                      height: '100%', borderRadius: 2,
+                      background: 'linear-gradient(90deg, #1c3652, #e8a030)',
+                      width: `${(briefingStage / 4) * 100}%`,
+                      transition: 'width 0.6s ease',
+                    }} />
+                  </div>
+                  <div style={{
+                    display: 'flex', justifyContent: 'space-between',
+                    fontFamily: "'Share Tech Mono', monospace", fontSize: 9,
+                  }}>
+                    {(['Snapshot', 'Media', 'Chatter', 'Ministers'] as const).map((label, i) => (
+                      <span key={label} style={{
+                        color: briefingStage > i ? '#e8a030' : briefingStage === i ? '#7dd3fc' : '#1c3652',
+                        fontWeight: briefingStage === i ? 700 : 400,
+                      }}>
+                        {briefingStage > i ? '✓ ' : briefingStage === i ? '● ' : '○ '}{label}
+                      </span>
+                    ))}
+                  </div>
+                </div>
 
-            {/* Stage labels */}
-            <div style={{
-              display: 'flex', justifyContent: 'space-between', marginBottom: 20,
-              fontFamily: "'Share Tech Mono', monospace", fontSize: 10, color: '#475569',
-            }}>
-              {['Snapshot', 'Media', 'Chatter', 'Policies'].map((label, i) => (
-                <span key={label} style={{
-                  color: briefingStage > i ? '#e8a030' : briefingStage === i ? '#94a3b8' : '#334155',
-                  fontWeight: briefingStage === i ? 700 : 400,
-                }}>
-                  {briefingStage > i ? '✓ ' : ''}{label}
-                </span>
-              ))}
-            </div>
-
-            {/* Current status */}
-            <div style={{
-              fontFamily: "'Share Tech Mono', monospace",
-              fontSize: 12, color: '#94a3b8', textAlign: 'center',
-              marginBottom: 16, display: 'flex', alignItems: 'center',
-              justifyContent: 'center', gap: 8,
-            }}>
-              {briefingStage < 4 && (
+                {/* Live ticker feed */}
                 <div style={{
-                  width: 14, height: 14, borderRadius: '50%',
-                  border: '2px solid #1c3652', borderTopColor: '#e8a030',
-                  animation: 'spin 1s linear infinite',
-                }} />
-              )}
-              {briefingStatus}
-            </div>
-
-            {/* Live feed of items */}
-            <div style={{
-              ...PANEL, padding: '12px 16px',
-              maxHeight: 360, overflowY: 'auto',
-              display: 'flex', flexDirection: 'column', gap: 2,
-            }}>
-              {briefingItems.length === 0 && (
-                <div style={{ fontSize: 12, color: '#334155', textAlign: 'center', padding: 12 }}>
-                  Connecting to city feeds...
-                </div>
-              )}
-              {briefingItems.map((item, i) => (
-                <div key={i} style={{
-                  fontFamily: "'Share Tech Mono', monospace",
-                  fontSize: 13, lineHeight: 1.6,
-                  color: item.type === 'alert' ? '#f59e0b'
-                    : item.type === 'crisis' ? '#f87171'
-                    : item.type === 'good' ? '#22c55e'
-                    : item.type === 'mandate' ? '#f0c040'
-                    : item.type === 'people_like' ? '#4ade80'
-                    : item.type === 'people_dislike' ? '#fb7185'
-                    : item.type === 'media_like' ? '#60a5fa'
-                    : item.type === 'media_dislike' ? '#fda4af'
-                    : item.type === 'headline' ? '#60a5fa'
-                    : item.type === 'voice' ? '#a78bfa'
-                    : '#94a3b8',
-                  padding: '6px 0',
-                  borderBottom: '1px solid rgba(28,54,82,0.3)',
-                  animation: 'briefingFadeIn 0.5s ease',
+                  ...PANEL,
+                  padding: '10px 14px',
+                  maxHeight: 240, overflowY: 'auto',
+                  display: 'flex', flexDirection: 'column', gap: 0,
                 }}>
-                  {item.text}
+                  {briefingTickerItems.length === 0 && (
+                    <div style={{
+                      fontSize: 11, color: '#1c3652', textAlign: 'center', padding: '20px 0',
+                      fontFamily: "'Share Tech Mono', monospace",
+                      animation: 'pulse 2s ease-in-out infinite',
+                    }}>
+                      Scanning city systems...
+                    </div>
+                  )}
+                  {briefingTickerItems.map(item => (
+                    <div key={item.id} style={{
+                      fontFamily: "'Share Tech Mono', monospace",
+                      fontSize: 12, lineHeight: 1.55, padding: '5px 0',
+                      borderBottom: '1px solid rgba(28,54,82,0.3)',
+                      animation: 'briefingFadeIn 0.4s ease',
+                      color: item.type === 'alert' ? '#f59e0b'
+                        : item.type === 'crisis' ? '#f87171'
+                        : item.type === 'good' ? '#22c55e'
+                        : item.type === 'headline' ? '#60a5fa'
+                        : item.type === 'voice' ? '#a78bfa'
+                        : '#94a3b8',
+                    }}>
+                      {item.text}
+                    </div>
+                  ))}
+                  <div ref={briefingTickerEndRef} />
                 </div>
-              ))}
-              <div ref={briefingFeedEndRef} />
-            </div>
+              </div>
+            ) : (
+              /* ── Phase 2: Minister scene — left-aligned chat thread ── */
+              <div
+                ref={briefingSceneScrollRef}
+                style={{
+                  display: 'flex', flexDirection: 'column', gap: 18,
+                  maxHeight: 360, overflowY: 'auto',
+                  paddingRight: 4,
+                }}
+              >
+                {briefingVisibleLines.map((entry, idx) => {
+                  const mIdx = gameState.ministers.findIndex(m => m.name === entry.minister_name)
+                  const col = MINISTER_COLORS[mIdx >= 0 ? mIdx % MINISTER_COLORS.length : idx % MINISTER_COLORS.length]
+                  return (
+                    <div key={idx} style={{
+                      display: 'flex', gap: 14, alignItems: 'flex-start',
+                      animation: 'briefingFadeIn 0.5s ease',
+                    }}>
+                      {/* Avatar */}
+                      <div style={{ flexShrink: 0 }}>
+                        <AgentAvatar seed={entry.minister_name} ministers={gameState.ministers} size={56} ring={col} />
+                      </div>
+                      {/* Name + bubble */}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ marginBottom: 5 }}>
+                          <span style={{ fontSize: 14, fontWeight: 700, color: '#fff' }}>{entry.minister_name}</span>
+                          <span style={{
+                            marginLeft: 8,
+                            fontSize: 10, color: col,
+                            fontFamily: "'Rajdhani', sans-serif",
+                            letterSpacing: '0.12em', fontWeight: 700, textTransform: 'uppercase',
+                          }}>{entry.portfolio}</span>
+                        </div>
+                        <div style={{
+                          background: 'rgba(255,255,255,0.04)',
+                          border: `1px solid ${col}33`,
+                          borderLeft: `3px solid ${col}`,
+                          borderRadius: 6,
+                          padding: '12px 16px',
+                          fontSize: 13, color: '#e2e8f0',
+                          lineHeight: 1.65, fontStyle: 'italic',
+                        }}>
+                          &ldquo;{entry.typewriterText}&rdquo;
+                          {!entry.done && (
+                            <span style={{ animation: 'pulse 0.8s infinite' }}>▌</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+
+                {/* Policy handoff line — after all ministers done */}
+                {briefingVisibleLines.length > 0 && briefingVisibleLines.every(e => e.done) && (
+                  <div style={{
+                    textAlign: 'center', fontSize: 12, color: '#4b6280',
+                    fontFamily: "'Share Tech Mono', monospace",
+                    animation: 'briefingFadeIn 0.6s ease',
+                    paddingTop: 4,
+                  }}>
+                    We have reviewed the situation and prepared policy options for your consideration.
+                  </div>
+                )}
+
+                {/* Policy drafting spinner */}
+                {briefingStage === 4 && (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                    <div style={{
+                      width: 12, height: 12, borderRadius: '50%',
+                      border: '2px solid #1c3652', borderTopColor: '#e8a030',
+                      animation: 'spin 1s linear infinite',
+                    }} />
+                    <span style={{ fontSize: 11, color: '#4b6280', fontFamily: "'Share Tech Mono', monospace" }}>
+                      DRAFTING POLICIES...
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Model thinking / reasoning stream */}
             {briefingThinking && (

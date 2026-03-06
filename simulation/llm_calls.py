@@ -465,6 +465,12 @@ MINISTER_SYSTEM_TEMPLATE = textwrap.dedent("""\
     - Speak in first person. Keep it to 1-3 sentences. Sound like a real politician, not a bureaucrat.
     - NEVER just echo what others said. Add new information, a counter-argument, or a trade-off.
     - Vary your address: sometimes "Mayor", sometimes just dive straight in. NEVER say "Mr. Mayor" or "Madam Mayor" — this is an informal cabinet room, not a press conference.
+
+    CONVERGENCE — when the mayor gives a clear direction or decision:
+    - If the Mayor has made a decision or said something like "ok", "approved", "let's do it", "agreed", STOP arguing against it.
+    - Acknowledge the decision briefly, then raise ONE practical condition or implementation concern — not a new objection.
+    - Do not keep lobbying for your portfolio after the Mayor has moved on. Cabinet loyalty matters.
+    - If colleagues have already covered your concern, stay silent or add only one sentence of support.
 """)
 
 
@@ -1009,14 +1015,6 @@ def generate_policy_options_stream(
                 total_chunks += 1
                 total_chars += len(out)
                 yield {"type": "thinking", "chunk": out}
-
-        vote_line = f"- **Council vote:** {vote['for_count']} For · {vote['against_count']} Against\n"
-        for out in _iter_smoothed_thinking_chunks(vote_line):
-            emitted_this_policy += 1
-            emitted_this_chars += len(out)
-            total_chunks += 1
-            total_chars += len(out)
-            yield {"type": "thinking", "chunk": out}
 
         logger.debug(
             "policy_stream_draft_completed index=%d name=%r thinking_chunks=%d thinking_chars=%d stance_count=%d",
@@ -1671,6 +1669,112 @@ def generate_mayor_briefing_summary(
         cleaned["elected_on"] = locked_mandate
 
     return cleaned
+
+
+# ---------------------------------------------------------------------------
+# Minister briefing lines (cinematic morning briefing scene)
+# ---------------------------------------------------------------------------
+
+MINISTER_BRIEFING_LINES_SYSTEM = textwrap.dedent("""\
+    You are writing spoken lines for cabinet ministers delivering a morning city briefing to the mayor.
+    Each minister speaks ONE sentence in their own voice — direct, urgent, grounded in city-wide data.
+    Speak from a policy perspective: cite metrics, trends, collective public mood, or media tone.
+    NEVER name individual citizens. Refer to "residents", "the city", "communities", "the public".
+    Return valid JSON only.
+""")
+
+
+def generate_minister_briefing_lines(
+    llm: LLMClient,
+    ministers: list[dict[str, str]],
+    city_name: str,
+    worst_3: list[dict],
+    best_3: list[dict],
+    mayor_summary: dict[str, str] | None,
+    headlines: list[dict],
+    voices: list[dict],
+    active_events: list[dict],
+) -> list[dict[str, str]] | None:
+    """Generate 2-3 minister speech lines for the cinematic morning briefing scene.
+
+    Returns list of {minister_name, portfolio, line} dicts, or None on failure.
+    """
+    def _fmt_param(x: dict) -> str:
+        return "{} ({})".format(x["key"].replace("_", " "), x["value"])
+
+    signals: list[str] = [
+        f"City: {city_name}",
+        "Struggling: " + ", ".join(_fmt_param(x) for x in worst_3),
+        "Strong: " + ", ".join(_fmt_param(x) for x in best_3),
+    ]
+    if active_events:
+        signals.append(f"Active crises: {', '.join(e['name'] for e in active_events)}")
+    if mayor_summary:
+        signals.append(f"Public mood — like: {mayor_summary.get('people_like', '')} | dislike: {mayor_summary.get('people_dislike', '')}")
+    if headlines:
+        signals.append("Headlines: " + " | ".join(h["headline"] for h in headlines[:3]))
+    if voices:
+        themes = [v.get("reaction", "") for v in voices[:5] if v.get("reaction")]
+        signals.append("Public mood from city chatter: " + " | ".join(themes))
+
+    minister_list = "\n".join(
+        f"- {m['name']} ({m['portfolio']})" for m in ministers
+    )
+
+    prompt = textwrap.dedent(f"""\
+        City signals:
+        {chr(10).join(signals)}
+
+        Cabinet ministers available (pick 2-3 most relevant to the city's top issues):
+        {minister_list}
+
+        Write one briefing line per selected minister. Each line:
+        - First person, spoken directly to the Mayor
+        - Cites a city-wide metric (use the numbers), a media trend, or collective public sentiment
+        - NEVER names an individual citizen — say "residents", "the public", "communities"
+        - Sounds urgent and human, not bureaucratic
+        - Under 30 words
+
+        Return JSON array:
+        [
+          {{"minister_name": "...", "portfolio": "...", "line": "..."}},
+          ...
+        ]
+    """)
+
+    try:
+        raw = llm.chat_text(MINISTER_BRIEFING_LINES_SYSTEM, prompt)
+    except Exception as exc:
+        logger.warning("minister_briefing_lines_llm_error: %s", exc)
+        return None
+
+    try:
+        parsed = _extract_json(raw)
+    except ValueError:
+        logger.warning("minister_briefing_lines_parse_failed")
+        return None
+
+    if not isinstance(parsed, list):
+        logger.warning("minister_briefing_lines_not_array")
+        return None
+
+    result: list[dict[str, str]] = []
+    for item in parsed:
+        if (
+            isinstance(item, dict)
+            and isinstance(item.get("minister_name"), str)
+            and isinstance(item.get("portfolio"), str)
+            and isinstance(item.get("line"), str)
+            and item["minister_name"].strip()
+            and item["line"].strip()
+        ):
+            result.append({
+                "minister_name": item["minister_name"].strip(),
+                "portfolio": item["portfolio"].strip(),
+                "line": re.sub(r"\s+", " ", item["line"]).strip(),
+            })
+
+    return result if result else None
 
 
 # ---------------------------------------------------------------------------

@@ -90,6 +90,7 @@ from simulation.llm_calls import (
     generate_delivery_narrative,
     generate_media_headlines,
     generate_mayor_briefing_summary,
+    generate_minister_briefing_lines,
     generate_policy_options,
     minister_response,
     poll_citizen_approval,
@@ -415,6 +416,21 @@ class GameSession:
             "type": "voices",
             "voices": [v.model_dump() for v in voices],
         }
+
+        # ③b Minister briefing lines (cinematic scene)
+        briefing_lines = generate_minister_briefing_lines(
+            self.llm,
+            ministers=[{"name": m.citizen.name, "portfolio": m.portfolio} for m in state.ministers[:3]],
+            city_name=state.city_profile.city_name,
+            worst_3=[{"key": k, "value": round(v, 1)} for k, v in sorted_params[:3]],
+            best_3=[{"key": k, "value": round(v, 1)} for k, v in sorted_params[-3:]],
+            mayor_summary=mayor_summary,
+            headlines=[h.model_dump() for h in headlines],
+            voices=[v.model_dump() for v in voices],
+            active_events=[e.model_dump() for e in state.active_events],
+        )
+        if briefing_lines:
+            yield {"type": "minister_briefing", "lines": briefing_lines}
 
         # ④ Policy options (streaming with thinking)
         yield {"type": "status", "message": "Drafting policy options..."}
