@@ -898,6 +898,7 @@ def generate_policy_options_stream(
     analysis_close = "</analysis>"
 
     for policy_idx in range(1, 4):
+        yield {"type": "policy_start", "index": policy_idx}
         if policy_idx > 1:
             total_chunks += 1
             total_chars += 1

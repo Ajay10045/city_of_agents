@@ -439,6 +439,8 @@ class GameSession:
         for event in generate_policy_options_stream(self.llm, state, full_transcript, budget):
             if event["type"] == "thinking":
                 yield {"type": "thinking", "chunk": event["chunk"]}
+            elif event["type"] == "policy_start":
+                yield {"type": "policy_progress", "current": event["index"]}
             elif event["type"] == "policies":
                 self._pending_policy_options = event["options"]
                 yield {

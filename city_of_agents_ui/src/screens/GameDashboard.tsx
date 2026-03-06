@@ -1453,6 +1453,9 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
     { minister_name: string; portfolio: string; line: string; typewriterText: string; done: boolean }[]
   >([])
   const briefingSceneScrollRef = useRef<HTMLDivElement>(null)
+  const [ministersDone, setMinistersDone] = useState(false)
+  const [currentPolicyIdx, setCurrentPolicyIdx] = useState(0)
+  const currentPolicyIdxRef = useRef(0)
   // Loading ticker
   const [briefingTickerItems, setBriefingTickerItems] = useState<{ type: string; text: string; id: number }[]>([])
   const briefingTickerIdRef = useRef(0)
@@ -1549,6 +1552,9 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
     setBriefingThinking('')
     setBriefingLines([])
     setBriefingVisibleLines([])
+    setMinistersDone(false)
+    setCurrentPolicyIdx(0)
+    currentPolicyIdxRef.current = 0
     setBriefingTickerItems([])
     briefingTickerIdRef.current = 0
 
@@ -1635,7 +1641,11 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
               ))
               await new Promise(r => setTimeout(r, 600))
               step++
-              if (step < lines.length) await showNext()
+              if (step < lines.length) {
+                await showNext()
+              } else {
+                setMinistersDone(true)
+              }
             }
             void showNext()
           }
@@ -1647,6 +1657,11 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
               return appended.slice(appended.length - BRIEFING_THINKING_MAX_CHARS)
             })
             briefingThinkingRef.current?.scrollTo({ top: briefingThinkingRef.current.scrollHeight, behavior: 'smooth' })
+          }
+
+          if (type === 'policy_progress') {
+            currentPolicyIdxRef.current = event.current as number
+            setCurrentPolicyIdx(event.current as number)
           }
 
           if (type === 'policies') {
@@ -2295,7 +2310,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
           display: 'flex', flexDirection: 'column',
           alignItems: 'center', justifyContent: 'center',
         }}>
-          <div style={{ width: 480, maxWidth: '90vw' }}>
+          <div style={{ width: 560, maxWidth: '92vw' }}>
             {/* Title */}
             <div style={{
               fontFamily: "'Rajdhani', sans-serif", fontWeight: 700,
@@ -2305,82 +2320,168 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
               CITY BRIEFING — TURN {gameState.current_turn}
             </div>
 
-            {briefingLines.length === 0 ? (
-              /* ── Phase 1: Loading — progress bar + live ticker ── */
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {/* Progress bar */}
-                <div>
-                  <div style={{
-                    width: '100%', height: 4, background: '#0d1f33',
-                    borderRadius: 2, overflow: 'hidden', marginBottom: 6,
-                  }}>
-                    <div style={{
-                      height: '100%', borderRadius: 2,
-                      background: 'linear-gradient(90deg, #1c3652, #e8a030)',
-                      width: `${(briefingStage / 4) * 100}%`,
-                      transition: 'width 0.6s ease',
-                    }} />
-                  </div>
-                  <div style={{
-                    display: 'flex', justifyContent: 'space-between',
-                    fontFamily: "'Share Tech Mono', monospace", fontSize: 9,
-                  }}>
-                    {(['Snapshot', 'Media', 'Chatter', 'Ministers'] as const).map((label, i) => (
-                      <span key={label} style={{
-                        color: briefingStage > i ? '#e8a030' : briefingStage === i ? '#7dd3fc' : '#1c3652',
-                        fontWeight: briefingStage === i ? 700 : 400,
-                      }}>
-                        {briefingStage > i ? '✓ ' : briefingStage === i ? '● ' : '○ '}{label}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Live ticker feed */}
+            {briefingLines.length === 0 ? (() => {
+              const snapshotItems = briefingTickerItems.filter(i => ['alert', 'good', 'crisis'].includes(i.type))
+              const headlineItems = briefingTickerItems.filter(i => i.type === 'headline')
+              const voiceItems = briefingTickerItems.filter(i => i.type === 'voice')
+              const SectionLabel = ({ children }: { children: React.ReactNode }) => (
                 <div style={{
-                  ...PANEL,
-                  padding: '10px 14px',
-                  maxHeight: 240, overflowY: 'auto',
-                  display: 'flex', flexDirection: 'column', gap: 0,
+                  fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 9,
+                  letterSpacing: '0.2em', color: '#2d4a63',
+                  borderBottom: '1px solid #1c3652',
+                  paddingBottom: 4, marginBottom: 6,
                 }}>
-                  {briefingTickerItems.length === 0 && (
-                    <div style={{
-                      fontSize: 11, color: '#1c3652', textAlign: 'center', padding: '20px 0',
-                      fontFamily: "'Share Tech Mono', monospace",
-                      animation: 'pulse 2s ease-in-out infinite',
-                    }}>
-                      Scanning city systems...
-                    </div>
-                  )}
-                  {briefingTickerItems.map(item => (
-                    <div key={item.id} style={{
-                      fontFamily: "'Share Tech Mono', monospace",
-                      fontSize: 12, lineHeight: 1.55, padding: '5px 0',
-                      borderBottom: '1px solid rgba(28,54,82,0.3)',
-                      animation: 'briefingFadeIn 0.4s ease',
-                      color: item.type === 'alert' ? '#f59e0b'
-                        : item.type === 'crisis' ? '#f87171'
-                        : item.type === 'good' ? '#22c55e'
-                        : item.type === 'headline' ? '#60a5fa'
-                        : item.type === 'voice' ? '#a78bfa'
-                        : '#94a3b8',
-                    }}>
-                      {item.text}
-                    </div>
-                  ))}
-                  <div ref={briefingTickerEndRef} />
+                  {children}
                 </div>
-              </div>
-            ) : (
+              )
+              return (
+                /* ── Phase 1: Loading — progress bar + sectioned feed ── */
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  {/* Progress bar */}
+                  <div>
+                    <div style={{
+                      width: '100%', height: 3, background: '#0d1f33',
+                      borderRadius: 2, overflow: 'hidden', marginBottom: 8,
+                    }}>
+                      <div style={{
+                        height: '100%', borderRadius: 2,
+                        background: 'linear-gradient(90deg, #1c3652, #e8a030)',
+                        width: `${(briefingStage / 4) * 100}%`,
+                        transition: 'width 0.6s ease',
+                      }} />
+                    </div>
+                    <div style={{
+                      display: 'flex', justifyContent: 'space-between',
+                      fontFamily: "'Rajdhani', sans-serif", fontSize: 9,
+                    }}>
+                      {(['Snapshot', 'Media', 'Chatter', 'Ministers'] as const).map((label, i) => (
+                        <span key={label} style={{
+                          color: briefingStage > i ? '#e8a030' : briefingStage === i ? '#7dd3fc' : '#1c3652',
+                          fontWeight: 700, letterSpacing: '0.1em',
+                        }}>
+                          {briefingStage > i ? '✓ ' : briefingStage === i ? '● ' : '○ '}{label.toUpperCase()}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Sectioned feed panel */}
+                  <div style={{
+                    ...PANEL,
+                    padding: '12px 16px',
+                    maxHeight: 300, overflowY: 'auto',
+                    display: 'flex', flexDirection: 'column', gap: 0,
+                    position: 'relative',
+                  }}>
+                    {/* ── CITY SNAPSHOT section ── */}
+                    {snapshotItems.length > 0 && (
+                      <div style={{ marginBottom: 10, animation: 'briefingFadeIn 0.3s ease' }}>
+                        <SectionLabel>CITY SNAPSHOT</SectionLabel>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px' }}>
+                          {snapshotItems.map(item => (
+                            <div key={item.id} style={{
+                              fontSize: 11, fontFamily: "'Share Tech Mono', monospace",
+                              color: item.type === 'crisis' ? '#f87171' : item.type === 'alert' ? '#f59e0b' : '#22c55e',
+                              animation: 'briefingFadeIn 0.3s ease',
+                              padding: '2px 0',
+                              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                            }}>{item.text}</div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ── MEDIA section ── */}
+                    {headlineItems.length > 0 && (
+                      <div style={{ marginBottom: 10 }}>
+                        <SectionLabel>MEDIA</SectionLabel>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          {headlineItems.map(item => (
+                            <div key={item.id} style={{
+                              fontSize: 11, fontFamily: "'Share Tech Mono', monospace",
+                              borderLeft: '2px solid rgba(96,165,250,0.3)',
+                              paddingLeft: 8, color: '#60a5fa',
+                              animation: 'briefingFadeIn 0.3s ease',
+                              lineHeight: 1.4,
+                            }}>{item.text}</div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ── CITY CHATTER section ── */}
+                    {voiceItems.length > 0 && (
+                      <div style={{ marginBottom: 6 }}>
+                        <SectionLabel>CITY CHATTER</SectionLabel>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          {voiceItems.map(item => (
+                            <div key={item.id} style={{
+                              fontSize: 11, fontFamily: "'Share Tech Mono', monospace",
+                              borderLeft: '2px solid rgba(167,139,250,0.3)',
+                              paddingLeft: 8, color: '#a78bfa',
+                              fontStyle: 'italic',
+                              animation: 'briefingFadeIn 0.3s ease',
+                              lineHeight: 1.5,
+                            }}>{item.text}</div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Empty state */}
+                    {briefingTickerItems.length === 0 && (
+                      <div style={{
+                        fontSize: 11, color: '#1c3652', textAlign: 'center', padding: '24px 0',
+                        fontFamily: "'Share Tech Mono', monospace",
+                        animation: 'pulse 2s ease-in-out infinite',
+                      }}>Scanning city systems...</div>
+                    )}
+
+                    <div ref={briefingTickerEndRef} />
+
+                    {/* ── Status bar — pinned at bottom, never an inline item ── */}
+                    {briefingStage >= 1 && briefingStage <= 3 && (
+                      <div style={{
+                        position: 'sticky', bottom: 0,
+                        background: 'linear-gradient(0deg, #091422 60%, transparent)',
+                        paddingTop: 10, marginTop: 4,
+                        display: 'flex', alignItems: 'center', gap: 7,
+                        fontFamily: "'Rajdhani', sans-serif", fontSize: 10,
+                        fontWeight: 700, letterSpacing: '0.12em',
+                        color: '#2d6a8a',
+                      }}>
+                        <div style={{
+                          width: 5, height: 5, borderRadius: '50%', background: '#2d6a8a',
+                          animation: 'pulse 1.4s ease-in-out infinite', flexShrink: 0,
+                        }} />
+                        {briefingStage === 1 ? 'SCANNING MEDIA OUTLETS...'
+                          : briefingStage === 2 ? 'LISTENING TO CITY CHATTER...'
+                          : 'ASSEMBLING MINISTER BRIEFING...'}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )
+            })() : (
               /* ── Phase 2: Minister scene — left-aligned chat thread ── */
               <div
                 ref={briefingSceneScrollRef}
                 style={{
                   display: 'flex', flexDirection: 'column', gap: 18,
-                  maxHeight: 360, overflowY: 'auto',
+                  maxHeight: 380, overflowY: 'auto',
                   paddingRight: 4,
                 }}
               >
+                {/* Section header */}
+                {briefingVisibleLines.length > 0 && (
+                  <div style={{
+                    fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 9,
+                    letterSpacing: '0.2em', color: '#2d4a63',
+                    borderBottom: '1px solid #1c3652',
+                    paddingBottom: 4,
+                    animation: 'briefingFadeIn 0.5s ease',
+                  }}>MINISTER BRIEFING</div>
+                )}
                 {briefingVisibleLines.map((entry, idx) => {
                   const mIdx = gameState.ministers.findIndex(m => m.name === entry.minister_name)
                   const col = MINISTER_COLORS[mIdx >= 0 ? mIdx % MINISTER_COLORS.length : idx % MINISTER_COLORS.length]
@@ -2435,9 +2536,9 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                   </div>
                 )}
 
-                {/* Policy drafting spinner */}
-                {briefingStage === 4 && (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                {/* Policy drafting spinner — shows after ministers finish, before thinking block appears */}
+                {ministersDone && !briefingThinking && (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, paddingTop: 4 }}>
                     <div style={{
                       width: 12, height: 12, borderRadius: '50%',
                       border: '2px solid #1c3652', borderTopColor: '#e8a030',
@@ -2451,8 +2552,8 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
               </div>
             )}
 
-            {/* Model thinking / reasoning stream */}
-            {briefingThinking && (
+            {/* Model thinking / reasoning stream — only shown after ministers finish */}
+            {briefingThinking && ministersDone && (
               <div ref={briefingThinkingRef} style={{
                 ...PANEL, padding: '10px 14px', marginTop: 10,
                 maxHeight: 160, overflowY: 'auto',
@@ -2525,6 +2626,25 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                     briefingThinking
                   )}
                 </div>
+
+                {/* Pulsing status bar — same pattern as Phase 1, shows which policy is being drafted */}
+                {briefingStage < 4 && currentPolicyIdx > 0 && (
+                  <div style={{
+                    position: 'sticky', bottom: 0,
+                    background: 'linear-gradient(0deg, #091422 80%, transparent)',
+                    paddingTop: 8,
+                    display: 'flex', alignItems: 'center', gap: 7,
+                    fontFamily: "'Rajdhani', sans-serif", fontSize: 10,
+                    fontWeight: 700, letterSpacing: '0.12em',
+                    color: '#2d6a8a',
+                  }}>
+                    <div style={{
+                      width: 5, height: 5, borderRadius: '50%', background: '#2d6a8a',
+                      animation: 'pulse 1.4s ease-in-out infinite', flexShrink: 0,
+                    }} />
+                    {`DRAFTING POLICY OPTION ${currentPolicyIdx}...`}
+                  </div>
+                )}
               </div>
             )}
           </div>
