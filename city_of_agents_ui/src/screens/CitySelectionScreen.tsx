@@ -1,5 +1,5 @@
-import { useState, useRef } from 'react'
-import { Loader2, Play, Users, Banknote, AlertCircle, X, ChevronLeft, ChevronRight } from 'lucide-react'
+import { useState, useRef, type ReactNode } from 'react'
+import { Loader2, Play, Users, Banknote, AlertCircle, X, ChevronLeft, ChevronRight, BookOpen, MapPin, Newspaper, FileText, BarChart3, Award } from 'lucide-react'
 import { generateProfile, newGame } from '../api'
 import type { GameState } from '../types'
 
@@ -63,6 +63,7 @@ export default function CitySelectionScreen({ onGameCreated }: Props) {
 
   const [isStarting, setIsStarting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showHowToPlay, setShowHowToPlay] = useState(false)
 
   async function handleStartGame() {
     if (!selectedCityId) return
@@ -109,9 +110,18 @@ export default function CitySelectionScreen({ onGameCreated }: Props) {
             <h1 className="text-3xl font-extrabold text-white tracking-tight">CITY SELECTION</h1>
             <p className="text-slate-400 text-sm mt-1">Choose the city you wish to govern and define the game constraints.</p>
           </div>
-          <button className="text-slate-500 hover:text-white transition-colors p-2 rounded-full hover:bg-white/5">
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowHowToPlay(true)}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#3A3D4A] text-slate-400 hover:text-amber-400 hover:border-amber-500/40 hover:bg-amber-500/5 transition-all text-sm font-medium"
+            >
+              <BookOpen className="w-4 h-4" />
+              How to Play
+            </button>
+            <button className="text-slate-500 hover:text-white transition-colors p-2 rounded-full hover:bg-white/5">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* City Carousel */}
@@ -262,6 +272,167 @@ export default function CitySelectionScreen({ onGameCreated }: Props) {
 
         </div>
       </div>
+
+      {/* ── How to Play Overlay ── */}
+      {showHowToPlay && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: 'rgba(10, 12, 20, 0.92)', backdropFilter: 'blur(8px)' }}
+          onClick={(e) => { if (e.target === e.currentTarget) setShowHowToPlay(false) }}
+        >
+          <div className="w-full max-w-3xl max-h-[90vh] flex flex-col bg-[#1C1F2B] border border-[#2A2D3A] rounded-2xl shadow-2xl overflow-hidden">
+
+            {/* Header */}
+            <div
+              className="px-8 py-6 flex items-center justify-between border-b border-[#2A2D3A]/60 shrink-0"
+              style={{ background: 'linear-gradient(135deg, #1C1F2B 0%, #1a1d2e 100%)' }}
+            >
+              <div>
+                <p className="text-amber-500 text-xs font-bold tracking-widest uppercase mb-1">Field Manual</p>
+                <h2 className="text-2xl font-extrabold text-white tracking-tight">HOW TO PLAY</h2>
+                <p className="text-slate-400 text-sm mt-0.5">Master the art of city governance</p>
+              </div>
+              <button
+                onClick={() => setShowHowToPlay(false)}
+                className="text-slate-500 hover:text-white transition-colors p-2 rounded-full hover:bg-white/5"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Scrollable content */}
+            <div className="flex-1 overflow-y-auto px-8 py-6 space-y-6 custom-scrollbar">
+
+              {/* The Premise */}
+              <p className="text-slate-300 leading-relaxed text-sm">
+                You are the <span className="text-amber-400 font-semibold">Mayor</span> of a living, breathing city powered by AI.
+                Every decision you make ripples through the economy, public services, and the lives of real citizens.
+                Lead well — and earn re-election. Lead poorly — and face the consequences.
+              </p>
+
+              {/* Steps */}
+              <div className="space-y-3">
+                {(
+                  [
+                    {
+                      num: '01',
+                      icon: <MapPin className="w-5 h-5" />,
+                      color: 'text-blue-400',
+                      border: 'border-blue-500/25',
+                      bg: 'bg-blue-500/5',
+                      title: 'SELECT YOUR CITY',
+                      body: 'Pick one of five real-world cities — each with its own population, budget, and starting crises. A bigger budget might seem safe, but higher stakes mean fiercer political opposition.',
+                    },
+                    {
+                      num: '02',
+                      icon: <Newspaper className="w-5 h-5" />,
+                      color: 'text-amber-400',
+                      border: 'border-amber-500/25',
+                      bg: 'bg-amber-500/5',
+                      title: 'MORNING BRIEFING',
+                      body: "Each turn opens with a cinematic briefing. Your ministers report on the city's key metrics, media headlines, and citizen sentiment. Pay close attention — this is your intelligence.",
+                    },
+                    {
+                      num: '03',
+                      icon: <FileText className="w-5 h-5" />,
+                      color: 'text-violet-400',
+                      border: 'border-violet-500/25',
+                      bg: 'bg-violet-500/5',
+                      title: 'CHOOSE A POLICY',
+                      body: 'Your AI council drafts three policy options tailored to the current situation. Each has trade-offs — a housing subsidy might boost approval but strain the budget. Choose wisely.',
+                    },
+                    {
+                      num: '04',
+                      icon: <Users className="w-5 h-5" />,
+                      color: 'text-emerald-400',
+                      border: 'border-emerald-500/25',
+                      bg: 'bg-emerald-500/5',
+                      title: 'ADVISOR DEBATE',
+                      body: 'Before you decide, your ministers weigh in. Each represents a different portfolio and perspective. Some will support your instincts. Others will push back hard. Their concerns matter.',
+                    },
+                    {
+                      num: '05',
+                      icon: <BarChart3 className="w-5 h-5" />,
+                      color: 'text-cyan-400',
+                      border: 'border-cyan-500/25',
+                      bg: 'bg-cyan-500/5',
+                      title: 'WATCH THE CITY REACT',
+                      body: 'After each policy, city metrics shift and citizens respond with real reactions — in their own language, from their own perspective. Your approval rating is the pulse of your leadership.',
+                    },
+                    {
+                      num: '06',
+                      icon: <Award className="w-5 h-5" />,
+                      color: 'text-rose-400',
+                      border: 'border-rose-500/25',
+                      bg: 'bg-rose-500/5',
+                      title: 'FACE THE ELECTION',
+                      body: 'When the final turn arrives, citizens vote. Did you balance growth with equality? Fix the crises or ignore them? Your governance scorecard determines whether you win — or get voted out.',
+                    },
+                  ] as { num: string; icon: ReactNode; color: string; border: string; bg: string; title: string; body: string }[]
+                ).map((step) => (
+                  <div key={step.num} className={`flex gap-4 p-4 rounded-xl border ${step.border} ${step.bg}`}>
+                    <div className={`shrink-0 w-10 h-10 rounded-lg flex items-center justify-center border ${step.border} ${step.color}`}>
+                      {step.icon}
+                    </div>
+                    <div className="space-y-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-bold tracking-widest text-slate-600">{step.num}</span>
+                        <h3 className={`text-xs font-bold tracking-wider ${step.color}`}>{step.title}</h3>
+                      </div>
+                      <p className="text-slate-300 text-sm leading-relaxed">{step.body}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Pro tip */}
+              <div className="p-4 rounded-xl bg-amber-500/8 border border-amber-500/20">
+                <p className="text-amber-400 text-xs font-bold tracking-widest uppercase mb-2">💡 Pro Tip</p>
+                <p className="text-slate-300 text-sm leading-relaxed">
+                  No policy is universally popular — improving one metric often strains another.
+                  The best mayors find balance and keep their advisors aligned.
+                  Watch your <span className="text-amber-400 font-semibold">approval rating</span> closely: it's both your report card and your political survival.
+                </p>
+              </div>
+
+              {/* Metrics cheat sheet */}
+              <div>
+                <p className="text-slate-500 text-xs font-bold tracking-widest uppercase mb-3">City Metrics at a Glance</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { label: 'Economy', desc: 'Tax revenue, employment, business health', color: 'text-yellow-400', dot: 'bg-yellow-400' },
+                    { label: 'Housing', desc: 'Affordability and availability of homes', color: 'text-blue-400', dot: 'bg-blue-400' },
+                    { label: 'Public Safety', desc: 'Crime rate and emergency response', color: 'text-red-400', dot: 'bg-red-400' },
+                    { label: 'Environment', desc: 'Air quality, green spaces, sustainability', color: 'text-emerald-400', dot: 'bg-emerald-400' },
+                    { label: 'Education', desc: 'School quality and youth outcomes', color: 'text-violet-400', dot: 'bg-violet-400' },
+                    { label: 'Healthcare', desc: 'Hospital access and public health', color: 'text-cyan-400', dot: 'bg-cyan-400' },
+                  ].map(m => (
+                    <div key={m.label} className="flex items-start gap-2.5 p-2.5 rounded-lg bg-[#161822] border border-[#2A2D3A]">
+                      <div className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${m.dot}`} />
+                      <div>
+                        <p className={`text-xs font-semibold ${m.color}`}>{m.label}</p>
+                        <p className="text-slate-500 text-xs">{m.desc}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+            </div>
+
+            {/* Footer */}
+            <div className="px-8 py-5 border-t border-[#2A2D3A]/60 bg-[#161822]/80 flex justify-end shrink-0">
+              <button
+                onClick={() => setShowHowToPlay(false)}
+                className="px-8 py-3 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded-xl transition-all shadow-[0_0_20px_rgba(217,119,6,0.3)] hover:shadow-[0_0_30px_rgba(245,158,11,0.5)] hover:-translate-y-0.5 text-sm tracking-wide"
+              >
+                LET'S GOVERN →
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
     </div>
   )
 }
