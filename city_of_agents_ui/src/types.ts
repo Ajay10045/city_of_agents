@@ -213,3 +213,105 @@ export interface BriefingMayorSummaryEvent {
   media_like: string
   media_dislike: string
 }
+
+// ---- Turn Stream v2 events ----
+
+export type TurnStreamNarrativeKey = 'delivery' | 'headlines' | 'advisor'
+
+export interface TurnStreamAnnouncementEvent {
+  type: 'announcement'
+  policy: Policy
+  minister_name: string
+  minister_portfolio: string
+}
+
+export interface TurnStreamAnnouncementVoicesEvent {
+  type: 'announcement_voices'
+  voices: CitizenVoice[]
+}
+
+export interface TurnStreamAssignmentEvent {
+  type: 'assignment'
+  minister_id: string
+  minister_name: string
+  portfolio: string
+  competence: number
+  loyalty: number
+  scandal_exposure: number
+}
+
+export interface TurnStreamEvaluationEvent {
+  type: 'evaluation'
+  execution_pct: number
+  leakage_cr: number
+  city_param_deltas: Record<string, number>
+  side_effect_deltas: Record<string, number>
+  reasoning: string
+}
+
+export interface TurnStreamWellbeingUpdateEvent {
+  type: 'wellbeing_update'
+  ward_report: WardReportEntry[]
+}
+
+export interface TurnStreamImplementationVoicesEvent {
+  type: 'implementation_voices'
+  voices: CitizenVoice[]
+}
+
+export interface TurnStreamApprovalVoteEvent {
+  type: 'approval_vote'
+  voice: CitizenVoice
+  population_weight: number
+}
+
+export interface TurnStreamApprovalFinalEvent {
+  type: 'approval_final'
+  approval: number
+  approval_before: number
+  breakdown: {
+    approve: number
+    disapprove: number
+    undecided: number
+    total: number
+  }
+}
+
+export interface TurnStreamEventsEvent {
+  type: 'events'
+  events_triggered: ActiveEvent[]
+}
+
+export interface TurnStreamNarrativeChunkEvent {
+  type: 'narrative_chunk'
+  key: TurnStreamNarrativeKey
+  value: string | MediaHeadline[] | Record<string, unknown>[]
+}
+
+export interface TurnStreamCompleteEvent {
+  type: 'complete'
+  turn_result: TurnResult
+  state: GameState
+  game_over: boolean
+  loss_reason?: string
+  scorecard?: GovernanceScorecard
+}
+
+export interface TurnStreamErrorEvent {
+  type: 'error'
+  message: string
+}
+
+export type TurnStreamV2Event =
+  | TurnStreamAnnouncementEvent
+  | TurnStreamAnnouncementVoicesEvent
+  | TurnStreamAssignmentEvent
+  | TurnStreamEvaluationEvent
+  | TurnStreamWellbeingUpdateEvent
+  | TurnStreamImplementationVoicesEvent
+  | TurnStreamApprovalVoteEvent
+  | TurnStreamApprovalFinalEvent
+  | TurnStreamEventsEvent
+  | TurnStreamNarrativeChunkEvent
+  | TurnStreamCompleteEvent
+  | TurnStreamErrorEvent
