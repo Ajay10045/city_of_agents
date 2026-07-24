@@ -11,6 +11,7 @@ import os
 import re
 import textwrap
 import hashlib
+from collections import Counter
 from typing import Any
 
 from engine.models import (
@@ -560,6 +561,126 @@ PORTFOLIOS = [
     "Governance Reform",
 ]
 
+POLICY_ARCHETYPES = ["stabilize", "growth", "crackdown", "reform", "relief"]
+
+_ARCHETYPE_PARAM_WEIGHTS: dict[str, dict[str, float]] = {
+    "growth": {
+        "jobs_and_commerce": 1.4,
+        "transit_and_roads": 1.1,
+        "water_power_sanitation": 0.8,
+    },
+    "crackdown": {
+        "police_and_emergency": 1.3,
+        "courts_and_legal": 1.2,
+    },
+    "reform": {
+        "admin_efficiency": 1.2,
+        "anti_corruption": 1.4,
+        "media_freedom": 1.0,
+    },
+    "relief": {
+        "hospitals_and_clinics": 1.0,
+        "schools_and_universities": 0.9,
+        "affordable_housing": 1.2,
+        "community_and_spaces": 1.1,
+        "air_quality_and_pollution": 0.8,
+    },
+}
+
+
+def _normalise_policy_name_key(name: Any) -> str:
+    if not isinstance(name, str):
+        return ""
+    return re.sub(r"[^a-z0-9]+", "", name.strip().lower())
+
+
+def _normalise_policy_archetype(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip().lower()
+    return cleaned if cleaned in POLICY_ARCHETYPES else None
+
+
+def _infer_policy_archetype(policy: dict[str, Any]) -> str:
+    scores = {a: 0.0 for a in POLICY_ARCHETYPES}
+    target_effects = policy.get("target_effects", {})
+    if isinstance(target_effects, dict):
+        for key, raw_val in target_effects.items():
+            try:
+                val = float(raw_val)
+            except (TypeError, ValueError):
+                continue
+            if val <= 0:
+                continue
+            for archetype, weights in _ARCHETYPE_PARAM_WEIGHTS.items():
+                scores[archetype] += max(0.0, val) * float(weights.get(key, 0.0))
+
+    max_target_abs = 0.0
+    if isinstance(target_effects, dict):
+        for raw_val in target_effects.values():
+            try:
+                max_target_abs = max(max_target_abs, abs(float(raw_val)))
+            except (TypeError, ValueError):
+                continue
+    if max_target_abs <= 3.5:
+        scores["stabilize"] += 1.6
+
+    top = max(scores.items(), key=lambda kv: kv[1])
+    if top[1] <= 0:
+        return "stabilize"
+    return top[0]
+
+
+def _dedupe_policy_name(name: str, archetype: str, idx_hint: int) -> str:
+    base = name.strip() or "Policy Option"
+    suffix = f" ({archetype.title()} {idx_hint})"
+    if base.endswith(suffix):
+        return base
+    return base + suffix
+
+
+def _finalise_policy_archetype_and_name(
+    policy: dict[str, Any],
+    recent_policy_history: list[dict[str, Any]],
+    drafted_options: list[dict[str, Any]],
+) -> None:
+    archetype = _normalise_policy_archetype(policy.get("archetype")) or _infer_policy_archetype(policy)
+
+    recent_counts = Counter(
+        a for a in (_normalise_policy_archetype(h.get("archetype")) for h in recent_policy_history) if a
+    )
+    drafted_counts = Counter(
+        a for a in (_normalise_policy_archetype(o.get("archetype")) for o in drafted_options) if a
+    )
+
+    # Primary spread guarantee: each batch of 5 should cover all 5 archetypes.
+    # If this archetype is already represented in the current drafted batch, swap
+    # to one not yet covered — so every batch is fully diverse.
+    if drafted_counts[archetype] >= 1:
+        uncovered_in_batch = [a for a in POLICY_ARCHETYPES if drafted_counts[a] == 0]
+        if uncovered_in_batch:
+            archetype = uncovered_in_batch[0]
+
+    # Secondary guard: avoid appearing 3+ times across recent history + current batch.
+    if recent_counts[archetype] + drafted_counts[archetype] >= 3:
+        alternatives = [
+            a for a in POLICY_ARCHETYPES
+            if recent_counts[a] + drafted_counts[a] == 0
+        ]
+        if alternatives:
+            archetype = alternatives[0]
+    policy["archetype"] = archetype
+
+    recent_names = {_normalise_policy_name_key(h.get("name", "")) for h in recent_policy_history}
+    drafted_names = {_normalise_policy_name_key(o.get("name", "")) for o in drafted_options}
+    clean_name = str(policy.get("name", "")).strip()
+    if not clean_name:
+        clean_name = f"{archetype.title()} Policy {len(drafted_options) + 1}"
+    name_key = _normalise_policy_name_key(clean_name)
+    if name_key in recent_names or name_key in drafted_names:
+        clean_name = _dedupe_policy_name(clean_name, archetype, len(drafted_options) + 1)
+    policy["name"] = clean_name
+
 
 def _build_policy_prompt_context(
     state: GameState,
@@ -575,6 +696,18 @@ def _build_policy_prompt_context(
         )
     ministers_str = "\n".join(_minister_profile_for_policy_prompt(m) for m in state.ministers)
     minister_names = [m.citizen.name for m in state.ministers]
+    recent_turns = state.turn_history[-5:]
+    recent_policy_history = [
+        {
+            "turn": t.turn,
+            "name": t.major_policy.name,
+            "portfolio": t.major_policy.portfolio,
+            "top_targets": list(t.major_policy.target_effects.keys())[:2],
+            "archetype": t.major_policy.archetype,
+        }
+        for t in recent_turns
+        if t.major_policy is not None
+    ]
     return {
         "state": state,
         "params": params,
@@ -582,6 +715,7 @@ def _build_policy_prompt_context(
         "active_events_str": active_events_str,
         "ministers_str": ministers_str,
         "minister_names": minister_names,
+        "recent_policy_history": recent_policy_history,
         "consultation_transcript": consultation_transcript or "(No consultation this turn)",
         "available_budget": available_budget,
     }
@@ -594,6 +728,7 @@ def _build_policy_options_prompt(context: dict[str, Any]) -> str:
     active_events_str: str = context["active_events_str"]
     ministers_str: str = context["ministers_str"]
     minister_names: list[str] = context["minister_names"]
+    recent_policy_history: list[dict[str, Any]] = context["recent_policy_history"]
     consultation_transcript: str = context["consultation_transcript"]
     available_budget: float = context["available_budget"]
 
@@ -614,7 +749,11 @@ def _build_policy_options_prompt(context: dict[str, Any]) -> str:
         {consultation_transcript}
         --- End transcript ---
 
-        Generate exactly 3 distinct policy options for this turn.
+        Recent policy history (avoid repeating these names/portfolios unless the crisis context demands it):
+        {json.dumps(recent_policy_history, ensure_ascii=True)}
+
+        Generate exactly 5 distinct policy options for this turn.
+        Cover a broad mix of archetypes across this set: {', '.join(POLICY_ARCHETYPES)}.
         Each policy must:
         1. Respond to the situation and consultation insights
         2. Have a primary target parameter (biggest positive effect) and 1-2 side effects (positive or negative)
@@ -624,8 +763,9 @@ def _build_policy_options_prompt(context: dict[str, Any]) -> str:
         6. Include advisor_stances: for EACH minister, generate their stance ("approve" or "disapprove") and a 1-sentence reason IN THEIR VOICE reflecting their personality, portfolio concerns, and ideology. An ambitious minister speaks differently from a cautious one. A minister whose portfolio is harmed should voice specific concerns about their area.
         7. advisor_stances MUST contain exactly {len(minister_names)} entries, with one entry for each minister and exact names from this list: {json.dumps(minister_names, ensure_ascii=True)}.
         8. Every advisor reason must mention at least one concrete personality/portfolio tradeoff for this specific policy (not generic praise/criticism).
+        9. Do not repeat policy names from recent history. Do not use any single archetype more than twice.
 
-        Return ONLY a JSON array of 3 policy objects with this schema:
+        Return ONLY a JSON array of 5 policy objects with this schema:
         [
           {{
             "name": "string — short policy name",
@@ -646,6 +786,7 @@ def _build_policy_options_prompt(context: dict[str, Any]) -> str:
             ],
             "tradeoffs": "string — honest description of costs and risks",
             "why_now": "string — why this is relevant this specific turn",
+            "archetype": "one of: {', '.join(POLICY_ARCHETYPES)}",
             "advisor_stances": [
               // Exactly one entry per minister: {', '.join(minister_names)}
               {{
@@ -673,17 +814,25 @@ def _build_single_policy_stream_prompt(
     ministers_str: str = context["ministers_str"]
     minister_names: list[str] = context["minister_names"]
     consultation_transcript: str = context["consultation_transcript"]
+    recent_policy_history: list[dict[str, Any]] = context["recent_policy_history"]
     available_budget: float = context["available_budget"]
     drafted_summary = [
         {
             "name": o.get("name", ""),
             "portfolio": o.get("portfolio", ""),
+            "archetype": o.get("archetype", ""),
             "target_effects": o.get("target_effects", {}),
             "budget_cost": o.get("budget_cost", 0),
         }
         for o in drafted_options
         if isinstance(o, dict)
     ]
+    drafted_archetypes = [
+        a
+        for a in (_normalise_policy_archetype(o.get("archetype")) for o in drafted_options if isinstance(o, dict))
+        if a
+    ]
+    remaining_archetypes = [a for a in POLICY_ARCHETYPES if a not in drafted_archetypes]
 
     return textwrap.dedent(f"""\
         City: {state.city_profile.city_name} | Turn: {state.current_turn}/{state.city_profile.game_config.total_turns}
@@ -702,9 +851,13 @@ def _build_single_policy_stream_prompt(
         {consultation_transcript}
         --- End transcript ---
 
-        You are drafting policy #{policy_index} of 3.
+        Recent policy history (avoid repeating these names/portfolios unless the crisis context demands it):
+        {json.dumps(recent_policy_history, ensure_ascii=True)}
+
+        You are drafting policy #{policy_index} of 5.
         Already drafted policies (must stay distinct from these):
         {json.dumps(drafted_summary, ensure_ascii=True)}
+        Remaining archetypes to prioritize: {json.dumps(remaining_archetypes, ensure_ascii=True)}
 
         First output policy-specific reasoning in <analysis> tags using markdown-lite:
         <analysis>
@@ -736,6 +889,7 @@ def _build_single_policy_stream_prompt(
           ],
           "tradeoffs": "string",
           "why_now": "string",
+          "archetype": "one of: {', '.join(POLICY_ARCHETYPES)}",
           "advisor_stances": [
             {{
               "minister_name": "exact minister name",
@@ -747,6 +901,7 @@ def _build_single_policy_stream_prompt(
 
         Constraints:
         - This policy must be distinct from already drafted ones by portfolio mix, targets, and tradeoff profile.
+        - Avoid repeating policy names from recent history.
         - budget_cost must be <= {available_budget:.0f}
         - advisor_stances MUST contain exactly {len(minister_names)} entries with exact names from:
           {json.dumps(minister_names, ensure_ascii=True)}
@@ -851,9 +1006,9 @@ def generate_policy_options(
     consultation_transcript: str,
     available_budget: float,
 ) -> list[dict[str, Any]]:
-    """Generate 3 policy options for the current turn, informed by consultation transcript.
+    """Generate 5 policy options for the current turn, informed by consultation transcript.
 
-    Returns list of 3 policy dicts matching Policy schema.
+    Returns list of 5 policy dicts matching Policy schema.
     """
     context = _build_policy_prompt_context(state, consultation_transcript, available_budget)
     ministers_str = context["ministers_str"]
@@ -866,14 +1021,19 @@ def generate_policy_options(
         options = []
     if not isinstance(options, list):
         options = [options] if isinstance(options, dict) else []
+    finalised: list[dict[str, Any]] = []
     # Enforce caps: target_effects ±10, side_effects ±5
-    for opt in options[:3]:
+    for opt in options[:5]:
+        if not isinstance(opt, dict):
+            continue
         for key in opt.get("target_effects", {}):
             opt["target_effects"][key] = max(-10.0, min(10.0, float(opt["target_effects"][key])))
         for key in opt.get("side_effects", {}):
             opt["side_effects"][key] = max(-5.0, min(5.0, float(opt["side_effects"][key])))
         _finalise_policy_advisor_stances(llm, opt, state.ministers, ministers_str)
-    return options[:3]
+        _finalise_policy_archetype_and_name(opt, context["recent_policy_history"], finalised)
+        finalised.append(opt)
+    return finalised
 
 
 def generate_policy_options_stream(
@@ -897,7 +1057,7 @@ def generate_policy_options_stream(
     analysis_open = "<analysis>"
     analysis_close = "</analysis>"
 
-    for policy_idx in range(1, 4):
+    for policy_idx in range(1, 6):
         yield {"type": "policy_start", "index": policy_idx}
         if policy_idx > 1:
             total_chunks += 1
@@ -1003,13 +1163,23 @@ def generate_policy_options_stream(
         for key in policy_raw.get("side_effects", {}):
             policy_raw["side_effects"][key] = max(-5.0, min(5.0, float(policy_raw["side_effects"][key])))
         _finalise_policy_advisor_stances(llm, policy_raw, state.ministers, ministers_str)
+        _finalise_policy_archetype_and_name(policy_raw, context["recent_policy_history"], options)
 
         options.append(policy_raw)
 
         vote = _policy_vote_summary(policy_raw)
         if not re.search(rf"(^|\n)\s*##\s*POLICY\s*{policy_idx}\b", raw, flags=re.IGNORECASE):
             policy_name = _clean_reasoning_line(policy_raw.get("name"), f"Policy {policy_idx}")
-            fallback_line = f"## POLICY {policy_idx} — {policy_name}\n"
+            fallback_lines = [f"## POLICY {policy_idx} — {policy_name}"]
+            if not vote.get("limited", False):
+                fallback_lines.append(
+                    f"- **Council vote:** {int(vote.get('for_count', 0))} For · {int(vote.get('against_count', 0))} Against"
+                )
+            if vote.get("for_line"):
+                fallback_lines.append(f"- **For:** {vote['for_line']}")
+            if vote.get("against_line"):
+                fallback_lines.append(f"- **Against:** {vote['against_line']}")
+            fallback_line = "\n".join(fallback_lines) + "\n"
             for out in _iter_smoothed_thinking_chunks(fallback_line):
                 emitted_this_policy += 1
                 emitted_this_chars += len(out)
@@ -1028,11 +1198,11 @@ def generate_policy_options_stream(
 
     logger.info(
         "policy_stream_finished policies=%d thinking_chunks=%d thinking_chars=%d",
-        len(options[:3]),
+        len(options[:5]),
         total_chunks,
         total_chars,
     )
-    yield {"type": "policies", "options": options[:3]}
+    yield {"type": "policies", "options": options[:5]}
 
 
 def amend_policy_option(
@@ -2067,3 +2237,274 @@ def poll_citizen_approval(
             reaction="...",
             sentiment=sentiment,
         )
+
+
+# ---------------------------------------------------------------------------
+# Turn Forecast — next-turn intelligence brief
+# ---------------------------------------------------------------------------
+
+TURN_FORECAST_SYSTEM = textwrap.dedent("""\
+    You are an intelligence analyst for a city mayor in a governance simulation game.
+    Your job is to produce a short, actionable next-turn intelligence brief (3 bullet points).
+    Be specific, data-driven, and direct. Write as if briefing a mayor before their next decision.
+    Return ONLY valid JSON — no markdown, no preamble.
+""")
+
+
+def generate_turn_forecast(
+    llm: LLMClient,
+    state: GameState,
+) -> dict[str, list[str]]:
+    """Produce a 3-bullet next-turn forecast from current game state.
+
+    Returns a dict with keys:
+      hotspots    — warning bullets about deteriorating params / likely crises
+      opportunities — positive bullets about ripe conditions
+      pressure_note — list with 1 sentence about political / election pressure
+    Falls back to rule-based bullets if LLM fails.
+    """
+    params = state.city_params.as_dict()
+    sorted_params = sorted(params.items(), key=lambda x: x[1])
+    worst_3 = [(k, round(v, 1)) for k, v in sorted_params[:3]]
+    best_3  = [(k, round(v, 1)) for k, v in sorted_params[-3:]]
+
+    turns_to_election = max(0, state.city_profile.game_config.election_turn - state.current_turn)
+    total_turns       = state.city_profile.game_config.total_turns
+    turns_remaining   = total_turns - state.current_turn
+    approval          = compute_interim_approval(state.citizens, state.city_params.media_freedom)
+    active_crisis_names = [e.name for e in state.active_events if e.type == "crisis"]
+
+    last_turn = state.turn_history[-1] if state.turn_history else None
+    last_policy_name = last_turn.major_policy.name if last_turn else "None"
+    last_exec_pct    = round(last_turn.execution_score * 100) if last_turn else None
+
+    # Pending deferred deltas
+    pending_summary = []
+    for turn_num, deltas in sorted(state.pending_deltas.items()):
+        if deltas:
+            top = max(deltas.items(), key=lambda x: abs(x[1]))
+            pending_summary.append(f"{top[0].replace('_', ' ')} {'+' if top[1] >= 0 else ''}{top[1]:.1f} in T{turn_num}")
+
+    prompt = textwrap.dedent(f"""\
+        City: {state.city_profile.city_name}
+        Current turn: {state.current_turn} / {total_turns} | Turns remaining: {turns_remaining}
+        Election in: {turns_to_election} turns | Current approval: {approval:.1f}%
+        Treasury: ₹{state.treasury:.0f} Cr | Debt: ₹{state.outstanding_debt:.0f} Cr
+        Communal tension: {state.communal_tension:.1f}/100
+
+        WORST parameters: {', '.join(f"{k.replace('_', ' ')} = {v}" for k, v in worst_3)}
+        BEST parameters: {', '.join(f"{k.replace('_', ' ')} = {v}" for k, v in best_3)}
+        Active crises: {', '.join(active_crisis_names) if active_crisis_names else 'none'}
+        Deferred effects arriving next turns: {', '.join(pending_summary) if pending_summary else 'none'}
+        Last policy: {last_policy_name} | Execution: {last_exec_pct}%
+
+        Write 3 intelligence bullets:
+        1. HOTSPOT: The single most dangerous trend the mayor must address next turn.
+        2. OPPORTUNITY: The single best opening to exploit next turn.
+        3. PRESSURE: One sentence on political/election/cabinet pressure.
+
+        Return ONLY JSON:
+        {{
+          "hotspots": ["<single hotspot bullet>"],
+          "opportunities": ["<single opportunity bullet>"],
+          "pressure_note": ["<single pressure sentence>"]
+        }}
+    """)
+
+    try:
+        raw = llm.chat_text(TURN_FORECAST_SYSTEM, prompt)
+        result = _extract_json(raw)
+        if not isinstance(result, dict):
+            raise ValueError("not a dict")
+        return {
+            "hotspots":     [str(x) for x in result.get("hotspots", [])[:2]],
+            "opportunities":[str(x) for x in result.get("opportunities", [])[:2]],
+            "pressure_note":[str(x) for x in result.get("pressure_note", [])[:1]],
+        }
+    except Exception as exc:
+        logger.warning("generate_turn_forecast fallback: %s", exc)
+        # Rule-based fallback
+        hotspot = f"⚠ {worst_3[0][0].replace('_', ' ')} at {worst_3[0][1]} — watch for threshold event"
+        opportunity = f"💡 {best_3[-1][0].replace('_', ' ')} at {best_3[-1][1]} — build on momentum"
+        pressure = (
+            f"🗳 Election in {turns_to_election} turns — approval at {approval:.0f}%"
+            if turns_to_election <= 4
+            else f"Cabinet stable — {turns_remaining} turns remaining"
+        )
+        return {
+            "hotspots":     [hotspot],
+            "opportunities":[opportunity],
+            "pressure_note":[pressure],
+        }
+
+
+# ── Mid-Execution Dilemma ─────────────────────────────────────────────────────
+
+_DILEMMA_SYSTEM = textwrap.dedent("""\
+    You are a realistic city governance simulation narrator.
+    Given a policy being executed, the assigned minister, and the execution context,
+    generate a single mid-execution dilemma — a complication that arises during
+    implementation that forces the mayor to make a quick binary choice.
+
+    Return ONLY valid JSON with this exact structure:
+    {
+      "situation": "A 1-2 sentence field report describing the complication.",
+      "option_a": {
+        "label": "2-4 word action name",
+        "description": "1 sentence describing what happens",
+        "effect_key": "one_city_param_key",
+        "effect_delta": <float between -3.0 and 3.0>,
+        "ideology_tag": "one of: pragmatist, populist, institutionalist, strongman"
+      },
+      "option_b": {
+        "label": "2-4 word action name",
+        "description": "1 sentence describing what happens",
+        "effect_key": "one_city_param_key",
+        "effect_delta": <float between -3.0 and 3.0>,
+        "ideology_tag": "one of: pragmatist, populist, institutionalist, strongman"
+      }
+    }
+
+    Rules:
+    - The dilemma must be specific to the policy and city context
+    - Each option should trade off a different city parameter
+    - One option should feel safer, the other bolder with higher upside/downside
+    - Each option MUST have a different ideology_tag. The four tags:
+      * "pragmatist" — efficiency-focused, data-driven, technocratic approach
+      * "populist" — people-first, subsidies, redistribution approach
+      * "institutionalist" — rule of law, process, anti-corruption approach
+      * "strongman" — centralized authority, fast decisive action approach
+    - Use only these param keys: jobs_and_commerce, transit_and_roads,
+      water_power_sanitation, hospitals_and_clinics, schools_and_universities,
+      affordable_housing, community_and_spaces, police_and_emergency,
+      courts_and_legal, air_quality_and_pollution, admin_efficiency,
+      anti_corruption, media_freedom
+    - Keep it grounded and realistic — no fantasy scenarios
+""")
+
+# Pool of generic dilemmas for fallback (keyed by portfolio)
+_FALLBACK_DILEMMAS: dict[str, dict] = {
+    "default": {
+        "situation": "Field teams report an unexpected budget shortfall mid-implementation. You must decide how to proceed.",
+        "option_a": {"label": "Cut Scope", "description": "Reduce the programme scope to stay within budget", "effect_key": "admin_efficiency", "effect_delta": 1.5, "ideology_tag": "pragmatist"},
+        "option_b": {"label": "Emergency Funds", "description": "Dip into emergency reserves to cover the gap", "effect_key": "admin_efficiency", "effect_delta": -1.5, "ideology_tag": "populist"},
+    },
+    "Infrastructure": {
+        "situation": "Construction crews discover underground utility lines not on any map. Rerouting will cost time.",
+        "option_a": {"label": "Reroute Carefully", "description": "Add 2 weeks to the timeline but avoid disruption", "effect_key": "transit_and_roads", "effect_delta": -1.5, "ideology_tag": "institutionalist"},
+        "option_b": {"label": "Push Through", "description": "Risk a utility disruption to stay on schedule", "effect_key": "water_power_sanitation", "effect_delta": -2.0, "ideology_tag": "strongman"},
+    },
+    "Health & Education": {
+        "situation": "Medical supply vendors demand upfront payment, delaying distribution to clinics.",
+        "option_a": {"label": "Negotiate Terms", "description": "Delay delivery by a week but keep costs down", "effect_key": "hospitals_and_clinics", "effect_delta": -1.0, "ideology_tag": "pragmatist"},
+        "option_b": {"label": "Pay Upfront", "description": "Immediate delivery but treasury takes a hit", "effect_key": "admin_efficiency", "effect_delta": -1.5, "ideology_tag": "populist"},
+    },
+    "Finance & Economy": {
+        "situation": "Small business owners protest the policy's new compliance requirements.",
+        "option_a": {"label": "Ease Compliance", "description": "Relax requirements — businesses happy, less oversight", "effect_key": "anti_corruption", "effect_delta": -1.5, "ideology_tag": "pragmatist"},
+        "option_b": {"label": "Hold Firm", "description": "Keep strict rules — some businesses may close", "effect_key": "jobs_and_commerce", "effect_delta": -1.5, "ideology_tag": "institutionalist"},
+    },
+    "Housing & Community": {
+        "situation": "Residents near the construction site file noise complaints threatening to halt work.",
+        "option_a": {"label": "Night Shifts", "description": "Move to night construction — faster but community impact", "effect_key": "community_and_spaces", "effect_delta": -1.5, "ideology_tag": "strongman"},
+        "option_b": {"label": "Slow Build", "description": "Reduce hours to appease residents — delays completion", "effect_key": "affordable_housing", "effect_delta": -1.0, "ideology_tag": "populist"},
+    },
+    "Home Affairs": {
+        "situation": "A civil liberties group raises concerns about the new surveillance provisions.",
+        "option_a": {"label": "Add Oversight", "description": "Include a review board — slower rollout, more trust", "effect_key": "admin_efficiency", "effect_delta": -1.0, "ideology_tag": "institutionalist"},
+        "option_b": {"label": "Proceed As-Is", "description": "Deploy quickly but media scrutiny increases", "effect_key": "media_freedom", "effect_delta": -1.5, "ideology_tag": "strongman"},
+    },
+    "Governance Reform": {
+        "situation": "Senior bureaucrats resist the new transparency measures, threatening a work slowdown.",
+        "option_a": {"label": "Incentive Package", "description": "Offer bonuses for compliance — costs money, faster results", "effect_key": "admin_efficiency", "effect_delta": 2.0, "ideology_tag": "pragmatist"},
+        "option_b": {"label": "Enforce Strictly", "description": "No compromise — slower adoption but stronger reform", "effect_key": "anti_corruption", "effect_delta": 2.0, "ideology_tag": "institutionalist"},
+    },
+    "Environment": {
+        "situation": "Factory owners threaten job cuts if pollution controls are enforced on schedule.",
+        "option_a": {"label": "Phase In Slowly", "description": "Extend compliance deadline — jobs saved, air still bad", "effect_key": "air_quality_and_pollution", "effect_delta": -1.5, "ideology_tag": "pragmatist"},
+        "option_b": {"label": "Enforce Now", "description": "Strict enforcement — cleaner air, some layoffs", "effect_key": "jobs_and_commerce", "effect_delta": -1.5, "ideology_tag": "strongman"},
+    },
+}
+
+_VALID_IDEOLOGY_TAGS = {"pragmatist", "populist", "institutionalist", "strongman"}
+
+# Heuristic mapping: effect_key → likely ideology tag
+_EFFECT_KEY_TO_IDEOLOGY: dict[str, str] = {
+    "jobs_and_commerce": "pragmatist",
+    "transit_and_roads": "pragmatist",
+    "water_power_sanitation": "populist",
+    "hospitals_and_clinics": "populist",
+    "schools_and_universities": "populist",
+    "affordable_housing": "populist",
+    "community_and_spaces": "populist",
+    "police_and_emergency": "strongman",
+    "courts_and_legal": "institutionalist",
+    "air_quality_and_pollution": "institutionalist",
+    "admin_efficiency": "pragmatist",
+    "anti_corruption": "institutionalist",
+    "media_freedom": "institutionalist",
+}
+
+VALID_PARAM_KEYS = {
+    "jobs_and_commerce", "transit_and_roads", "water_power_sanitation",
+    "hospitals_and_clinics", "schools_and_universities", "affordable_housing",
+    "community_and_spaces", "police_and_emergency", "courts_and_legal",
+    "air_quality_and_pollution", "admin_efficiency", "anti_corruption", "media_freedom",
+}
+
+
+def generate_mid_execution_dilemma(
+    llm: LLMClient,
+    policy: Policy,
+    minister_name: str,
+    execution_pct: int,
+    city_name: str,
+    portfolio: str,
+    active_events: list[ActiveEvent],
+) -> dict:
+    """Generate a context-aware binary dilemma for mid-execution.
+
+    Returns dict with keys: situation, option_a, option_b.
+    Falls back to a generic dilemma from the pool on LLM failure.
+    """
+    events_str = ", ".join(e.name for e in active_events[:3]) or "none"
+    prompt = (
+        f"City: {city_name}\n"
+        f"Policy being executed: \"{policy.name}\" (portfolio: {portfolio})\n"
+        f"Description: {policy.description}\n"
+        f"Assigned minister: {minister_name}\n"
+        f"Current execution estimate: {execution_pct}%\n"
+        f"Active events/crises: {events_str}\n\n"
+        f"Generate a mid-execution dilemma — a realistic complication that has just arisen during implementation."
+    )
+
+    try:
+        raw = llm.chat_text(_DILEMMA_SYSTEM, prompt)
+        # Extract JSON
+        match = re.search(r"\{[\s\S]*\}", raw)
+        if not match:
+            raise ValueError("No JSON object found in LLM response")
+        data = json.loads(match.group())
+
+        # Validate structure
+        for key in ("situation", "option_a", "option_b"):
+            if key not in data:
+                raise ValueError(f"Missing key: {key}")
+        for opt_key in ("option_a", "option_b"):
+            opt = data[opt_key]
+            for field in ("label", "description", "effect_key", "effect_delta"):
+                if field not in opt:
+                    raise ValueError(f"Missing {opt_key}.{field}")
+            if opt["effect_key"] not in VALID_PARAM_KEYS:
+                raise ValueError(f"Invalid param key: {opt['effect_key']}")
+            opt["effect_delta"] = max(-3.0, min(3.0, float(opt["effect_delta"])))
+            # Validate / fix ideology_tag
+            if opt.get("ideology_tag") not in _VALID_IDEOLOGY_TAGS:
+                opt["ideology_tag"] = _EFFECT_KEY_TO_IDEOLOGY.get(opt["effect_key"], "pragmatist")
+
+        return data
+
+    except Exception as exc:
+        logger.warning("generate_mid_execution_dilemma fallback: %s", exc)
+        fallback = _FALLBACK_DILEMMAS.get(portfolio, _FALLBACK_DILEMMAS["default"])
+        return {**fallback}

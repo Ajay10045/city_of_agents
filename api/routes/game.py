@@ -9,7 +9,7 @@ Endpoints:
   GET   /game/{id}/candidates  — list minister candidates for cabinet
   POST  /game/{id}/cabinet     — assign cabinet ministers
   POST  /game/{id}/consult     — open / message / close minister consultation
-  GET   /game/{id}/policies    — generate 3 policy options for current turn
+  GET   /game/{id}/policies    — generate policy options for current turn
   POST  /game/{id}/turn        — execute a full turn
   GET   /game/{id}/state       — current game snapshot
   GET   /game/{id}/scorecard   — final scorecard (game over)
@@ -57,6 +57,7 @@ class CityHintRequest(BaseModel):
 class NewGameRequest(BaseModel):
     city_profile: dict[str, Any]   # raw profile dict (from /game/profile or custom)
     seed: int | None = None
+    challenge_mode: str = "standard"  # standard | reformist | populist | fiscal_hawk
 
 
 class ConsultRequest(BaseModel):
@@ -71,7 +72,7 @@ class CabinetAssignmentRequest(BaseModel):
 
 
 class TurnRequest(BaseModel):
-    policy_index: int                     # 0-2 from last /policies call
+    policy_index: int                     # index from last /policies call
     minor_action: dict[str, Any]          # MinorAction schema dict
     counter_frame: str = "Delivery Receipts"
 
@@ -111,7 +112,12 @@ def new_game(req: NewGameRequest) -> dict[str, Any]:
     Returns the game_id and initial state snapshot.
     """
     try:
-        profile = CityProfile(**req.city_profile)
+        profile_dict = dict(req.city_profile)
+        # Inject challenge_mode into game_config before constructing CityProfile
+        gc = dict(profile_dict.get("game_config") or {})
+        gc["challenge_mode"] = req.challenge_mode
+        profile_dict["game_config"] = gc
+        profile = CityProfile(**profile_dict)
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"Invalid city profile: {exc}") from exc
 
@@ -190,7 +196,7 @@ def consult(game_id: str, req: ConsultRequest) -> dict[str, Any]:
 
 @router.get("/{game_id}/policies")
 def get_policies(game_id: str) -> dict[str, Any]:
-    """Generate 3 policy options for the current turn.
+    """Generate policy options for the current turn.
 
     Should be called after consultation(s) for the turn.
     Returns the options and caches them in the session.
@@ -249,7 +255,7 @@ def execute_turn(game_id: str, req: TurnRequest) -> dict[str, Any]:
 
     Requires:
     - GET /game/{id}/policies to have been called first this turn
-    - policy_index: 0–2 (which of the 3 options to enact)
+    - policy_index: index into the generated options list
     - minor_action: {"type": "banking"|"maintenance"|..., "target": str|null, "budget": float}
     - counter_frame: optional counter-frame strategy name
 
@@ -347,6 +353,8 @@ class TurnRequestV2(BaseModel):
     policy_index: int
     minister_id: str
     minor_action: dict[str, Any]
+    counter_frame: str = "Delivery Receipts"
+    power_move: dict[str, Any] = {"type": "none"}
 
 
 @router.post("/{game_id}/turn/stream/v2")
@@ -373,6 +381,8 @@ def execute_turn_stream_v2(game_id: str, req: TurnRequestV2) -> StreamingRespons
                 policy_index=req.policy_index,
                 minister_id=req.minister_id,
                 minor_action=req.minor_action,
+                counter_frame_strategy=req.counter_frame,
+                power_move=req.power_move,
             ):
                 yield f"data: {json.dumps(milestone)}\n\n"
         except Exception as exc:
@@ -383,11 +393,82 @@ def execute_turn_stream_v2(game_id: str, req: TurnRequestV2) -> StreamingRespons
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+class DilemmaRequest(BaseModel):
+    choice: str   # "a" or "b"
+
+
+@router.post("/{game_id}/turn/dilemma")
+def resolve_dilemma(game_id: str, req: DilemmaRequest) -> StreamingResponse:
+    """Resolve the mid-execution dilemma and resume the turn stream.
+
+    Returns SSE stream of remaining turn events (phases 4+).
+    """
+    session = _get_session(game_id)
+
+    def _event_stream():
+        try:
+            for milestone in session.resume_after_dilemma(choice=req.choice):
+                yield f"data: {json.dumps(milestone)}\n\n"
+        except Exception as exc:
+            traceback.print_exc()
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+
+    return StreamingResponse(_event_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+class EventResponseRequest(BaseModel):
+    responses: list[dict[str, Any]]  # [{event_id, strategy, minister_id?}, ...]
+
+
+@router.post("/{game_id}/turn/event-response")
+def resolve_event_response(game_id: str, req: EventResponseRequest) -> StreamingResponse:
+    """Submit event responses and resume the turn stream.
+
+    Returns SSE stream of remaining turn events (budget → media → complete).
+    """
+    session = _get_session(game_id)
+
+    def _event_stream():
+        try:
+            for milestone in session.resume_after_event_response(responses=req.responses):
+                yield f"data: {json.dumps(milestone)}\n\n"
+        except Exception as exc:
+            traceback.print_exc()
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+
+    return StreamingResponse(_event_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+class AccountabilityRequest(BaseModel):
+    action: str          # "praise" | "reprimand" | "investigate" | "skip"
+    minister_id: str
+
+
+@router.post("/{game_id}/turn/accountability")
+def apply_accountability(game_id: str, req: AccountabilityRequest) -> dict[str, Any]:
+    """Post-turn minister accountability action."""
+    session = _get_session(game_id)
+    try:
+        result = session.apply_accountability(req.action, req.minister_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return result
+
+
 @router.get("/{game_id}/state")
 def get_state(game_id: str) -> dict[str, Any]:
     """Return the current game state snapshot."""
     session = _get_session(game_id)
     return session.get_state_snapshot()
+
+
+@router.get("/{game_id}/history")
+def get_history(game_id: str) -> dict[str, Any]:
+    """Return the full turn history (for trend charts)."""
+    session = _get_session(game_id)
+    return {"game_id": game_id, "turns": session.get_turn_history()}
 
 
 @router.get("/{game_id}/scorecard")

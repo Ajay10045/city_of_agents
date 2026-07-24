@@ -25,10 +25,10 @@ export function generateProfile(cityHint: string) {
 
 // ---- New Game ----
 
-export function newGame(cityProfile: Record<string, unknown>, seed?: number) {
+export function newGame(cityProfile: Record<string, unknown>, seed?: number, challengeMode?: string) {
   return request<{ game_id: string; state: import('./types').GameState }>('/game/new', {
     method: 'POST',
-    body: JSON.stringify({ city_profile: cityProfile, seed }),
+    body: JSON.stringify({ city_profile: cityProfile, seed, challenge_mode: challengeMode ?? 'standard' }),
   })
 }
 
@@ -147,7 +147,9 @@ export async function* executeTurnStreamV2(
   gameId: string,
   policyIndex: number,
   ministerId: string,
-  minorAction: { type: string; target?: string; budget?: number },
+  minorAction: import('./types').MinorActionInput,
+  counterFrame: import('./types').CounterFrameStrategy = 'Delivery Receipts',
+  powerMove: { type: string; target_event_id?: string } = { type: 'none' },
 ): AsyncGenerator<Record<string, unknown>> {
   const res = await fetch(`/game/${gameId}/turn/stream/v2`, {
     method: 'POST',
@@ -156,6 +158,8 @@ export async function* executeTurnStreamV2(
       policy_index: policyIndex,
       minister_id: ministerId,
       minor_action: { type: minorAction.type, target: minorAction.target ?? null, budget: minorAction.budget ?? 0 },
+      counter_frame: counterFrame,
+      power_move: powerMove,
     }),
   })
   if (!res.ok) throw new Error(`Stream v2 failed: ${res.status}`)
@@ -202,10 +206,85 @@ export async function* streamTurnBriefing(
   }
 }
 
+// ---- Dilemma Resolution (streaming) ----
+
+export async function* resolveDilemmaStream(
+  gameId: string,
+  choice: 'a' | 'b',
+): AsyncGenerator<Record<string, unknown>> {
+  const res = await fetch(`/game/${gameId}/turn/dilemma`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ choice }),
+  })
+  if (!res.ok) throw new Error(`Dilemma resolve failed: ${res.status}`)
+  const reader = res.body!.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  while (true) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const parts = buffer.split('\n\n')
+    buffer = parts.pop()!
+    for (const part of parts) {
+      const line = part.trim()
+      if (line.startsWith('data: ')) {
+        yield JSON.parse(line.slice(6)) as Record<string, unknown>
+      }
+    }
+  }
+}
+
+// ---- Event Response Resolution (streaming) ----
+
+export async function* resolveEventResponseStream(
+  gameId: string,
+  responses: { event_id: string; strategy: string; minister_id?: string }[],
+): AsyncGenerator<Record<string, unknown>> {
+  const res = await fetch(`/game/${gameId}/turn/event-response`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ responses }),
+  })
+  if (!res.ok) throw new Error(`Event response failed: ${res.status}`)
+  const reader = res.body!.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  while (true) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const parts = buffer.split('\n\n')
+    buffer = parts.pop()!
+    for (const part of parts) {
+      const line = part.trim()
+      if (line.startsWith('data: ')) {
+        yield JSON.parse(line.slice(6)) as Record<string, unknown>
+      }
+    }
+  }
+}
+
+// ---- Post-Turn Accountability ----
+
+export function applyAccountability(gameId: string, action: string, ministerId: string) {
+  return request<Record<string, unknown>>(`/game/${gameId}/turn/accountability`, {
+    method: 'POST',
+    body: JSON.stringify({ action, minister_id: ministerId }),
+  })
+}
+
 // ---- State ----
 
 export function getState(gameId: string) {
   return request<import('./types').GameState>(`/game/${gameId}/state`)
+}
+
+// ---- Turn History ----
+
+export function getHistory(gameId: string) {
+  return request<import('./types').GameHistoryResponse>(`/game/${gameId}/history`)
 }
 
 // ---- Scorecard ----

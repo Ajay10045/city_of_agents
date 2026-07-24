@@ -8,534 +8,49 @@ import {
 } from 'lucide-react'
 import {
   openConsultation, messageMinister, closeConsultation,
-  getPolicies, amendPolicy, executeTurnStreamV2, streamTurnBriefing
+  getPolicies, amendPolicy, executeTurnStreamV2, streamTurnBriefing,
+  applyAccountability, resolveDilemmaStream, resolveEventResponseStream,
 } from '../api'
 import { parseReasoning, renderReasoningInline } from '../utils/reasoningFormat'
 import type {
   GameState, TurnResult, Policy, Minister, ActiveEvent,
   MediaHeadline, CitizenVoice, WardReportEntry,
-  GovernanceScorecard, AdvisorStance, StanceValue, TurnStreamV2Event,
+  GovernanceScorecard, TurnStreamV2Event,
+  MinorActionInput, CounterFrameStrategy, TurnChoiceSnapshot,
+  TurnForecast, EventResponseOption,
 } from '../types'
-
-// ─── helpers ──────────────────────────────────────────────────────────────────
-
-const PANEL = {
-  background: 'linear-gradient(180deg, #0b1929 0%, #091422 100%)',
-  border: '1px solid #1c3652',
-  borderRadius: 6,
-} as const
-
-const BRIEFING_THINKING_MAX_CHARS = 12000
-
-const HDR_LABEL = {
-  fontFamily: "'Rajdhani', sans-serif",
-  fontWeight: 700,
-  fontSize: 13,
-  letterSpacing: '0.15em',
-  color: '#e8a030',
-} as const
-
-const MONO = (color = '#fff') => ({
-  fontFamily: "'Share Tech Mono', monospace",
-  color,
-} as const)
-
-function avg(vals: number[]) {
-  return vals.reduce((a, b) => a + b, 0) / vals.length
-}
-
-function fmtNum(n: number) {
-  return Math.round(n).toLocaleString()
-}
-
-// ─── Avatar ───────────────────────────────────────────────────────────────────
-
-function Avatar({ seed, size = 28, ring = '#1c3652' }: { seed: string; size?: number; ring?: string }) {
-  return (
-    <img
-      src={`https://api.dicebear.com/7.x/personas/svg?seed=${encodeURIComponent(seed)}&backgroundColor=1e3a5f,0f2942,1a2f4a`}
-      alt={seed}
-      className="rounded-full object-cover shrink-0"
-      style={{ width: size, height: size, border: `1.5px solid ${ring}`, background: '#0b1929' }}
-    />
-  )
-}
-
-// ─── Agent Avatar (Demographic Match) ────────────────────────────────────────
-
-function getPortraitForMinister(name: string, ministers: Minister[]): string {
-  const m = ministers.find(can => can.name === name)
-  if (!m) return '/agents/generic/generic_male_mid_1.png'
-
-  let h = 0
-  for (let i = 0; i < name.length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0
-  h = Math.abs(h)
-
-  const isFemale = h % 2 === 0
-  const genderStr = isFemale ? 'female' : 'male'
-
-  const ageGroup = m.demographics?.age_group || '36-50'
-  let ageStr = 'mid'
-  if (ageGroup.includes('18') || ageGroup.includes('25') || ageGroup.includes('26') || ageGroup.includes('35')) {
-    ageStr = 'young'
-  } else if (ageGroup.includes('51') || ageGroup.includes('65') || ageGroup.includes('+')) {
-    ageStr = 'old'
-  }
-
-  let variant = 1
-  if (ageStr === 'young' || ageStr === 'mid') {
-    variant = ((h >> 1) % 2) + 1
-  }
-
-  return `/agents/generic/generic_${genderStr}_${ageStr}_${variant}.png`
-}
-
-function AgentAvatar({ seed, ministers = [], size = 28, ring = '#1c3652' }: { seed: string; ministers?: Minister[]; size?: number; ring?: string }) {
-  const src = getPortraitForMinister(seed, ministers)
-  return (
-    <img
-      src={src}
-      alt={seed}
-      className="rounded-full object-cover shrink-0"
-      style={{ width: size, height: size, border: `1.5px solid ${ring}`, background: '#0b1929' }}
-    />
-  )
-}
-
-// ─── Advisor Stance Chip ─────────────────────────────────────────────────────
-
-function AdvisorStanceChip({ stance, ministers }: { stance: AdvisorStance; ministers: Minister[] }) {
-  const [showTip, setShowTip] = useState(false)
-  const stanceColor = stance.stance === 'approve' ? '#22c55e' : '#f87171'
-  const stanceSymbol = stance.stance === 'approve' ? '✓' : '✗'
-  return (
-    <div style={{ position: 'relative', cursor: 'default' }}
-      onMouseEnter={() => setShowTip(true)} onMouseLeave={() => setShowTip(false)}>
-      <AgentAvatar seed={stance.ministerName} ministers={ministers} size={22} ring={stanceColor} />
-      <div style={{
-        position: 'absolute', bottom: -2, right: -2, width: 10, height: 10,
-        background: stanceColor, border: '1.5px solid #0b1929', borderRadius: '50%',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: 6, color: '#0b1929', fontWeight: 900, lineHeight: 1,
-      }}>{stanceSymbol}</div>
-      {showTip && (
-        <div style={{
-          position: 'absolute', bottom: 28, left: '50%', transform: 'translateX(-50%)',
-          zIndex: 999, background: '#0a1929', border: `1px solid ${stanceColor}55`,
-          borderRadius: 5, padding: '6px 8px', pointerEvents: 'none',
-          boxShadow: '0 4px 20px rgba(0,0,0,0.8)', minWidth: 160, maxWidth: 220,
-        }}>
-          <div style={{
-            fontSize: 9, fontWeight: 700, fontFamily: "'Rajdhani', sans-serif",
-            color: stanceColor, letterSpacing: '0.06em', marginBottom: 2,
-          }}>
-            {stance.ministerName}
-            <span style={{ color: '#4b6280', fontWeight: 400 }}> {stance.stance.toUpperCase()}</span>
-          </div>
-          <div style={{ fontSize: 9, color: '#94a3b8', lineHeight: 1.4 }}>{stance.reason}</div>
-          <div style={{
-            position: 'absolute', top: '100%', left: '50%', transform: 'translateX(-50%)',
-            width: 0, height: 0, borderLeft: '5px solid transparent',
-            borderRight: '5px solid transparent', borderTop: `5px solid ${stanceColor}55`,
-          }} />
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ─── WelfareCard ──────────────────────────────────────────────────────────────
-
-interface WelfareStat {
-  label: string; score: number; delta: number
-  color: string; icon: string
-}
-
-function WelfareCard({ stat }: { stat: WelfareStat }) {
-  const deltaColor = stat.delta > 0 ? '#4ade80' : stat.delta < 0 ? '#f87171' : '#64748b'
-  const scoreColor = stat.score >= 65 ? '#4ade80' : stat.score >= 40 ? '#f59e0b' : '#f87171'
-  return (
-    <div style={{
-      flex: 1, padding: '12px 14px', borderRadius: 8,
-      background: 'rgba(255,255,255,0.025)',
-      border: `1px solid ${stat.color}28`,
-      display: 'flex', flexDirection: 'column', gap: 8,
-    }}>
-      {/* Header row: icon + label + delta */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{
-          fontSize: 11, fontWeight: 700, color: '#64748b',
-          fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.12em', textTransform: 'uppercase',
-        }}>{stat.icon} {stat.label}</span>
-        {stat.delta !== 0 && (
-          <span style={{ fontSize: 10, fontWeight: 700, color: deltaColor, fontFamily: "'Share Tech Mono', monospace" }}>
-            {stat.delta > 0 ? `▲+${Math.round(stat.delta)}` : `▼${Math.round(stat.delta)}`}
-          </span>
-        )}
-      </div>
-      {/* Score number */}
-      <div style={{
-        fontSize: 36, fontWeight: 700, lineHeight: 1,
-        fontFamily: "'Share Tech Mono', monospace", color: scoreColor,
-      }}>{Math.round(stat.score)}</div>
-      {/* Bar */}
-      <div style={{ height: 5, background: 'rgba(255,255,255,0.06)', borderRadius: 3, overflow: 'hidden' }}>
-        <div style={{
-          height: '100%', width: `${Math.max(0, Math.min(100, stat.score))}%`,
-          background: scoreColor, borderRadius: 3,
-          boxShadow: `0 0 6px ${scoreColor}60`,
-          transition: 'width 0.7s ease',
-        }} />
-      </div>
-    </div>
-  )
-}
-
-// ─── MiniBar ──────────────────────────────────────────────────────────────────
-
-function MiniBar({ value, color, width = 36 }: { value: number; color: string; width?: number }) {
-  return (
-    <div style={{ width, height: 4, background: 'rgba(10,26,48,0.8)', borderRadius: 2, overflow: 'hidden' }}>
-      <div style={{
-        height: '100%', width: `${Math.max(0, Math.min(100, value))}%`,
-        background: color, borderRadius: 2, boxShadow: `0 0 4px ${color}80`
-      }} />
-    </div>
-  )
-}
-
-// ─── Scorecard Overlay ────────────────────────────────────────────────────────
-
-function ScorecardOverlay({ sc }: { sc: GovernanceScorecard }) {
-  const rows: [string, number][] = [
-    ['Final Approval', sc.final_approval],
-    ['Wellbeing Equity', sc.wellbeing_equity],
-    ['Institutional Legacy', sc.institutional_legacy],
-    ['Budget Health', sc.budget_health],
-    ['Crisis Record', sc.crisis_record],
-    ['Promise Delivery', sc.promise_delivery],
-    ['Cabinet Integrity', sc.cabinet_integrity],
-  ]
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: 'rgba(5,13,27,0.95)', backdropFilter: 'blur(8px)' }}>
-      <div style={{ ...PANEL, maxWidth: 480, width: '100%', padding: 32 }}>
-        <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <div style={{ fontSize: 11, ...MONO('#e8a030'), letterSpacing: '0.2em', marginBottom: 4 }}>GAME OVER</div>
-          <div style={{
-            fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 28, color: '#f0c040',
-            letterSpacing: '0.06em', textShadow: '0 0 12px rgba(240,192,64,0.5)'
-          }}>
-            {sc.legacy_title}
-          </div>
-          <div style={{ fontSize: 36, fontWeight: 700, ...MONO('#22c55e'), marginTop: 8 }}>
-            {Math.round(sc.final_score)}
-          </div>
-          <div style={{ ...HDR_LABEL, marginTop: 2 }}>FINAL SCORE</div>
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
-          {rows.map(([label, val]) => (
-            <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ flex: 1, fontSize: 11, color: '#94a3b8' }}>{label}</span>
-              <div style={{ width: 100, height: 4, background: '#0a1a30', borderRadius: 2, overflow: 'hidden' }}>
-                <div style={{
-                  height: '100%', width: `${val}%`, background: '#e8a030',
-                  borderRadius: 2, boxShadow: '0 0 4px #e8a03080'
-                }} />
-              </div>
-              <span style={{ fontSize: 11, fontWeight: 700, ...MONO('#f0c040'), width: 28, textAlign: 'right' }}>
-                {Math.round(val)}
-              </span>
-            </div>
-          ))}
-        </div>
-        <div style={{ fontSize: 11, color: '#64748b', lineHeight: 1.6, textAlign: 'center' }}>
-          {sc.summary}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ─── Minister Picker Modal ────────────────────────────────────────────────────
-
-function MinisterPickerModal({
-  policy, ministers, onSelect, onBack,
-}: {
-  policy: Policy
-  ministers: Minister[]
-  onSelect: (ministerId: string) => void
-  onBack: () => void
-}) {
-  const MINISTER_COLORS = ['#38bdf8', '#22c55e', '#f59e0b', '#a855f7', '#f87171', '#34d399']
-
-  // Sort: portfolio match first, then by competence desc
-  const sorted = [...ministers].sort((a, b) => {
-    const aMatch = a.portfolio === policy.portfolio || (a.extra_portfolios ?? []).includes(policy.portfolio)
-    const bMatch = b.portfolio === policy.portfolio || (b.extra_portfolios ?? []).includes(policy.portfolio)
-    if (aMatch && !bMatch) return -1
-    if (!aMatch && bMatch) return 1
-    return (b.capability?.competence ?? 50) - (a.capability?.competence ?? 50)
-  })
-  const recommended = sorted[0]?.id
-
-  return (
-    <div style={{
-      position: 'fixed', inset: 0, zIndex: 200,
-      background: 'rgba(0,0,0,0.75)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-    }}>
-      <div style={{
-        background: 'linear-gradient(180deg, #071320 0%, #050d1b 100%)',
-        border: '1px solid #1c3652',
-        borderRadius: 10, width: 420,
-        boxShadow: '0 0 60px rgba(56,189,248,0.08)',
-        overflow: 'hidden',
-      }}>
-        {/* Header */}
-        <div style={{ padding: '14px 18px 12px', borderBottom: '1px solid #1c3652' }}>
-          <div style={{ fontSize: 9, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.12em', color: '#4b6280', marginBottom: 4 }}>
-            ASSIGN MINISTER
-          </div>
-          <div style={{ fontSize: 14, fontWeight: 700, color: '#fff' }}>{policy.name}</div>
-          <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>{policy.portfolio} · ₹{policy.budget_cost} Cr</div>
-        </div>
-
-        {/* Minister list */}
-        <div style={{ padding: '10px 14px', maxHeight: 420, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {sorted.map((m, idx) => {
-            const col = MINISTER_COLORS[idx % MINISTER_COLORS.length]
-            const competence = m.capability?.competence ?? 50
-            const loyalty = m.loyalty ?? 50
-            const scandalRisk = m.scandal_exposure ?? 0
-            const isRecommended = m.id === recommended
-            const portfolioMatch = m.portfolio === policy.portfolio || (m.extra_portfolios ?? []).includes(policy.portfolio)
-
-            return (
-              <div key={m.id} style={{
-                background: 'rgba(255,255,255,0.03)',
-                border: `1px solid ${isRecommended ? col + '55' : '#1c3652'}`,
-                borderRadius: 8, padding: '10px 12px',
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <Avatar seed={m.name} size={36} ring={col} />
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                      <span style={{ fontSize: 12, fontWeight: 700, color: '#e2e8f0' }}>{m.name}</span>
-                      {isRecommended && (
-                        <span style={{
-                          fontSize: 8, padding: '1px 5px', borderRadius: 10,
-                          background: `${col}22`, border: `1px solid ${col}44`, color: col,
-                          fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, letterSpacing: '0.06em',
-                        }}>★ BEST FIT</span>
-                      )}
-                      {!portfolioMatch && (
-                        <span style={{
-                          fontSize: 8, padding: '1px 5px', borderRadius: 10,
-                          background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)',
-                          color: '#f59e0b', fontFamily: "'Rajdhani', sans-serif", fontWeight: 700,
-                        }}>OUT OF PORTFOLIO</span>
-                      )}
-                    </div>
-                    <div style={{ fontSize: 9, color: '#475569' }}>{m.portfolio}</div>
-                  </div>
-                </div>
-
-                {/* Stats */}
-                <div style={{ display: 'flex', gap: 12, marginTop: 10, flexWrap: 'wrap' }}>
-                  {[
-                    { label: 'Competence', value: competence, color: '#38bdf8' },
-                    { label: 'Loyalty', value: loyalty, color: '#22c55e' },
-                    { label: 'Scandal Risk', value: scandalRisk, color: scandalRisk > 50 ? '#f87171' : '#475569' },
-                  ].map(s => (
-                    <div key={s.label} style={{ flex: 1, minWidth: 80 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-                        <span style={{ fontSize: 8, color: '#475569', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.06em' }}>{s.label.toUpperCase()}</span>
-                        <span style={{ fontSize: 9, fontWeight: 700, color: s.color, fontFamily: "'Share Tech Mono', monospace" }}>{Math.round(s.value)}</span>
-                      </div>
-                      <div style={{ height: 3, background: '#0b1929', borderRadius: 2, overflow: 'hidden' }}>
-                        <div style={{ height: '100%', width: `${s.value}%`, background: s.color, borderRadius: 2 }} />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Personality hint */}
-                {m.personality && (
-                  <div style={{ marginTop: 8, fontSize: 9, color: '#334155', lineHeight: 1.4, fontStyle: 'italic' }}>
-                    {[
-                      m.personality.integrity < 35 && 'Low integrity — watch for leakage',
-                      m.personality.corruption_tolerance > 65 && 'High corruption tolerance',
-                      m.personality.empathy > 65 && 'High empathy — community-focused',
-                      competence < 40 && 'May underdeliver',
-                      loyalty < 40 && 'Loyalty risk — may defect',
-                    ].filter(Boolean).slice(0, 2).join(' · ')}
-                  </div>
-                )}
-
-                <button
-                  onClick={() => onSelect(m.id)}
-                  style={{
-                    marginTop: 10, width: '100%',
-                    background: `linear-gradient(90deg, ${col}22, ${col}11)`,
-                    border: `1px solid ${col}44`, borderRadius: 5,
-                    color: col, fontSize: 10, fontWeight: 700,
-                    fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.1em',
-                    padding: '6px 0', cursor: 'pointer',
-                  }}
-                  onMouseEnter={e => { e.currentTarget.style.background = `${col}33` }}
-                  onMouseLeave={e => { e.currentTarget.style.background = `linear-gradient(90deg, ${col}22, ${col}11)` }}
-                >
-                  ASSIGN {m.name.split(' ')[0].toUpperCase()}
-                </button>
-              </div>
-            )
-          })}
-        </div>
-
-        <div style={{ padding: '10px 18px', borderTop: '1px solid #1c3652' }}>
-          <button onClick={onBack} style={{
-            background: 'none', border: '1px solid #1c3652', borderRadius: 5,
-            color: '#475569', fontSize: 10, fontFamily: "'Rajdhani', sans-serif",
-            letterSpacing: '0.08em', padding: '5px 14px', cursor: 'pointer',
-          }}>← BACK TO POLICIES</button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ─── Policy Modal ─────────────────────────────────────────────────────────────
-
-function PolicyModal({
-  options, ministers, onSelect, onDiscuss, onClose, loading, error,
-}: {
-  options: Policy[]; ministers: Minister[]; onSelect: (i: number) => void; onDiscuss: (policy: Policy, index: number) => void; onClose: () => void; loading: boolean; error: string | null
-}) {
-  const PORTFOLIO_COLORS: Record<string, string> = {
-    'Health': '#22c55e', 'Infrastructure': '#38bdf8', 'Transport & Roads': '#38bdf8',
-    'Education': '#a855f7', 'Housing': '#f97316', 'Security & Law': '#f87171',
-    'Environment': '#4ade80', 'Water & Power': '#60a5fa', 'Commerce': '#eab308',
-    'Labor & Employment': '#fb923c',
-  }
-  const stancesByPolicy = useMemo(
-    () => options.map(p => mapPolicyAdvisorStances(ministers, p)),
-    [options, ministers]
-  )
-  return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center"
-      style={{ background: 'rgba(5,13,27,0.85)', backdropFilter: 'blur(6px)' }}>
-      <div style={{ ...PANEL, width: '90%', maxWidth: 860, padding: 24 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-          <span style={HDR_LABEL}>SELECT POLICY FOR THIS TURN</span>
-          <button onClick={onClose} disabled={loading}
-            style={{ color: '#4b6280', fontSize: 18, background: 'none', border: 'none', cursor: 'pointer' }}>✕</button>
-        </div>
-        {error && (
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
-            background: 'rgba(248,113,113,0.1)', border: '1px solid #7f1d1d', borderRadius: 4,
-            marginBottom: 16, fontSize: 11, color: '#f87171'
-          }}>
-            <AlertTriangle size={13} style={{ flexShrink: 0 }} />
-            {error}
-          </div>
-        )}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12 }}>
-          {options.map((p, i) => {
-            const col = PORTFOLIO_COLORS[p.portfolio] ?? '#e8a030'
-            const topEffects = Object.entries(p.target_effects).slice(0, 3)
-            const stances = stancesByPolicy[i] ?? []
-            const approveCount = stances.filter(s => s.stance === 'approve').length
-            const againstCount = stances.filter(s => s.stance === 'disapprove').length
-            return (
-              <div key={i} style={{
-                background: 'rgba(255,255,255,0.03)', border: `1px solid #1c3652`,
-                borderRadius: 6, padding: 14, cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 10
-              }}>
-                <div>
-                  <span style={{
-                    fontSize: 8, fontWeight: 700, color: col, background: `${col}22`,
-                    border: `1px solid ${col}44`, borderRadius: 3, padding: '1px 6px',
-                    fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em'
-                  }}>
-                    {p.portfolio}
-                  </span>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', marginTop: 6, lineHeight: 1.3 }}>{p.name}</div>
-                  <div style={{ fontSize: 11, color: '#64748b', marginTop: 4, lineHeight: 1.45 }}>{p.description}</div>
-                </div>
-                <div style={{ fontSize: 11, ...MONO('#f87171') }}>
-                  Budget: ₹{fmtNum(p.budget_cost)} Cr
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                  {topEffects.map(([k, v]) => (
-                    <span key={k} style={{
-                      fontSize: 9, fontFamily: "'Share Tech Mono', monospace",
-                      color: (v as number) >= 0 ? '#4ade80' : '#f87171',
-                      background: (v as number) >= 0 ? 'rgba(34,197,94,0.1)' : 'rgba(248,113,113,0.1)',
-                      border: `1px solid ${(v as number) >= 0 ? '#14532d' : '#7f1d1d'}`,
-                      borderRadius: 3, padding: '1px 5px'
-                    }}>
-                      {k.replace(/_/g, ' ')} {(v as number) >= 0 ? '+' : ''}{v as number}
-                    </span>
-                  ))}
-                </div>
-                {/* ── Advisor Poll ── */}
-                {stances.length > 0 && (
-                  <div style={{ borderTop: '1px solid #1c3652', paddingTop: 8 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                      <span style={{
-                        fontSize: 8, fontFamily: "'Rajdhani', sans-serif",
-                        fontWeight: 700, letterSpacing: '0.12em', color: '#4b6280'
-                      }}>ADVISOR POLL</span>
-                      <span style={{ fontSize: 9, fontFamily: "'Share Tech Mono', monospace", color: '#64748b' }}>
-                        <span style={{ color: '#4ade80' }}>{approveCount} For</span>
-                        {' · '}
-                        <span style={{ color: '#f87171' }}>{againstCount} Against</span>
-                      </span>
-                    </div>
-                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                      {stances.map(s => (
-                        <AdvisorStanceChip key={s.ministerId} stance={s} ministers={ministers} />
-                      ))}
-                    </div>
-                  </div>
-                )}
-                <div style={{ marginTop: 'auto', display: 'flex', gap: 6 }}>
-                  <button
-                    onClick={() => onDiscuss(p, i)}
-                    disabled={loading}
-                    style={{
-                      flex: 1, background: 'transparent',
-                      border: '1px solid rgba(232,160,48,0.4)', borderRadius: 4, padding: '8px 0',
-                      color: loading ? '#4b6280' : '#e8a030',
-                      fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 11,
-                      letterSpacing: '0.08em', cursor: loading ? 'not-allowed' : 'pointer',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4
-                    }}>
-                    <MessageCircle size={11} /> DISCUSS
-                  </button>
-                  <button
-                    onClick={() => onSelect(i)}
-                    disabled={loading}
-                    style={{
-                      flex: 1, background: loading ? '#1a2a3a' : 'linear-gradient(135deg, #c47d10, #e8a030)',
-                      border: 'none', borderRadius: 4, padding: '8px 0', color: loading ? '#4b6280' : '#040d1b',
-                      fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 11,
-                      letterSpacing: '0.08em', cursor: loading ? 'not-allowed' : 'pointer',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4
-                    }}>
-                    {loading ? <><Loader2 size={13} className="animate-spin" /> EXECUTING...</> : 'EXECUTE POLICY'}
-                  </button>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      </div>
-    </div>
-  )
-}
+import { PANEL, HDR_LABEL, MONO } from '../theme/tokens'
+import {
+  BRIEFING_THINKING_MAX_CHARS, GAMEPLAY_V2_AGENCY,
+  PORTFOLIO_IMG, DEFAULT_IMG,
+} from '../lib/gameConstants'
+import {
+  fmtNum, median, deriveWelfare, welfareDelta, isHotspot, isBrightSpot,
+  isMediaHeadline, severityLabel,
+} from '../lib/gameUtils'
+import {
+  MINISTER_COLORS, selectResponders, DRAFT_INTENT_RE, BROADCAST_RE, parseMentioned,
+} from '../lib/advisorChat'
+import { Avatar, AgentAvatar } from '../components/common/Avatar'
+import { MiniBar } from '../components/common/MiniBar'
+import type { WelfareStat } from '../components/dashboard/WelfareCard'
+import { ScorecardOverlay } from '../components/overlays/ScorecardOverlay'
+import { MinisterPickerModal } from '../components/overlays/MinisterPickerModal'
+import { PolicyModal } from '../components/overlays/PolicyModal'
+import { TurnPhaseCard, type TurnEntry } from '../components/dashboard/TurnPhaseCard'
+import { HistoryCharts } from '../components/dashboard/HistoryCharts'
+import { CityMap } from '../components/map/CityMap'
+import { CitizenCrowd } from '../components/crowd/CitizenCrowd'
+import { SpeechBubbleLayer } from '../components/crowd/SpeechBubbleLayer'
+import { ApprovalMeter } from '../components/crowd/ApprovalMeter'
+import { buildCityLayout } from '../lib/cityLayout'
+import { voteBus } from '../lib/voteBus'
+import { sound } from '../lib/sound'
+import { useGameHistory } from '../hooks/useGameHistory'
+import {
+  TurnExecutionOverlay,
+  type TurnOverlayPhase, type TurnOverlayItem,
+} from '../components/broadcast/TurnExecutionOverlay'
 
 // ─── Types used internally ────────────────────────────────────────────────────
 
@@ -557,790 +72,6 @@ interface RoundReply {
   text: string
 }
 
-interface TurnEntry {
-  turn: number
-  result: TurnResult
-  expanded: boolean
-  voteBreakdown?: { approve: number; disapprove: number; total: number }
-}
-
-// ─── Portfolio image map ───────────────────────────────────────────────────────
-
-const PORTFOLIO_IMG: Record<string, string> = {
-  'Infrastructure': 'https://images.unsplash.com/photo-1544621531-97b77ab684cb?q=80&w=1200&auto=format&fit=crop',
-  'Health & Education': 'https://images.unsplash.com/photo-1551076805-e1869033e561?q=80&w=1200&auto=format&fit=crop',
-  'Finance & Economy': 'https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?q=80&w=1200&auto=format&fit=crop',
-  'Home Affairs': 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?q=80&w=1200&auto=format&fit=crop',
-  'Housing & Community': 'https://images.unsplash.com/photo-1580216643062-cf460548a66a?q=80&w=1200&auto=format&fit=crop',
-  'Environment': 'https://images.unsplash.com/photo-1441974231531-c6227db76b6e?q=80&w=1200&auto=format&fit=crop',
-  'Governance Reform': 'https://images.unsplash.com/photo-1580582932707-520aed937b7b?q=80&w=1200&auto=format&fit=crop',
-
-  // Fallbacks
-  'Transport & Roads': 'https://images.unsplash.com/photo-1544621531-97b77ab684cb?q=80&w=1200&auto=format&fit=crop',
-  'Health': 'https://images.unsplash.com/photo-1551076805-e1869033e561?q=80&w=1200&auto=format&fit=crop',
-  'Education': 'https://images.unsplash.com/photo-1580582932707-520aed937b7b?q=80&w=1200&auto=format&fit=crop',
-  'Housing': 'https://images.unsplash.com/photo-1580216643062-cf460548a66a?q=80&w=1200&auto=format&fit=crop',
-  'Security & Law': 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?q=80&w=1200&auto=format&fit=crop',
-  'Water & Power': 'https://images.unsplash.com/photo-1509391366360-2e959784a276?q=80&w=1200&auto=format&fit=crop',
-  'Commerce': 'https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?q=80&w=1200&auto=format&fit=crop',
-  'Labor & Employment': 'https://images.unsplash.com/photo-1504307651254-35680f356dfd?q=80&w=1200&auto=format&fit=crop',
-}
-const DEFAULT_IMG = 'https://images.unsplash.com/photo-1596430212278-7f7b1d0c9a4e?q=80&w=1200&auto=format&fit=crop'
-
-// ─── Welfare score helpers ────────────────────────────────────────────────────
-
-function deriveWelfare(cp: GameState['city_params']) {
-  return {
-    health: avg([cp.hospitals_and_clinics, cp.air_quality_and_pollution]),
-    wealth: avg([cp.jobs_and_commerce, cp.affordable_housing]),
-    safety: avg([cp.police_and_emergency, cp.courts_and_legal]),
-    social: avg([cp.community_and_spaces, cp.schools_and_universities]),
-  }
-}
-
-function welfareDelta(after: Record<string, number>, before: Record<string, number>) {
-  const avgBefore = (keys: string[]) => avg(keys.map(k => before[k] ?? 50))
-  const avgAfter = (keys: string[]) => avg(keys.map(k => after[k] ?? 50))
-  return {
-    health: avgAfter(['hospitals_and_clinics', 'air_quality_and_pollution']) - avgBefore(['hospitals_and_clinics', 'air_quality_and_pollution']),
-    wealth: avgAfter(['jobs_and_commerce', 'affordable_housing']) - avgBefore(['jobs_and_commerce', 'affordable_housing']),
-    safety: avgAfter(['police_and_emergency', 'courts_and_legal']) - avgBefore(['police_and_emergency', 'courts_and_legal']),
-    social: avgAfter(['community_and_spaces', 'schools_and_universities']) - avgBefore(['community_and_spaces', 'schools_and_universities']),
-  }
-}
-
-function severityLabel(s: number): { label: string; bg: string; border: string; color: string } {
-  if (s >= 70) return { label: 'HIGH', bg: 'rgba(239,68,68,0.15)', border: '#7f1d1d', color: '#f87171' }
-  if (s >= 40) return { label: 'MEDIUM', bg: 'rgba(249,115,22,0.15)', border: '#7c2d12', color: '#fb923c' }
-  return { label: 'LOW', bg: 'rgba(34,197,94,0.1)', border: '#14532d', color: '#4ade80' }
-}
-
-const MINISTER_COLORS = ['#7c3aed', '#2563eb', '#0d9488', '#d97706', '#be185d']
-
-// Detect @mention or direct name reference in a message.
-// ─── Portfolio → keywords that signal relevance to this minister ──────────────
-const PORTFOLIO_KEYWORDS: Record<string, string[]> = {
-  'Finance & Economy': ['budget', 'tax', 'revenue', 'economy', 'jobs', 'commerce', 'trade', 'fiscal', 'debt', 'spend', 'cost', 'money', 'treasury', 'finance'],
-  'Infrastructure': ['road', 'transit', 'metro', 'water', 'power', 'sanitation', 'transport', 'infrastructure', 'grid', 'highway', 'bridge', 'rail'],
-  'Health & Education': ['hospital', 'clinic', 'health', 'school', 'university', 'education', 'doctor', 'teacher', 'student', 'medical', 'healthcare'],
-  'Housing & Community': ['housing', 'house', 'home', 'community', 'park', 'space', 'affordable', 'rent', 'slum', 'neighbourhood', 'neighborhood'],
-  'Home Affairs': ['police', 'crime', 'law', 'court', 'legal', 'security', 'enforcement', 'emergency', 'justice', 'arrest', 'order'],
-  'Environment': ['air', 'pollution', 'environment', 'climate', 'green', 'emission', 'waste', 'clean', 'ecological'],
-  'Governance Reform': ['corruption', 'reform', 'efficiency', 'media', 'transparency', 'admin', 'governance', 'bureaucracy', 'press', 'freedom'],
-}
-
-// Score how relevant a minister is to the message (higher = more relevant)
-function relevanceScore(minister: Minister, msgLower: string): number {
-  let score = 0
-
-  // Portfolio keyword match — primary signal
-  const keywords = PORTFOLIO_KEYWORDS[minister.portfolio] ?? []
-  for (const kw of keywords) {
-    if (msgLower.includes(kw)) score += 3
-  }
-  // Extra portfolios also count but weighted less
-  for (const ep of (minister.extra_portfolios ?? [])) {
-    const epKws = PORTFOLIO_KEYWORDS[ep] ?? []
-    for (const kw of epKws) {
-      if (msgLower.includes(kw)) score += 1.5
-    }
-  }
-
-  // Personality: high ambition → more eager to chime in
-  const ambition = (minister.personality?.['ambition'] ?? 50) / 100
-  score += ambition * 0.8
-
-  // Low loyalty → more likely to speak up / push back
-  const loyalty = minister.loyalty ?? 50
-  if (loyalty < 40) score += 0.6
-
-  // Tiny random jitter so same-score ministers don't always respond in the same order
-  score += Math.random() * 0.4
-
-  return score
-}
-
-function normaliseName(value: string): string {
-  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '')
-}
-
-function mapPolicyAdvisorStances(ministers: Minister[], policy: Policy): AdvisorStance[] {
-  const raw = Array.isArray(policy.advisor_stances) ? policy.advisor_stances : []
-  if (raw.length === 0) return []
-
-  const byName = new Map<string, Minister>()
-  for (const minister of ministers) {
-    byName.set(normaliseName(minister.name), minister)
-  }
-
-  const seen = new Set<string>()
-  const mapped: AdvisorStance[] = []
-  for (const item of raw) {
-    if (!item || typeof item !== 'object') continue
-    const rawName = typeof item.minister_name === 'string'
-      ? item.minister_name
-      : (typeof item.ministerName === 'string' ? item.ministerName : '')
-    const minister = byName.get(normaliseName(rawName))
-    if (!minister) continue
-    if (seen.has(minister.id)) continue
-
-    const stanceRaw = typeof item.stance === 'string' ? item.stance.trim().toLowerCase() : ''
-    if (stanceRaw !== 'approve' && stanceRaw !== 'disapprove') continue
-
-    const reason = typeof item.reason === 'string' ? item.reason.trim() : ''
-    if (!reason) continue
-
-    mapped.push({
-      ministerId: minister.id,
-      ministerName: minister.name,
-      stance: stanceRaw as StanceValue,
-      reason,
-    })
-    seen.add(minister.id)
-  }
-  return mapped
-}
-
-// Parse direct @name mentions — returns indices of ministers explicitly addressed
-function parseMentioned(msg: string, ministers: Minister[]): number[] {
-  const lower = msg.toLowerCase()
-  const mentioned: number[] = []
-  ministers.forEach((m, idx) => {
-    const parts = m.name.toLowerCase().split(' ')
-    if (
-      lower.includes(`@${parts[0]}`) ||
-      lower.includes(`@${m.name.toLowerCase().replace(/ /g, '')}`)
-    ) {
-      mentioned.push(idx)
-    }
-  })
-  return mentioned
-}
-
-const BROADCAST_RE = /(?:^|\s)@\s*(?:all|everyone)(?:\s|$)/i
-
-// Phrases that signal the mayor wants to draft / finalise the policy
-const DRAFT_INTENT_RE = /\b(draft|finali[sz]e|conclud|let'?s\s+(do\s+it|go ahead|proceed|wrap\s*up)|ok\s+approved|approved|let'?s\s+draft|draft\s+(the\s+)?polic|update\s+(the\s+)?polic|amend\s+(the\s+)?polic)\b/i
-
-/**
- * Select which ministers should respond.
- *
- * Modes:
- *  - Direct @name  → only that minister replies (ends cabinet session)
- *  - @all / @everyone  → all ministers respond, ordered by relevance
- *  - Cabinet in session (cabinetHot) → top 2-3 relevant ministers jump in
- *  - No session, no mention → most relevant minister; 40% chance second joins
- */
-function selectResponders(msg: string, ministers: Minister[], cabinetHot = false): number[] {
-  const lower = msg.toLowerCase()
-  const directMentions = parseMentioned(msg, ministers)
-  const isBroadcast = BROADCAST_RE.test(msg)
-
-  // Score everyone
-  const scored = ministers.map((m, i) => ({ i, score: relevanceScore(m, lower) }))
-  scored.sort((a, b) => b.score - a.score)
-
-  // Direct @name → only that minister (closes cabinet session)
-  if (directMentions.length > 0) {
-    return [...new Set(directMentions)]
-  }
-
-  // @all → everyone speaks
-  if (isBroadcast) {
-    return scored.map(s => s.i)
-  }
-
-  // Cabinet still in session from a prior @all → relevant ministers stay engaged
-  if (cabinetHot) {
-    // Always include the top scorer; others join if score ≥ 2 (loosely relevant)
-    const result = [scored[0].i]
-    for (let k = 1; k < scored.length && result.length < 3; k++) {
-      if (scored[k].score >= 2) result.push(scored[k].i)
-    }
-    // Guarantee at least 2 so the room feels active
-    if (result.length < 2 && scored.length > 1) result.push(scored[1].i)
-    return result
-  }
-
-  // No session, no mention → most relevant minister; second joins rarely
-  const first = scored[0]
-  if (!first) return []
-  const result = [first.i]
-  const second = scored[1]
-  if (second && second.score >= 3 && Math.random() < 0.4) {
-    result.push(second.i)
-  }
-  return result
-}
-
-
-function ExecScoreBadge({ score }: { score: number }) {
-  const pct = Math.round(score * 100)
-  const color = pct >= 70 ? '#22c55e' : pct >= 45 ? '#e8a030' : '#f87171'
-  return (
-    <span style={{
-      fontSize: 9, fontWeight: 700, fontFamily: "'Share Tech Mono', monospace",
-      color, background: `${color}18`, border: `1px solid ${color}44`,
-      borderRadius: 3, padding: '1px 5px'
-    }}>
-      {pct}% EXEC
-    </span>
-  )
-}
-
-// ─── TurnPhaseCard helpers ──────────────────────────────────────────────────────
-
-function findMinisterForPortfolio(ministers: Minister[], portfolio: string): Minister | undefined {
-  return ministers.find(m => m.portfolio === portfolio || m.extra_portfolios?.includes(portfolio))
-}
-
-// ─── TurnPhaseCard ─────────────────────────────────────────────────────────────
-
-function TurnPhaseCard({
-  entry, ministers, onToggle,
-}: {
-  entry: TurnEntry; ministers: Minister[]; onToggle: () => void
-}) {
-  const tr = entry.result
-  const paramDeltas = tr.city_params_after && tr.city_params_before
-    ? Object.entries(tr.city_params_after)
-      .map(([k, v]) => ({ key: k, diff: Math.round(v - (tr.city_params_before[k] ?? v)) }))
-      .filter(d => Math.abs(d.diff) >= 1)
-    : []
-
-  return (
-    <div style={{ borderBottom: '1px solid #1c3652' }}>
-      {/* Header — always visible */}
-      <div
-        onClick={onToggle}
-        className="flex items-center gap-2 px-3 py-2 cursor-pointer transition-all"
-        style={{ background: entry.expanded ? 'rgba(255,255,255,0.02)' : '' }}
-        onMouseEnter={e => { if (!entry.expanded) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
-        onMouseLeave={e => { if (!entry.expanded) e.currentTarget.style.background = '' }}
-      >
-        <div className="shrink-0">
-          {entry.expanded
-            ? <ChevronDown size={12} color="#4b6280" />
-            : <ChevronRight size={12} color="#4b6280" />}
-        </div>
-        <div className="shrink-0 px-2 py-0.5 rounded"
-          style={{
-            background: 'rgba(232,160,48,0.12)', border: '1px solid rgba(232,160,48,0.3)',
-            fontSize: 9, fontWeight: 700, color: '#e8a030',
-            fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em'
-          }}>
-          TURN {tr.turn}
-        </div>
-        <span style={{ fontSize: 10, fontWeight: 600, color: '#fff', flex: 1, minWidth: 0 }} className="truncate">
-          {tr.major_policy?.name ?? 'Policy Executed'}
-        </span>
-        <ExecScoreBadge score={tr.execution_score} />
-      </div>
-
-      {/* Expanded — narrative-first v2 layout */}
-      {entry.expanded && (() => {
-        const execPct = Math.round(tr.execution_score * 100)
-        const execColor = tr.execution_score >= 0.7 ? '#22c55e' : tr.execution_score >= 0.45 ? '#e8a030' : '#f87171'
-        const execLabel = tr.execution_score >= 0.7 ? 'STRONG DELIVERY' : tr.execution_score >= 0.45 ? 'PARTIAL DELIVERY' : 'POOR DELIVERY'
-        const execMinister = findMinisterForPortfolio(ministers, tr.major_policy?.portfolio ?? '')
-        const fmt = (k: string) => k.replace(/_/g, ' ')
-        const netTreasury = (tr.tax_revenue ?? 0) - (tr.major_policy?.budget_cost ?? 0) - (tr.interest_paid ?? 0) - (tr.budget_stolen ?? 0)
-        const sideEffectEntries = Object.entries(tr.side_effect_deltas ?? {}).filter(([, v]) => Math.abs(v) >= 0.5)
-        const approvalBefore = Math.round(tr.approval_before ?? tr.interim_approval)
-        const approvalAfter = Math.round(tr.interim_approval)
-        const approvalDelta = approvalAfter - approvalBefore
-        const approvalColor = approvalDelta > 0 ? '#22c55e' : approvalDelta < 0 ? '#f87171' : '#64748b'
-
-        const SLabel = ({ text, color = '#4b6280' }: { text: string; color?: string }) => (
-          <div style={{
-            fontSize: 8, fontWeight: 700, color, fontFamily: "'Rajdhani', sans-serif",
-            letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 5,
-          }}>{text}</div>
-        )
-
-        return (
-          <div style={{ padding: '10px 14px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-
-            {/* ── EXECUTION HERO ─────────────────────────────────────────── */}
-            <div style={{
-              padding: '8px 12px', borderRadius: 6,
-              background: `linear-gradient(135deg, ${execColor}0d, transparent)`,
-              border: `1px solid ${execColor}33`,
-            }}>
-              {/* Top row: minister avatar + name (prominent) + exec % */}
-              <div className="flex items-center gap-3" style={{ marginBottom: 6 }}>
-                {execMinister && <Avatar seed={execMinister.name} size={30} ring={execColor} />}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, color: '#e2e8f0', fontWeight: 700, lineHeight: 1.2 }}>
-                    {execMinister?.name ?? 'Minister'}
-                  </div>
-                  <div style={{ fontSize: 9, color: '#4b6280', marginTop: 1 }}>
-                    {tr.major_policy?.portfolio}
-                  </div>
-                </div>
-                {/* Execution % */}
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{
-                    fontSize: 24, fontFamily: "'Share Tech Mono', monospace",
-                    color: execColor, fontWeight: 700, lineHeight: 1,
-                  }}>{execPct}%</div>
-                  <div style={{
-                    fontSize: 7, color: execColor, fontFamily: "'Rajdhani', sans-serif",
-                    letterSpacing: '0.12em', fontWeight: 700,
-                  }}>{execLabel}</div>
-                </div>
-              </div>
-              {/* Execution bar */}
-              <div style={{ height: 4, background: '#0a1a30', borderRadius: 2, overflow: 'hidden', marginBottom: 7 }}>
-                <div style={{
-                  width: `${execPct}%`, height: '100%', background: execColor,
-                  borderRadius: 2, boxShadow: `0 0 8px ${execColor}88`,
-                  transition: 'width 0.6s ease',
-                }} />
-              </div>
-              {/* On The Ground Narrative */}
-              {tr.delivery_narrative && (
-                <div style={{ padding: '8px 10px', background: 'rgba(56,189,248,0.06)', borderRadius: 4, border: '1px solid rgba(56,189,248,0.15)', marginTop: 8 }}>
-                  <div style={{ fontSize: 7, color: '#38bdf8', letterSpacing: '0.12em', fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, marginBottom: 4 }}>ON THE GROUND</div>
-                  <div style={{ fontSize: 10, color: '#e0f2fe', lineHeight: 1.6, fontStyle: 'italic' }}>
-                    "{tr.delivery_narrative}"
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* ── CITY IMPACT ─────────────────────────────────────────────── */}
-            {(paramDeltas.length > 0 || sideEffectEntries.length > 0) && (
-              <div>
-                <SLabel text="City Impact" />
-                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(180px, 3fr) minmax(200px, 4fr)', gap: 16, alignItems: 'flex-start' }}>
-
-                  {/* Left Column: Parameter Deltas */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    {paramDeltas.map(d => (
-                      <div key={d.key} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'center', gap: 6, padding: '2px 0' }}>
-                        <span style={{ fontSize: 9, color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fmt(d.key)}</span>
-                        <span style={{
-                          fontSize: 10, fontFamily: "'Share Tech Mono', monospace", fontWeight: 700,
-                          color: d.diff > 0 ? '#86efac' : '#fca5a5',
-                          minWidth: 32, textAlign: 'right',
-                        }}>{d.diff > 0 ? '+' : ''}{d.diff}</span>
-                        <span style={{ fontSize: 8, color: d.diff > 0 ? '#22c55e' : '#ef4444', width: 10, textAlign: 'center' }}>{d.diff > 0 ? '↑' : '↓'}</span>
-                      </div>
-                    ))}
-                    {sideEffectEntries.length > 0 && (
-                      <>
-                        <div style={{ height: 1, background: '#1c3652', margin: '2px 0' }} />
-                        {sideEffectEntries.map(([k, v]) => (
-                          <div key={k} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'center', gap: 6, padding: '2px 0' }}>
-                            <span style={{ fontSize: 9, color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fmt(k)}</span>
-                            <span style={{
-                              fontSize: 10, fontFamily: "'Share Tech Mono', monospace", fontWeight: 700,
-                              color: v < 0 ? '#fca5a5' : '#86efac',
-                              minWidth: 32, textAlign: 'right',
-                            }}>{v > 0 ? '+' : ''}{Math.round(v * 10) / 10}</span>
-                            <span style={{ fontSize: 7, color: '#475569', width: 10, textAlign: 'center' }}>SE</span>
-                          </div>
-                        ))}
-                      </>
-                    )}
-                  </div>
-
-                  {/* Right Column: Spanning Analysis */}
-                  {tr.evaluator_reasoning && (
-                    <div style={{ paddingLeft: 12, borderLeft: '1px solid #1c3652', height: '100%' }}>
-                      <div style={{ fontSize: 7, color: '#94a3b8', letterSpacing: '0.12em', fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, marginBottom: 4 }}>IMPLEMENTATION ANALYSIS</div>
-                      <div style={{ fontSize: 9, color: '#cbd5e1', lineHeight: 1.5, fontStyle: 'italic' }}>
-                        "{tr.evaluator_reasoning}"
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* ── APPROVAL VERDICT ─────────────────────────────────────────── */}
-            <div style={{
-              padding: '8px 12px', borderRadius: 6,
-              background: 'rgba(255,255,255,0.02)', border: '1px solid #1c3652',
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <div style={{ fontSize: 9, color: '#4b6280', letterSpacing: '0.08em', fontFamily: "'Rajdhani', sans-serif", fontWeight: 700 }}>APPROVAL</div>
-                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                    <span style={{ fontSize: 18, fontFamily: "'Share Tech Mono', monospace", color: '#fff', fontWeight: 700 }}>{approvalAfter}%</span>
-                  </div>
-                  <div style={{ fontSize: 11, fontFamily: "'Share Tech Mono', monospace", color: approvalColor, fontWeight: 700 }}>
-                    {approvalDelta > 0 ? '↑' : approvalDelta < 0 ? '↓' : '─'} {Math.abs(approvalDelta)}%
-                  </div>
-                </div>
-              </div>
-              {entry.voteBreakdown && (
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
-                  <span style={{ fontSize: 9, color: '#22c55e', fontFamily: "'Share Tech Mono', monospace" }}>✓ {entry.voteBreakdown.approve} approve</span>
-                  <span style={{ fontSize: 9, color: '#4b6280' }}>·</span>
-                  <span style={{ fontSize: 9, color: '#f87171', fontFamily: "'Share Tech Mono', monospace" }}>✗ {entry.voteBreakdown.disapprove} disapprove</span>
-                  <span style={{ fontSize: 9, color: '#4b6280' }}>·</span>
-                  <span style={{ fontSize: 9, color: '#4b6280', fontFamily: "'Share Tech Mono', monospace" }}>{entry.voteBreakdown.total} polled</span>
-                </div>
-              )}
-              {(() => {
-                if (!tr.ward_report || tr.ward_report.length === 0) return null;
-                const sorted = [...tr.ward_report].sort((a, b) => b.avg_wellbeing_delta - a.avg_wellbeing_delta);
-                const best = sorted[0];
-                const worst = sorted[sorted.length - 1];
-                return (
-                  <div style={{ display: 'flex', gap: 12, marginTop: 4 }}>
-                    {best && best.avg_wellbeing_delta > 0 && (
-                      <div style={{ flex: 1, padding: '4px 8px', background: 'rgba(34,197,94,0.05)', borderRadius: 4, border: '1px solid rgba(34,197,94,0.1)' }}>
-                        <div style={{ fontSize: 7, color: '#22c55e', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Most Excited</div>
-                        <div style={{ fontSize: 10, color: '#e2e8f0', display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
-                          <span>{best.group_name}</span>
-                          <span style={{ color: '#4ade80', fontFamily: "'Share Tech Mono', monospace" }}>+{best.avg_wellbeing_delta.toFixed(1)}</span>
-                        </div>
-                      </div>
-                    )}
-                    {worst && worst.avg_wellbeing_delta < 0 && (
-                      <div style={{ flex: 1, padding: '4px 8px', background: 'rgba(248,113,113,0.05)', borderRadius: 4, border: '1px solid rgba(248,113,113,0.1)' }}>
-                        <div style={{ fontSize: 7, color: '#ef4444', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Most Angry</div>
-                        <div style={{ fontSize: 10, color: '#e2e8f0', display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
-                          <span>{worst.group_name}</span>
-                          <span style={{ color: '#f87171', fontFamily: "'Share Tech Mono', monospace" }}>{worst.avg_wellbeing_delta.toFixed(1)}</span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )
-              })()}
-            </div>
-
-            {/* ── BUDGET SNAPSHOT ─────────────────────────────────────────── */}
-            <div>
-              <SLabel text="Treasury Ledger" />
-              <div style={{ background: 'rgba(15,23,42,0.4)', borderRadius: 6, padding: '8px 12px', border: '1px solid #1e293b', fontFamily: "'Share Tech Mono', monospace", fontSize: 11, color: '#cbd5e1' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: 4 }}>
-                  <span style={{ color: '#94a3b8' }}>Starting Treasury</span>
-                  <span>₹{fmtNum((tr.treasury_after ?? 0) - netTreasury)} Cr</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: 4 }}>
-                  <span style={{ color: '#4ade80' }}>(+) Tax Revenue</span>
-                  <span style={{ color: '#4ade80' }}>+₹{fmtNum(tr.tax_revenue ?? 0)} Cr</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: 4 }}>
-                  <span style={{ color: '#f87171' }}>(-) Policy Cost</span>
-                  <span style={{ color: '#f87171' }}>-₹{fmtNum(tr.major_policy?.budget_cost ?? 0)} Cr</span>
-                </div>
-                {tr.budget_stolen > 0 && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: 4, fontSize: 9, fontStyle: 'italic' }}>
-                    <span style={{ color: '#fb923c', paddingLeft: 12 }}>↳ Includes Leakage</span>
-                    <span style={{ color: '#fb923c' }}>₹{fmtNum(tr.budget_stolen)} Cr</span>
-                  </div>
-                )}
-                {tr.interest_paid > 0 && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: 4 }}>
-                    <span style={{ color: '#f87171' }}>(-) Debt Interest</span>
-                    <span style={{ color: '#f87171' }}>-₹{fmtNum(tr.interest_paid ?? 0)} Cr</span>
-                  </div>
-                )}
-                <div style={{ height: 1, background: '#334155', margin: '4px 0' }} />
-                <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 2, fontWeight: 700, fontSize: 13, color: '#f0c040' }}>
-                  <span>Final Treasury</span>
-                  <span>₹{fmtNum(tr.treasury_after ?? 0)} Cr</span>
-                </div>
-              </div>
-            </div>
-
-            {/* ── EVENTS ──────────────────────────────────────────────────── */}
-            {tr.events_triggered?.length > 0 && (
-              <div>
-                <SLabel text="Events" />
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  {tr.events_triggered.map(ev => {
-                    const isCrisis = ev.type === 'crisis'
-                    return (
-                      <div key={ev.id} style={{
-                        display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 4,
-                        background: isCrisis ? 'rgba(248,113,113,0.07)' : 'rgba(34,197,94,0.07)',
-                        border: `1px solid ${isCrisis ? '#7f1d1d55' : '#14532d55'}`,
-                      }}>
-                        <div style={{ fontSize: 14, color: isCrisis ? '#ef4444' : '#22c55e', alignSelf: 'flex-start', marginTop: 2 }}>{isCrisis ? '⚠' : '✦'}</div>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                            <div style={{ fontSize: 11, fontWeight: 700, color: isCrisis ? '#fca5a5' : '#86efac' }}>{ev.name}</div>
-                            <div style={{ fontSize: 7, color: isCrisis ? '#f87171' : '#4ade80', letterSpacing: '0.1em', fontFamily: "'Rajdhani', sans-serif", fontWeight: 700 }}>
-                              {isCrisis ? 'CRISIS' : 'OPPORTUNITY'}
-                            </div>
-                          </div>
-                          <div style={{ fontSize: 9, color: '#94a3b8', marginTop: 2, lineHeight: 1.4 }}>
-                            {isCrisis ? `Severity ${ev.severity} · Due to poor city metrics · ${ev.turns_remaining} turn${ev.turns_remaining !== 1 ? 's' : ''} remaining` : `A positive momentum event in ${ev.portfolio ?? 'the city'}`}
-                          </div>
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* ── OPPOSITION & TENSION ────────────────────────────────────── */}
-            {(() => {
-              const oppositionHeadline = (tr.media_headlines ?? [])
-                .find(h => h.lean === 'opposition')
-                ?.headline ?? null
-              const hasOpposition = !!(tr.opposition_attack || oppositionHeadline)
-              const hasTension = (tr.communal_tension_after ?? 0) > 0
-              if (!hasOpposition && !hasTension) return null
-              return (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {hasOpposition && (
-                    <div style={{ padding: '8px 10px', borderRadius: 6, background: 'linear-gradient(135deg, rgba(248,113,113,0.08), rgba(248,113,113,0.02))', border: '1px solid rgba(248,113,113,0.2)' }}>
-                      <div style={{ fontSize: 7, color: '#ef4444', letterSpacing: '0.1em', fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, marginBottom: 6 }}>POLITICAL ATTACK</div>
-
-                      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-                        <div style={{ fontSize: 20, color: '#7f1d1d', lineHeight: 1 }}>"</div>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: 10, color: '#cbd5e1', lineHeight: 1.5, fontStyle: 'italic', marginBottom: 6 }}>
-                            {oppositionHeadline || tr.opposition_attack}
-                          </div>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid rgba(248,113,113,0.1)', paddingTop: 6 }}>
-                            <div style={{ fontSize: 8, color: '#f87171', fontWeight: 600 }}>— Opposition Quote</div>
-                            {tr.counter_frame && (
-                              <div style={{ fontSize: 8, color: '#94a3b8' }}>
-                                Mayor's PR Defense: <span style={{ color: '#60a5fa', fontWeight: 600 }}>{tr.counter_frame}</span>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  {hasTension && (
-                    <div style={{ padding: '5px 8px', borderRadius: 4, background: 'rgba(251,146,60,0.06)', border: '1px solid rgba(251,146,60,0.2)' }}>
-                      <div style={{ fontSize: 7, color: '#64748b', letterSpacing: '0.1em', fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, marginBottom: 3 }}>COMMUNAL TENSION</div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <div style={{ flex: 1, height: 4, background: '#0a1a30', borderRadius: 2, overflow: 'hidden' }}>
-                          <div style={{ width: `${Math.min(100, tr.communal_tension_after ?? 0)}%`, height: '100%', background: '#fb923c', borderRadius: 2 }} />
-                        </div>
-                        <span style={{ fontSize: 9, color: '#fb923c', fontFamily: "'Share Tech Mono', monospace", fontWeight: 700 }}>{Math.round(tr.communal_tension_after ?? 0)}</span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )
-            })()}
-
-            {/* ── ADVISOR DEBRIEF ─────────────────────────────────────────── */}
-            {tr.advisor_summary && (
-              <div style={{
-                padding: '8px 10px', borderRadius: 5,
-                background: 'rgba(232,160,48,0.05)', border: '1px solid rgba(232,160,48,0.18)',
-                display: 'flex', gap: 8, alignItems: 'flex-start',
-              }}>
-                <div style={{ fontSize: 16, marginTop: -1 }}>📋</div>
-                <div>
-                  <div style={{ fontSize: 7, fontWeight: 700, color: '#e8a030', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.12em', marginBottom: 3 }}>ADVISOR DEBRIEF</div>
-                  <div style={{ fontSize: 10, color: '#b8924a', lineHeight: 1.6 }}>{tr.advisor_summary}</div>
-                </div>
-              </div>
-            )}
-
-          </div>
-        )
-      })()}
-    </div>
-  )
-}
-
-type TurnOverlayPhase =
-  | 'announcement'
-  | 'assignment'
-  | 'evaluation'
-  | 'reactions'
-  | 'poll'
-  | 'events'
-  | 'debrief'
-  | 'complete'
-
-interface TurnOverlayItem {
-  id: number
-  phase: TurnOverlayPhase
-  kind: 'status' | 'voice' | 'headline' | 'analysis' | 'event' | 'error'
-  title: string
-  body: string
-  accent: string
-  typed: boolean
-  displayText: string
-  done: boolean
-}
-
-function TurnExecutionOverlay({
-  open,
-  canDismiss,
-  phase,
-  items,
-  policyName,
-  executionPct,
-  approvalPct,
-  treasuryDelta,
-  onDismiss,
-}: {
-  open: boolean
-  canDismiss: boolean
-  phase: TurnOverlayPhase
-  items: TurnOverlayItem[]
-  policyName: string | null
-  executionPct: number | null
-  approvalPct: number | null
-  treasuryDelta: number | null
-  onDismiss: () => void
-}) {
-  const feedEndRef = useRef<HTMLDivElement>(null)
-  useEffect(() => { feedEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [items.length])
-  if (!open) return null
-
-  const phases: { id: TurnOverlayPhase; label: string }[] = [
-    { id: 'announcement', label: 'Policy Broadcast' },
-    { id: 'assignment', label: 'Cabinet Command' },
-    { id: 'evaluation', label: 'Field Assessment' },
-    { id: 'reactions', label: 'Public Pulse' },
-    { id: 'poll', label: 'Mandate Shift' },
-    { id: 'events', label: 'City Shockwave' },
-    { id: 'debrief', label: 'Debrief' },
-    { id: 'complete', label: 'Complete' },
-  ]
-  const phaseIdx = Math.max(0, phases.findIndex(p => p.id === phase))
-
-  return (
-    <div style={{
-      position: 'fixed', inset: 0, zIndex: 9050, background: 'rgba(5,13,27,0.94)',
-      backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-      padding: '20px 16px',
-    }}>
-      <div style={{ width: 1020, maxWidth: '96vw', maxHeight: '92vh', display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <div style={{
-          fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: 22, letterSpacing: '0.12em',
-          color: '#e8a030', textAlign: 'center',
-        }}>
-          GAME STREAM — TURN EXECUTION
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontFamily: "'Rajdhani', sans-serif", fontSize: 9 }}>
-          {phases.map((p, idx) => (
-            <div key={p.id} style={{
-              color: idx < phaseIdx ? '#e8a030' : idx === phaseIdx ? '#7dd3fc' : '#1c3652',
-              fontWeight: 700, letterSpacing: '0.1em',
-            }}>
-              {idx < phaseIdx ? '✓ ' : idx === phaseIdx ? '● ' : '○ '}{p.label.toUpperCase()}
-            </div>
-          ))}
-        </div>
-        <div style={{
-          height: 3, borderRadius: 2, background: '#0d1f33', overflow: 'hidden',
-          border: '1px solid #1c3652',
-        }}>
-          <div style={{
-            width: `${((phaseIdx + 1) / phases.length) * 100}%`, height: '100%',
-            background: 'linear-gradient(90deg, #1c3652, #e8a030)', transition: 'width 0.5s ease',
-          }} />
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 250px', gap: 12, minHeight: 0, flex: 1 }}>
-          <div style={{
-            ...PANEL, padding: '12px 14px', overflowY: 'auto', minHeight: 0,
-            display: 'flex', flexDirection: 'column', gap: 8,
-          }}>
-            {items.length === 0 && (
-              <div style={{
-                color: '#2d6a8a', fontSize: 11, fontFamily: "'Share Tech Mono', monospace",
-                textAlign: 'center', padding: '28px 0', animation: 'overlayPulse 1.8s ease-in-out infinite',
-              }}>
-                Waiting for stream...
-              </div>
-            )}
-            {items.map(item => (
-              <div key={item.id} style={{
-                background: 'rgba(255,255,255,0.03)', border: `1px solid ${item.accent}44`,
-                borderLeft: `3px solid ${item.accent}`, borderRadius: 6, padding: '9px 10px',
-                animation: 'overlayFadeIn 0.25s ease',
-              }}>
-                <div style={{
-                  fontSize: 8, letterSpacing: '0.1em', color: item.accent,
-                  fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, marginBottom: 3,
-                }}>
-                  {item.title}
-                </div>
-                <div style={{
-                  fontSize: 11, color: '#dbe7f5', lineHeight: 1.55, whiteSpace: 'pre-wrap',
-                  fontFamily: item.kind === 'analysis' || item.kind === 'voice'
-                    ? "'Share Tech Mono', monospace"
-                    : "'Inter', 'Segoe UI', sans-serif",
-                }}>
-                  {item.displayText}
-                  {item.typed && !item.done && <span style={{ animation: 'overlayPulse 0.9s infinite' }}>▌</span>}
-                </div>
-              </div>
-            ))}
-            <div ref={feedEndRef} />
-          </div>
-
-          <div style={{ ...PANEL, padding: '12px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <div style={{ ...HDR_LABEL, fontSize: 10 }}>LIVE METRICS</div>
-            <div style={{ fontSize: 9, color: '#4b6280', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em' }}>
-              POLICY
-            </div>
-            <div style={{ fontSize: 12, color: '#e2e8f0', fontWeight: 700, lineHeight: 1.3 }}>
-              {policyName ?? 'Pending'}
-            </div>
-            <div style={{ height: 1, background: '#1c3652', margin: '2px 0 4px' }} />
-            <div style={{ fontSize: 9, color: '#4b6280' }}>Execution</div>
-            <div style={{ ...MONO(), fontSize: 22, color: executionPct === null ? '#64748b' : '#7dd3fc' }}>
-              {executionPct === null ? '—' : `${executionPct}%`}
-            </div>
-            <div style={{ fontSize: 9, color: '#4b6280' }}>Approval</div>
-            <div style={{
-              ...MONO(),
-              fontSize: 22,
-              color: approvalPct === null ? '#64748b' : approvalPct >= 50 ? '#22c55e' : '#f87171',
-            }}>
-              {approvalPct === null ? '—' : `${approvalPct}%`}
-            </div>
-            <div style={{ fontSize: 9, color: '#4b6280' }}>Treasury Net</div>
-            <div style={{
-              ...MONO(),
-              fontSize: 18,
-              color: treasuryDelta === null ? '#64748b' : treasuryDelta >= 0 ? '#22c55e' : '#f87171',
-            }}>
-              {treasuryDelta === null ? '—' : `${treasuryDelta >= 0 ? '+' : ''}₹${fmtNum(Math.round(treasuryDelta))} Cr`}
-            </div>
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', justifyContent: 'center' }}>
-          <button
-            disabled={!canDismiss}
-            onClick={onDismiss}
-            style={{
-              height: 34, padding: '0 18px', borderRadius: 7,
-              border: canDismiss ? '1px solid rgba(255,205,96,0.75)' : '1px solid #1c3652',
-              background: canDismiss
-                ? 'linear-gradient(135deg, #f59e0b 0%, #eab308 100%)'
-                : 'linear-gradient(135deg, #1a2a3a 0%, #152132 100%)',
-              color: canDismiss ? '#1a1200' : '#4b6280',
-              fontFamily: "'Rajdhani', sans-serif", fontSize: 12, fontWeight: 800,
-              letterSpacing: '0.08em', textTransform: 'uppercase', cursor: canDismiss ? 'pointer' : 'not-allowed',
-            }}
-          >
-            {canDismiss ? 'Continue' : 'Streaming...'}
-          </button>
-        </div>
-      </div>
-      <style>{`
-        @keyframes overlayFadeIn { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: translateY(0) } }
-        @keyframes overlayPulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.35 } }
-      `}</style>
-    </div>
-  )
-}
-
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function GameDashboard({ gameId, initialState }: { gameId: string; initialState: GameState }) {
@@ -1348,6 +79,25 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
   const [lastTurn, setLastTurn] = useState<TurnResult | null>(initialState.last_turn)
   const [turnHistory, setTurnHistory] = useState<TurnEntry[]>([])
   const initialTreasury = useRef(initialState.treasury)
+  const historyTurns = useGameHistory(gameId, gameState.turn_history_count)
+
+  // Living city map + left-column tabs
+  const [leftTab, setLeftTab] = useState<'advisors' | 'feed'>('advisors')
+  const [hoveredDistrict, setHoveredDistrict] = useState<string | null>(null)
+
+  // Overlay collapses to a bottom band while the crowd is voting, so the live
+  // city map + reacting citizens are visible during the poll.
+  const [pollPhase, setPollPhase] = useState(voteBus.phase)
+  useEffect(() => voteBus.onPhase(setPollPhase), [])
+
+  // Shared city layout (map + speech bubbles must use the identical layout)
+  const mapLayoutForBubbles = useMemo(() => {
+    const locations = (gameState.ward_report ?? []).filter(w => w.group_type === 'location')
+    return buildCityLayout(
+      gameState.city_name,
+      locations.map(l => ({ name: l.group_name, populationPct: l.population_pct })),
+    )
+  }, [gameState.city_name, gameState.ward_report])
 
   // Unified council chat
   const [chatMessages, setChatMessages] = useState<ChatMsg[]>([])
@@ -1381,6 +131,27 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
   const [isTurnExecuting, setIsTurnExecuting] = useState(false)
   const [executingPolicyName, setExecutingPolicyName] = useState<string | null>(null)
   const [turnError, setTurnError] = useState<string | null>(null)
+  const [selectedMinorAction, setSelectedMinorAction] = useState<MinorActionInput>({
+    type: 'governance_upkeep',
+    target: 'admin_efficiency',
+    budget: 60,
+  })
+  const [selectedCounterFrame, setSelectedCounterFrame] = useState<CounterFrameStrategy>('Delivery Receipts')
+  const [selectedPowerMove, setSelectedPowerMove] = useState<{ type: string; target_event_id?: string }>({ type: 'none' })
+  const [turnChoices, setTurnChoices] = useState<TurnChoiceSnapshot[]>([])
+  const [turnOverlayPaceMode, setTurnOverlayPaceMode] = useState<'cinematic' | 'fast' | 'skip'>('cinematic')
+  const turnOverlayPaceModeRef = useRef<'cinematic' | 'fast' | 'skip'>('cinematic')
+  const turnStartedAtRef = useRef<number | null>(null)
+  const lastActionableAtRef = useRef<number | null>(null)
+  const overlayOpenedAtRef = useRef<number | null>(null)
+  const [turnTelemetryRows, setTurnTelemetryRows] = useState<{
+    turn: number
+    decisionCount: number
+    turnDurationMs: number
+    overlayDwellMs: number
+    timeToDecisionMs: number | null
+    policyName: string
+  }[]>([])
 
   // Live approval — updated from approval_final event so top bar updates before complete
   // Initialized from initialState so the number is always visible (never resets to blank)
@@ -1392,6 +163,21 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
   const [turnOverlayExecutionPct, setTurnOverlayExecutionPct] = useState<number | null>(null)
   const [turnOverlayApprovalPct, setTurnOverlayApprovalPct] = useState<number | null>(initialState.interim_approval)
   const [turnOverlayTreasuryDelta, setTurnOverlayTreasuryDelta] = useState<number | null>(null)
+  // Dilemma state
+  const [dilemmaOptions, setDilemmaOptions] = useState<{
+    situation: string
+    option_a: { label: string; description: string; effect_key: string; effect_delta: number; ideology_tag?: string }
+    option_b: { label: string; description: string; effect_key: string; effect_delta: number; ideology_tag?: string }
+  } | null>(null)
+  const dilemmaResolverRef = useRef<((choice: 'a' | 'b') => void) | null>(null)
+  // Event response state
+  const [eventResponseOptions, setEventResponseOptions] = useState<EventResponseOption[] | null>(null)
+  const eventResponseResolverRef = useRef<((responses: { event_id: string; strategy: string; minister_id?: string }[]) => void) | null>(null)
+  // Accountability state
+  const [accountabilityResolved, setAccountabilityResolved] = useState(true)
+  const [accountabilityMinister, setAccountabilityMinister] = useState<{ id: string; name: string } | null>(null)
+  const [accountabilityBudgetStolen, setAccountabilityBudgetStolen] = useState(0)
+  const [accountabilityLoading, setAccountabilityLoading] = useState(false)
   const turnOverlayQueueCancelledRef = useRef(false)
   const turnOverlayItemIdRef = useRef(0)
   const turnOverlayRunIdRef = useRef(0)
@@ -1425,6 +211,8 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
   const [ministersDone, setMinistersDone] = useState(false)
   const [currentPolicyIdx, setCurrentPolicyIdx] = useState(0)
   const currentPolicyIdxRef = useRef(0)
+  // Pending deltas from time-profiled policies (turn → param → delta)
+  const [pendingDeltas, setPendingDeltas] = useState<Record<string, Record<string, number>>>({})
   // Loading ticker
   const [briefingTickerItems, setBriefingTickerItems] = useState<{ type: string; text: string; id: number }[]>([])
   const briefingTickerIdRef = useRef(0)
@@ -1433,6 +221,8 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
   // Game over
   const [gameOver, setGameOver] = useState(false)
   const [scorecard, setScorecard] = useState<GovernanceScorecard | null>(null)
+  // Next-turn forecast
+  const [turnForecast, setTurnForecast] = useState<TurnForecast | null>(null)
 
   // Identity groups filter + expansion
   const [identityFilter, setIdentityFilter] = useState<string>('')
@@ -1454,9 +244,11 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
   const [currentTrackIndex, setCurrentTrackIndex] = useState(() => Math.floor(Math.random() * TRACKS.length))
   const musicStartedRef = useRef(false)
 
-  // Start music on first user interaction (browser autoplay policy)
+  // Start music + unlock the WebAudio SFX engine on first user interaction
+  // (browser autoplay policy requires a gesture).
   useEffect(() => {
     const startMusic = () => {
+      sound.unlock()
       if (musicStartedRef.current) return
       const audio = audioRef.current
       if (audio) {
@@ -1475,8 +267,10 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
     const audio = audioRef.current
     if (!audio) return
     if (isMuted) {
+      sound.setSfxEnabled(true)
       audio.play().then(() => setIsMuted(false)).catch(() => { })
     } else {
+      sound.setSfxEnabled(false)
       audio.pause()
       setIsMuted(true)
     }
@@ -1552,6 +346,9 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
               ...best.map(b => ({ type: 'good', text: `✓ ${b.key.replace(/_/g, ' ')} at ${b.value}` })),
               ...crises.map(c => ({ type: 'crisis', text: `🔴 Active crisis: ${c.name}` })),
             ]
+            if (event.pending_deltas) {
+              setPendingDeltas(event.pending_deltas as Record<string, Record<string, number>>)
+            }
             void pushTickerItems(items, 350)
           }
 
@@ -1676,14 +473,85 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
   }, [canPlayNextTurn, gameState.current_turn])
 
   const handleDismissTurnOverlay = useCallback(() => {
-    if (!turnOverlayComplete) return
+    if (!turnOverlayComplete || !accountabilityResolved) return
     turnOverlayQueueCancelledRef.current = true
+    const now = performance.now()
+    if (overlayOpenedAtRef.current !== null) {
+      const overlayDwellMs = Math.max(0, now - overlayOpenedAtRef.current)
+      setTurnTelemetryRows(prev => {
+        if (prev.length === 0) return prev
+        const last = prev[prev.length - 1]
+        if (last.overlayDwellMs > 0) return prev
+        const next = [...prev]
+        next[next.length - 1] = { ...last, overlayDwellMs }
+        return next
+      })
+    }
+    lastActionableAtRef.current = now
+    voteBus.setPhase('idle')
     setTurnOverlayOpen(false)
     setTurnOverlayItems([])
     setTurnOverlayComplete(false)
     setTurnOverlayPhase('announcement')
     setExecutingPolicyName(null)
-  }, [turnOverlayComplete])
+  }, [turnOverlayComplete, accountabilityResolved])
+
+  const handleAccountability = useCallback(async (action: string) => {
+    if (!accountabilityMinister) return
+    setAccountabilityLoading(true)
+    try {
+      const result = await applyAccountability(gameId, action, accountabilityMinister.id)
+      // Update minister state in gameState
+      if (result.ok) {
+        setGameState(prev => ({
+          ...prev,
+          treasury: typeof result.treasury_after === 'number' ? result.treasury_after : prev.treasury,
+          political_capital: typeof result.pc_earned === 'number'
+            ? Math.min(50, (prev.political_capital ?? 0) + result.pc_earned)
+            : prev.political_capital,
+          ministers: prev.ministers.map(m =>
+            m.id === accountabilityMinister.id
+              ? {
+                  ...m,
+                  loyalty: typeof result.loyalty_after === 'number' ? result.loyalty_after : m.loyalty,
+                  scandal_exposure: typeof result.scandal_after === 'number' ? result.scandal_after : m.scandal_exposure,
+                  fatigue: typeof result.fatigue_after === 'number' ? result.fatigue_after : m.fatigue,
+                }
+              : m
+          ),
+        }))
+        const label = typeof result.action === 'string' ? result.action.toUpperCase() : action.toUpperCase()
+        const bits: string[] = []
+        if (typeof result.loyalty_delta === 'number') bits.push(`Loyalty ${result.loyalty_delta >= 0 ? '+' : ''}${result.loyalty_delta}`)
+        if (typeof result.scandal_delta === 'number') bits.push(`Scandal ${result.scandal_delta >= 0 ? '+' : ''}${result.scandal_delta}`)
+        if (typeof result.fatigue_delta === 'number') bits.push(`Fatigue ${result.fatigue_delta >= 0 ? '+' : ''}${result.fatigue_delta}`)
+        if (typeof result.recovered === 'number') bits.push(`Recovered ₹${fmtNum(Math.round(result.recovered))} Cr`)
+        if (typeof result.treasury_cost === 'number') bits.push(`Cost ₹${fmtNum(Math.round(result.treasury_cost))} Cr`)
+        if (typeof result.pc_earned === 'number') bits.push(`Political Capital +${result.pc_earned}`)
+        const summary = bits.length > 0 ? bits.join(' · ') : 'No direct stat change.'
+        setTurnOverlayItems(prev => [...prev, {
+          id: ++turnOverlayItemIdRef.current,
+          phase: 'complete',
+          kind: 'status',
+          title: `ACCOUNTABILITY · ${label}`,
+          body: summary,
+          accent: action === 'praise' ? '#4ade80' : action === 'reprimand' ? '#fbbf24' : action === 'investigate' ? '#f87171' : '#94a3b8',
+          typed: false,
+          displayText: summary,
+          done: true,
+        }])
+      }
+    } catch (e) {
+      console.error('Accountability action failed:', e)
+    } finally {
+      setAccountabilityLoading(false)
+      setAccountabilityResolved(true)
+    }
+  }, [gameId, accountabilityMinister])
+
+  useEffect(() => {
+    turnOverlayPaceModeRef.current = turnOverlayPaceMode
+  }, [turnOverlayPaceMode])
 
   useEffect(() => {
     return () => {
@@ -1810,7 +678,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
       .join('\n')
     // Only include last-turn summary if player has actually chatted this turn
     const turnCtx = (lastTurn && hasChatThisTurnRef.current)
-      ? `[Last turn: "${lastTurn.major_policy?.name}" · ${Math.round(lastTurn.execution_score * 100)}% exec · approval ${Math.round((lastTurn as any).approval_before ?? 0)}%→${Math.round(lastTurn.interim_approval)}%]\n`
+      ? `[Last turn: "${lastTurn.major_policy?.name}" · ${Math.round(lastTurn.execution_score * 100)}% exec · approval ${Math.round(lastTurn.approval_before ?? 0)}%→${Math.round(lastTurn.interim_approval)}%]\n`
       : ''
     const mediaCtx = allHeadlines.slice(-3)
       .map(h => `[${h.outlet}: "${h.headline}"]`)
@@ -2053,10 +921,13 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
   }
 
   // Minister chosen → execute turn v2
-  async function handleSelectMinister(ministerId: string) {
-    console.log('[handleSelectMinister] called', { ministerId, isTurnExecuting, pendingPolicyIndex })
+  async function handleSelectMinister(
+    ministerId: string,
+    minorActionChoice: MinorActionInput,
+    counterFrameChoice: CounterFrameStrategy,
+    powerMoveChoice: { type: string; target_event_id?: string } = { type: 'none' },
+  ) {
     if (isTurnExecuting || pendingPolicyIndex === null) {
-      console.warn('[handleSelectMinister] blocked — isTurnExecuting:', isTurnExecuting, 'pendingPolicyIndex:', pendingPolicyIndex)
       return
     }
     const index = pendingPolicyIndex
@@ -2064,6 +935,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
     setPendingPolicyIndex(null)
     setIsTurnExecuting(true)
     setTurnError(null)
+    setTurnForecast(null)
     // Freeze baseline before this turn runs — persists through the complete event so delta stays correct
     prevTurnApprovalRef.current = liveApproval ?? gameState.interim_approval
     hasChatThisTurnRef.current = false
@@ -2082,6 +954,34 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
     setTurnOverlayExecutionPct(null)
     setTurnOverlayApprovalPct(Math.round(liveApproval ?? gameState.interim_approval))
     setTurnOverlayTreasuryDelta(null)
+    setAccountabilityResolved(true)
+    setAccountabilityMinister(null)
+    setAccountabilityBudgetStolen(0)
+    setAccountabilityLoading(false)
+    setDilemmaOptions(null)
+    setEventResponseOptions(null)
+    setSelectedPowerMove({ type: 'none' })
+    dilemmaResolverRef.current = null
+    eventResponseResolverRef.current = null
+    let receivedDilemma = false
+    let receivedEventResponsePrompt = false
+    overlayOpenedAtRef.current = performance.now()
+    turnStartedAtRef.current = performance.now()
+
+    const selectedMinister = gameState.ministers.find(m => m.id === ministerId)
+    const timeToDecisionMs = lastActionableAtRef.current !== null
+      ? Math.max(0, performance.now() - lastActionableAtRef.current)
+      : null
+    const choiceSnapshot: TurnChoiceSnapshot = {
+      turn: streamTurnNum,
+      policyIndex: index,
+      policyName: selectedPolicy?.name ?? 'Policy Execution',
+      ministerId,
+      ministerName: selectedMinister?.name ?? 'Unknown',
+      minorAction: minorActionChoice,
+      counterFrame: counterFrameChoice,
+      chosenAtIso: new Date().toISOString(),
+    }
 
     const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
     const humanize = (v: string) => v.replace(/_/g, ' ')
@@ -2093,40 +993,46 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
       opts?: { charMs?: number; gapMs?: number }
     ) => {
       if (!isOverlayRunAlive()) return
+      const pace = turnOverlayPaceModeRef.current
+      const skip = pace === 'skip'
+      const typed = item.typed && !skip
+      const charMs = pace === 'skip' ? 0 : pace === 'fast' ? 5 : (opts?.charMs ?? 16)
+      const gapMs = pace === 'skip' ? 0 : pace === 'fast' ? 45 : (opts?.gapMs ?? 220)
       const id = ++turnOverlayItemIdRef.current
       const entry: TurnOverlayItem = {
         ...item,
         id,
-        displayText: item.typed ? '' : item.body,
-        done: !item.typed,
+        typed,
+        displayText: typed ? '' : item.body,
+        done: !typed,
       }
       setTurnOverlayItems(prev => [...prev, entry])
-      await sleep(40)
-      if (item.typed) {
-        const charMs = opts?.charMs ?? 16
+      if (!skip) await sleep(pace === 'fast' ? 8 : 40)
+      if (typed) {
         for (let ci = 1; ci <= item.body.length; ci++) {
           if (!isOverlayRunAlive()) return
           const snap = ci
           setTurnOverlayItems(prev => prev.map(e => (
             e.id === id ? { ...e, displayText: item.body.slice(0, snap) } : e
           )))
-          await sleep(charMs)
+          if (charMs > 0) await sleep(charMs)
         }
         setTurnOverlayItems(prev => prev.map(e => (e.id === id ? { ...e, done: true } : e)))
       }
-      await sleep(opts?.gapMs ?? 220)
+      if (gapMs > 0) await sleep(gapMs)
     }
 
     try {
       let approveWeight = 0
       let totalWeight = 0
 
-      for await (const rawEvent of executeTurnStreamV2(gameId, index, ministerId, { type: 'governance_upkeep', budget: 0 })) {
+      for await (const rawEvent of executeTurnStreamV2(gameId, index, ministerId, minorActionChoice, counterFrameChoice, powerMoveChoice)) {
         const rawType = typeof rawEvent.type === 'string' ? rawEvent.type : ''
         if (rawType === 'game_over') {
           setGameState(rawEvent.state as GameState)
           setGameOver(true)
           setTurnOverlayPhase('complete')
+          setTurnOverlayComplete(true)
           await appendOverlayItem({
             phase: 'complete',
             kind: 'error',
@@ -2135,7 +1041,6 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
             accent: '#f87171',
             typed: true,
           }, { charMs: 12, gapMs: 50 })
-          setTurnOverlayComplete(true)
           break
         }
 
@@ -2150,6 +1055,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
           const newEntry: TurnEntry = {
             turn: tr.turn, result: tr, expanded: true,
             voteBreakdown: pendingVoteBreakdownRef.current ?? undefined,
+            choice: choiceSnapshot,
           }
           pendingVoteBreakdownRef.current = null
           setTurnHistory(prev => [newEntry, ...prev.map(e => ({ ...e, expanded: false }))])
@@ -2182,21 +1088,56 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
             setGameOver(true)
             if (event.scorecard) setScorecard(event.scorecard as GovernanceScorecard)
           }
+          if (event.forecast) setTurnForecast(event.forecast as TurnForecast)
+
+          const turnDurationMs = turnStartedAtRef.current !== null
+            ? Math.max(0, performance.now() - turnStartedAtRef.current)
+            : 0
+          setTurnChoices(prev => [...prev, choiceSnapshot])
+          setTurnTelemetryRows(prev => [
+            ...prev,
+            {
+              turn: tr.turn,
+              decisionCount: GAMEPLAY_V2_AGENCY ? 4 : 2,
+              turnDurationMs,
+              overlayDwellMs: 0,
+              timeToDecisionMs,
+              policyName: tr.major_policy?.name ?? choiceSnapshot.policyName,
+            },
+          ])
+          console.info('[Gameplay Telemetry]', {
+            turn: tr.turn,
+            decisionCount: GAMEPLAY_V2_AGENCY ? 4 : 2,
+            turnDurationMs: Math.round(turnDurationMs),
+            timeToDecisionMs: timeToDecisionMs === null ? null : Math.round(timeToDecisionMs),
+            policyName: tr.major_policy?.name ?? choiceSnapshot.policyName,
+          })
+
           setTurnOverlayPhase('complete')
+          // Set up accountability review (skip on game over)
+          if (!event.game_over) {
+            setAccountabilityMinister({
+              id: tr.assigned_minister_id ?? choiceSnapshot.ministerId,
+              name: tr.assigned_minister_name ?? choiceSnapshot.ministerName,
+            })
+            setAccountabilityBudgetStolen(tr.budget_stolen ?? 0)
+            setAccountabilityResolved(false)
+          }
+          setTurnOverlayComplete(true)
           await appendOverlayItem({
             phase: 'complete',
             kind: 'status',
             title: 'TURN COMPLETE',
-            body: `Turn ${tr.turn} complete. Policy recap is ready.`,
+            body: `Turn ${tr.turn} complete. Review minister performance below.`,
             accent: '#22c55e',
             typed: true,
           }, { charMs: 14, gapMs: 50 })
-          setTurnOverlayComplete(true)
           break
         }
         if (event.type === 'error') {
           setTurnError(`Turn error: ${event.message}`)
           setTurnOverlayPhase('complete')
+          setTurnOverlayComplete(true)
           await appendOverlayItem({
             phase: 'complete',
             kind: 'error',
@@ -2205,12 +1146,12 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
             accent: '#f87171',
             typed: true,
           }, { charMs: 12, gapMs: 50 })
-          setTurnOverlayComplete(true)
           break
         }
 
         if (event.type === 'announcement') {
           setTurnOverlayPhase('announcement')
+          sound.play('breaking')
           const pol = event.policy
           setExecutingPolicyName(pol.name)
           setAllHeadlines(prev => [...prev, {
@@ -2293,6 +1234,79 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
           }
         }
 
+        if (event.type === 'dilemma') {
+          setTurnOverlayPhase('evaluation')
+          await appendOverlayItem({
+            phase: 'evaluation',
+            kind: 'headline',
+            title: 'FIELD REPORT',
+            body: event.situation,
+            accent: '#fbbf24',
+            typed: true,
+          }, { charMs: 16, gapMs: 200 })
+          // Show dilemma options — stream 1 ends after this event
+          receivedDilemma = true
+          setDilemmaOptions({
+            situation: event.situation,
+            option_a: event.option_a,
+            option_b: event.option_b,
+          })
+          // Don't break — the stream will end naturally after this event
+        }
+
+        if (event.type === 'dilemma_resolved') {
+          setDilemmaOptions(null)
+          const sign = event.effect_delta >= 0 ? '+' : ''
+          await appendOverlayItem({
+            phase: 'evaluation',
+            kind: 'status',
+            title: 'DECISION APPLIED',
+            body: `${event.label} — ${humanize(event.effect_key)} ${sign}${event.effect_delta.toFixed(1)}`,
+            accent: event.effect_delta >= 0 ? '#22c55e' : '#f87171',
+            typed: false,
+          })
+        }
+
+        if (event.type === 'ideology_update') {
+          setGameState(prev => ({ ...prev, ideology_track: event.track as Record<string, number> }))
+          if (event.passive_unlocked) {
+            const passiveName = String(event.passive_unlocked).replace(/_/g, ' ').replace(/(\d)/, ' $1')
+            await appendOverlayItem({
+              phase: 'evaluation',
+              kind: 'status',
+              title: 'IDEOLOGY PASSIVE UNLOCKED',
+              body: passiveName.toUpperCase(),
+              accent: '#a78bfa',
+              typed: false,
+            })
+          }
+        }
+
+        if (event.type === 'power_move_applied') {
+          setGameState(prev => ({ ...prev, political_capital: event.political_capital_after as number }))
+          await appendOverlayItem({
+            phase: 'announcement',
+            kind: 'status',
+            title: 'POWER MOVE',
+            body: `${String(event.move_type).replace(/_/g, ' ').toUpperCase()} — ${event.effect_summary} (−${event.pc_cost} PC)`,
+            accent: '#a855f7',
+            typed: true,
+          }, { charMs: 14, gapMs: 200 })
+        }
+
+        if (event.type === 'pc_earned') {
+          setGameState(prev => ({ ...prev, political_capital: event.total as number }))
+          const reasons = (event.reasons as string[]).join(', ')
+          await appendOverlayItem({
+            phase: 'debrief',
+            kind: 'status',
+            title: 'POLITICAL CAPITAL',
+            body: `+${event.amount} PC earned (${reasons}). Total: ${event.total}`,
+            accent: '#a855f7',
+            typed: false,
+          })
+        }
+
         if (event.type === 'wellbeing_update') {
           setTurnOverlayPhase('evaluation')
           const upCount = event.ward_report.filter(w => w.trend === 'up').length
@@ -2311,6 +1325,10 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
           setTurnOverlayPhase('poll')
           const voice = event.voice
           const weight = event.population_weight
+          // Kick the crowd into "polling" on the first vote of this turn.
+          if (voteBus.phase !== 'polling') voteBus.setPhase('polling')
+          voteBus.emitVote({ voice, weight })
+          sound.play(voice.sentiment === 'approve' ? 'vote_up' : voice.sentiment === 'disapprove' ? 'vote_down' : 'phase', { throttleMs: 90 })
           setAllVoices(prev => [...prev, { ...voice, turnNum: streamTurnNum }])
           totalWeight += weight
           if (voice.sentiment === 'approve') approveWeight += weight
@@ -2329,8 +1347,10 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
 
         if (event.type === 'approval_final') {
           setTurnOverlayPhase('poll')
+          voteBus.setPhase('done')
           const before = Math.round(event.approval_before)
           const after = Math.round(event.approval)
+          sound.play(after >= before ? 'win' : 'crisis')
           const dir = after >= before ? '↑' : '↓'
           const bd = event.breakdown
           // Stash breakdown so it can be attached to TurnEntry when complete fires
@@ -2386,6 +1406,22 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
           }
         }
 
+        if (event.type === 'event_response_prompt') {
+          receivedEventResponsePrompt = true
+          setEventResponseOptions(event.options as unknown as EventResponseOption[])
+        }
+
+        if (event.type === 'event_response_applied') {
+          await appendOverlayItem({
+            phase: 'events',
+            kind: 'status',
+            title: 'EVENT RESPONSE',
+            body: event.effect as string,
+            accent: '#22c55e',
+            typed: true,
+          }, { charMs: 14, gapMs: 160 })
+        }
+
         if (event.type === 'narrative_chunk') {
           setTurnOverlayPhase('debrief')
           if (event.key === 'headlines' && Array.isArray(event.value)) {
@@ -2421,6 +1457,381 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
               accent: '#e8a030',
               typed: true,
             }, { charMs: 11, gapMs: 160 })
+          }
+        }
+      }
+
+      // ── Dilemma pause: wait for player choice, then resume stream 2 ──
+      if (receivedDilemma) {
+        // Wait for the player to click Option A or Option B via a Promise
+        const dilemmaChoice = await new Promise<'a' | 'b'>((resolve) => {
+          dilemmaResolverRef.current = resolve
+        })
+        dilemmaResolverRef.current = null
+        setDilemmaOptions(null)
+
+        // Resume turn with stream 2
+        for await (const rawEvent of resolveDilemmaStream(gameId, dilemmaChoice)) {
+          const rawType = typeof rawEvent.type === 'string' ? rawEvent.type : ''
+          if (rawType === 'game_over') {
+            setGameState(rawEvent.state as GameState)
+            setGameOver(true)
+            setTurnOverlayPhase('complete')
+            setTurnOverlayComplete(true)
+            await appendOverlayItem({
+              phase: 'complete', kind: 'error', title: 'GAME OVER',
+              body: String(rawEvent.loss_reason ?? 'Loss condition reached.'),
+              accent: '#f87171', typed: true,
+            }, { charMs: 12, gapMs: 50 })
+            break
+          }
+
+          const event = rawEvent as unknown as TurnStreamV2Event
+
+          if (event.type === 'complete') {
+            const tr = event.turn_result as TurnResult
+            const newState = event.state as GameState
+            setGameState(newState)
+            setLastTurn(tr)
+            const newEntry: TurnEntry = {
+              turn: tr.turn, result: tr, expanded: true,
+              voteBreakdown: pendingVoteBreakdownRef.current ?? undefined,
+              choice: choiceSnapshot,
+            }
+            pendingVoteBreakdownRef.current = null
+            setTurnHistory(prev => [newEntry, ...prev.map(e => ({ ...e, expanded: false }))])
+            setPolicyOptions(null)
+            setDiscussingPolicyIndex(null)
+            setPolicyError(null)
+            setTurnOverlayTreasuryDelta((tr.tax_revenue ?? 0) - (tr.major_policy?.budget_cost ?? 0) - (tr.interest_paid ?? 0) - (tr.budget_stolen ?? 0))
+            setTurnOverlayApprovalPct(Math.round(tr.interim_approval))
+            const now2 = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            setChatMessages(prev => [...prev, {
+              isMayor: false, sender: 'SYSTEM', senderRole: '',
+              text: `── Turn ${tr.turn} complete · ${tr.major_policy?.name ?? 'Policy'} · Approval ${Math.round(tr.approval_before ?? 0)}% → ${Math.round(tr.interim_approval)}% ──`,
+              time: now2, ringColor: '#1c3652', seed: 'system', isSystem: true,
+            }])
+            activeConsultRef.current = null
+            const turnNum = tr.turn
+            if ((tr.media_headlines ?? []).length > 0) {
+              setAllHeadlines(prev => [...prev, ...(tr.media_headlines ?? []).map(h => ({ ...h, turnNum }))])
+            }
+            if ((tr.citizen_voices ?? []).length > 0 && !allVoices.some(v => v.turnNum === turnNum)) {
+              setAllVoices(prev => [...prev, ...(tr.citizen_voices ?? []).map(v => ({ ...v, turnNum }))])
+            }
+            if (event.game_over) {
+              setGameOver(true)
+              if (event.scorecard) setScorecard(event.scorecard as GovernanceScorecard)
+            }
+            if (event.forecast) setTurnForecast(event.forecast as TurnForecast)
+            setTurnOverlayPhase('complete')
+            if (!event.game_over) {
+              setAccountabilityMinister({
+                id: tr.assigned_minister_id ?? choiceSnapshot.ministerId,
+                name: tr.assigned_minister_name ?? choiceSnapshot.ministerName,
+              })
+              setAccountabilityBudgetStolen(tr.budget_stolen ?? 0)
+              setAccountabilityResolved(false)
+            }
+            setTurnOverlayComplete(true)
+            await appendOverlayItem({
+              phase: 'complete', kind: 'status', title: 'TURN COMPLETE',
+              body: `Turn ${tr.turn} complete. Review minister performance below.`,
+              accent: '#22c55e', typed: true,
+            }, { charMs: 14, gapMs: 50 })
+            break
+          }
+          if (event.type === 'error') {
+            setTurnError(`Turn error: ${event.message}`)
+            setTurnOverlayPhase('complete')
+            setTurnOverlayComplete(true)
+            await appendOverlayItem({
+              phase: 'complete', kind: 'error', title: 'STREAM ERROR',
+              body: event.message, accent: '#f87171', typed: true,
+            }, { charMs: 12, gapMs: 50 })
+            break
+          }
+
+          // Re-use the same event handlers for stream 2 events
+          if (event.type === 'dilemma_resolved') {
+            setDilemmaOptions(null)
+            const sign = event.effect_delta >= 0 ? '+' : ''
+            await appendOverlayItem({
+              phase: 'evaluation', kind: 'status', title: 'DECISION APPLIED',
+              body: `${event.label} — ${humanize(event.effect_key)} ${sign}${event.effect_delta.toFixed(1)}`,
+              accent: event.effect_delta >= 0 ? '#22c55e' : '#f87171', typed: false,
+            })
+          }
+          if (event.type === 'ideology_update') {
+            setGameState(prev => ({ ...prev, ideology_track: event.track as Record<string, number> }))
+            if (event.passive_unlocked) {
+              const passiveName = String(event.passive_unlocked).replace(/_/g, ' ').replace(/(\d)/, ' $1')
+              await appendOverlayItem({
+                phase: 'evaluation', kind: 'status', title: 'IDEOLOGY PASSIVE UNLOCKED',
+                body: passiveName.toUpperCase(), accent: '#a78bfa', typed: false,
+              })
+            }
+          }
+          if (event.type === 'power_move_applied') {
+            setGameState(prev => ({ ...prev, political_capital: event.political_capital_after as number }))
+            await appendOverlayItem({
+              phase: 'announcement', kind: 'status', title: 'POWER MOVE',
+              body: `${String(event.move_type).replace(/_/g, ' ').toUpperCase()} — ${event.effect_summary} (−${event.pc_cost} PC)`,
+              accent: '#a855f7', typed: true,
+            }, { charMs: 14, gapMs: 200 })
+          }
+          if (event.type === 'pc_earned') {
+            setGameState(prev => ({ ...prev, political_capital: event.total as number }))
+            const reasons = (event.reasons as string[]).join(', ')
+            await appendOverlayItem({
+              phase: 'debrief', kind: 'status', title: 'POLITICAL CAPITAL',
+              body: `+${event.amount} PC earned (${reasons}). Total: ${event.total}`,
+              accent: '#a855f7', typed: false,
+            })
+          }
+          if (event.type === 'wellbeing_update') {
+            setTurnOverlayPhase('evaluation')
+            const upCount = event.ward_report.filter(isBrightSpot).length
+            const downCount = event.ward_report.filter(isHotspot).length
+            await appendOverlayItem({
+              phase: 'evaluation', kind: 'analysis', title: 'WELLBEING UPDATE',
+              body: `${upCount} groups improving · ${downCount} groups declining.`,
+              accent: upCount >= downCount ? '#22c55e' : '#f87171', typed: false,
+            })
+          }
+          if (event.type === 'announcement_voices' || event.type === 'implementation_voices') {
+            setTurnOverlayPhase('reactions')
+            const voices = event.voices
+            setAllVoices(prev => [...prev, ...voices.map(v => ({ ...v, turnNum: streamTurnNum }))])
+            for (const voice of voices) {
+              const accent = voice.sentiment === 'approve' ? '#22c55e' : voice.sentiment === 'disapprove' ? '#f87171' : '#e8a030'
+              await appendOverlayItem({
+                phase: 'reactions', kind: 'voice', title: `PUBLIC PULSE · ${voice.name.toUpperCase()}`,
+                body: voice.reaction, accent, typed: true,
+              }, { charMs: 11, gapMs: 150 })
+            }
+          }
+          if (event.type === 'approval_vote') {
+            setTurnOverlayPhase('poll')
+            const voice = event.voice
+            const weight = event.population_weight
+            if (voteBus.phase !== 'polling') voteBus.setPhase('polling')
+            voteBus.emitVote({ voice, weight })
+            sound.play(voice.sentiment === 'approve' ? 'vote_up' : voice.sentiment === 'disapprove' ? 'vote_down' : 'phase', { throttleMs: 90 })
+            setAllVoices(prev => [...prev, { ...voice, turnNum: streamTurnNum }])
+            totalWeight += weight
+            if (voice.sentiment === 'approve') approveWeight += weight
+            if (totalWeight > 0) setTurnOverlayApprovalPct(Math.round((approveWeight / totalWeight) * 100))
+            await appendOverlayItem({
+              phase: 'poll', kind: 'voice', title: `POLL VOTE · ${voice.name.toUpperCase()}`,
+              body: `${voice.sentiment.toUpperCase()} (${weight.toFixed(2)} wt) — ${voice.reaction}`,
+              accent: voice.sentiment === 'approve' ? '#22c55e' : voice.sentiment === 'disapprove' ? '#f87171' : '#e8a030',
+              typed: false,
+            }, { gapMs: 110 })
+          }
+          if (event.type === 'approval_final') {
+            setTurnOverlayPhase('poll')
+            voteBus.setPhase('done')
+            const before = Math.round(event.approval_before)
+            const after = Math.round(event.approval)
+            sound.play(after >= before ? 'win' : 'crisis')
+            const dir = after >= before ? '↑' : '↓'
+            const bd = event.breakdown
+            pendingVoteBreakdownRef.current = { approve: bd.approve, disapprove: bd.disapprove, total: bd.total }
+            setLiveApproval(after)
+            setTurnOverlayApprovalPct(after)
+            await appendOverlayItem({
+              phase: 'poll', kind: 'status', title: 'MANDATE SHIFT',
+              body: `Approval ${dir} ${before}% → ${after}% · ${bd.approve} approve / ${bd.disapprove} disapprove (${bd.total} votes).`,
+              accent: after >= before ? '#22c55e' : '#f87171', typed: false,
+            })
+          }
+          if (event.type === 'events') {
+            setTurnOverlayPhase('events')
+            for (const ev of event.events_triggered ?? []) {
+              const isC = ev.type === 'crisis'
+              if (isC) sound.play('crisis', { throttleMs: 400 })
+              await appendOverlayItem({
+                phase: 'events', kind: 'headline',
+                title: isC ? 'CRISIS TRIGGERED' : 'OPPORTUNITY',
+                body: `${ev.name} · severity ${ev.severity} · ${ev.turns_remaining} turns remaining`,
+                accent: isC ? '#f87171' : '#22c55e', typed: true,
+              }, { charMs: 12, gapMs: 120 })
+            }
+          }
+          if (event.type === 'event_response_prompt') {
+            receivedEventResponsePrompt = true
+            setEventResponseOptions(event.options as unknown as EventResponseOption[])
+          }
+          if (event.type === 'event_response_applied') {
+            await appendOverlayItem({
+              phase: 'events', kind: 'status', title: 'EVENT RESPONSE',
+              body: event.effect,
+              accent: '#22c55e', typed: true,
+            }, { charMs: 14, gapMs: 160 })
+          }
+          if (event.type === 'narrative_chunk') {
+            setTurnOverlayPhase('debrief')
+            if (event.key === 'headlines' && Array.isArray(event.value)) {
+              for (const h of event.value.filter(isMediaHeadline)) {
+                await appendOverlayItem({
+                  phase: 'debrief', kind: 'headline', title: `MEDIA · ${h.outlet.toUpperCase()}`,
+                  body: h.headline, accent: '#93c5fd', typed: true,
+                }, { charMs: 11, gapMs: 160 })
+              }
+            }
+            if (event.key === 'delivery' && typeof event.value === 'string') {
+              await appendOverlayItem({
+                phase: 'debrief', kind: 'analysis', title: 'ON THE GROUND',
+                body: event.value, accent: '#7dd3fc', typed: true,
+              }, { charMs: 11, gapMs: 160 })
+            }
+            if (event.key === 'advisor' && typeof event.value === 'string') {
+              await appendOverlayItem({
+                phase: 'debrief', kind: 'analysis', title: 'ADVISOR DEBRIEF',
+                body: event.value, accent: '#e8a030', typed: true,
+              }, { charMs: 11, gapMs: 160 })
+            }
+          }
+        }
+      }
+
+      // ── Event Response pause: wait for player choices, then resume stream 3 ──
+      if (receivedEventResponsePrompt) {
+        const eventResponses = await new Promise<{ event_id: string; strategy: string; minister_id?: string }[]>((resolve) => {
+          eventResponseResolverRef.current = resolve
+        })
+        eventResponseResolverRef.current = null
+        setEventResponseOptions(null)
+
+        // Resume turn with stream 3
+        for await (const rawEvent of resolveEventResponseStream(gameId, eventResponses)) {
+          const rawType = typeof rawEvent.type === 'string' ? rawEvent.type : ''
+          if (rawType === 'game_over') {
+            setGameState(rawEvent.state as GameState)
+            setGameOver(true)
+            setTurnOverlayPhase('complete')
+            setTurnOverlayComplete(true)
+            await appendOverlayItem({
+              phase: 'complete', kind: 'error', title: 'GAME OVER',
+              body: String(rawEvent.loss_reason ?? 'Loss condition reached.'),
+              accent: '#f87171', typed: true,
+            }, { charMs: 12, gapMs: 50 })
+            break
+          }
+
+          const event = rawEvent as unknown as TurnStreamV2Event
+
+          if (event.type === 'complete') {
+            const tr = event.turn_result as TurnResult
+            const newState = event.state as GameState
+            setGameState(newState)
+            setLastTurn(tr)
+            const newEntry: TurnEntry = {
+              turn: tr.turn, result: tr, expanded: true,
+              voteBreakdown: pendingVoteBreakdownRef.current ?? undefined,
+              choice: choiceSnapshot,
+            }
+            pendingVoteBreakdownRef.current = null
+            setTurnHistory(prev => [newEntry, ...prev.map(e => ({ ...e, expanded: false }))])
+            setPolicyOptions(null)
+            setDiscussingPolicyIndex(null)
+            setPolicyError(null)
+            setTurnOverlayTreasuryDelta((tr.tax_revenue ?? 0) - (tr.major_policy?.budget_cost ?? 0) - (tr.interest_paid ?? 0) - (tr.budget_stolen ?? 0))
+            setTurnOverlayApprovalPct(Math.round(tr.interim_approval))
+            const now3 = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            setChatMessages(prev => [...prev, {
+              isMayor: false, sender: 'SYSTEM', senderRole: '',
+              text: `── Turn ${tr.turn} complete · ${tr.major_policy?.name ?? 'Policy'} · Approval ${Math.round(tr.approval_before ?? 0)}% → ${Math.round(tr.interim_approval)}% ──`,
+              time: now3, ringColor: '#1c3652', seed: 'system', isSystem: true,
+            }])
+            activeConsultRef.current = null
+            const turnNum = tr.turn
+            if ((tr.media_headlines ?? []).length > 0) {
+              setAllHeadlines(prev => [...prev, ...(tr.media_headlines ?? []).map(h => ({ ...h, turnNum }))])
+            }
+            if ((tr.citizen_voices ?? []).length > 0 && !allVoices.some(v => v.turnNum === turnNum)) {
+              setAllVoices(prev => [...prev, ...(tr.citizen_voices ?? []).map(v => ({ ...v, turnNum }))])
+            }
+            if (event.game_over) {
+              setGameOver(true)
+              if (event.scorecard) setScorecard(event.scorecard as GovernanceScorecard)
+            }
+            if (event.forecast) setTurnForecast(event.forecast as TurnForecast)
+            setTurnOverlayPhase('complete')
+            if (!event.game_over) {
+              setAccountabilityMinister({
+                id: tr.assigned_minister_id ?? choiceSnapshot.ministerId,
+                name: tr.assigned_minister_name ?? choiceSnapshot.ministerName,
+              })
+              setAccountabilityBudgetStolen(tr.budget_stolen ?? 0)
+              setAccountabilityResolved(false)
+            }
+            setTurnOverlayComplete(true)
+            await appendOverlayItem({
+              phase: 'complete', kind: 'status', title: 'TURN COMPLETE',
+              body: `Turn ${tr.turn} complete. Review minister performance below.`,
+              accent: '#22c55e', typed: true,
+            }, { charMs: 14, gapMs: 50 })
+            break
+          }
+          if (event.type === 'error') {
+            setTurnError(`Turn error: ${event.message}`)
+            setTurnOverlayPhase('complete')
+            setTurnOverlayComplete(true)
+            await appendOverlayItem({
+              phase: 'complete', kind: 'error', title: 'STREAM ERROR',
+              body: event.message, accent: '#f87171', typed: true,
+            }, { charMs: 12, gapMs: 50 })
+            break
+          }
+
+          if (event.type === 'event_response_applied') {
+            await appendOverlayItem({
+              phase: 'events', kind: 'status', title: 'EVENT RESPONSE',
+              body: event.effect,
+              accent: '#22c55e', typed: true,
+            }, { charMs: 14, gapMs: 160 })
+          }
+          if (event.type === 'power_move_applied') {
+            setGameState(prev => ({ ...prev, political_capital: event.political_capital_after as number }))
+            await appendOverlayItem({
+              phase: 'announcement', kind: 'status', title: 'POWER MOVE',
+              body: `${String(event.move_type).replace(/_/g, ' ').toUpperCase()} — ${event.effect_summary} (−${event.pc_cost} PC)`,
+              accent: '#a855f7', typed: true,
+            }, { charMs: 14, gapMs: 200 })
+          }
+          if (event.type === 'pc_earned') {
+            setGameState(prev => ({ ...prev, political_capital: event.total as number }))
+            const reasons = (event.reasons as string[]).join(', ')
+            await appendOverlayItem({
+              phase: 'debrief', kind: 'status', title: 'POLITICAL CAPITAL',
+              body: `+${event.amount} PC earned (${reasons}). Total: ${event.total}`,
+              accent: '#a855f7', typed: false,
+            })
+          }
+          if (event.type === 'narrative_chunk') {
+            setTurnOverlayPhase('debrief')
+            if (event.key === 'headlines' && Array.isArray(event.value)) {
+              for (const h of event.value.filter(isMediaHeadline)) {
+                await appendOverlayItem({
+                  phase: 'debrief', kind: 'headline', title: `MEDIA · ${h.outlet.toUpperCase()}`,
+                  body: h.headline, accent: '#93c5fd', typed: true,
+                }, { charMs: 11, gapMs: 160 })
+              }
+            }
+            if (event.key === 'delivery' && typeof event.value === 'string') {
+              await appendOverlayItem({
+                phase: 'debrief', kind: 'analysis', title: 'ON THE GROUND',
+                body: event.value, accent: '#7dd3fc', typed: true,
+              }, { charMs: 11, gapMs: 160 })
+            }
+            if (event.key === 'advisor' && typeof event.value === 'string') {
+              await appendOverlayItem({
+                phase: 'debrief', kind: 'analysis', title: 'ADVISOR DEBRIEF',
+                body: event.value, accent: '#e8a030', typed: true,
+              }, { charMs: 11, gapMs: 160 })
+            }
           }
         }
       }
@@ -2515,6 +1926,24 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
     lean === 'mayor' ? '#991b1b' : lean === 'opposition' ? '#1e40af' : '#065f46'
   const sentimentRing = (s: string) =>
     s === 'approve' ? '#22c55e' : s === 'disapprove' ? '#f87171' : '#e8a030'
+
+  const medianDecisionLatency = median(
+    turnTelemetryRows
+      .map(r => r.timeToDecisionMs)
+      .filter((v): v is number => typeof v === 'number')
+  )
+  const medianTurnDuration = median(turnTelemetryRows.map(r => r.turnDurationMs))
+  const medianOverlayDwell = median(
+    turnTelemetryRows
+      .map(r => r.overlayDwellMs)
+      .filter(v => v > 0)
+  )
+  const avgDecisionsPerTurn = turnTelemetryRows.length > 0
+    ? turnTelemetryRows.reduce((s, r) => s + r.decisionCount, 0) / turnTelemetryRows.length
+    : 0
+  const recentChoiceNames = turnChoices.slice(-10).map(c => c.policyName.trim().toLowerCase())
+  const duplicateChoices = recentChoiceNames.length - new Set(recentChoiceNames).size
+  const policyRepeatRate = recentChoiceNames.length > 0 ? (duplicateChoices / recentChoiceNames.length) * 100 : 0
 
   // ─────────────────────────────────────────────────────────────────────────────
 
@@ -2653,7 +2082,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                     {/* Empty state */}
                     {briefingTickerItems.length === 0 && (
                       <div style={{
-                        fontSize: 11, color: '#1c3652', textAlign: 'center', padding: '24px 0',
+                        fontSize: 11, color: '#5a8fc0', textAlign: 'center', padding: '24px 0',
                         fontFamily: "'Share Tech Mono', monospace",
                         animation: 'pulse 2s ease-in-out infinite',
                       }}>Scanning city systems...</div>
@@ -2749,7 +2178,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                 {/* Policy handoff line — after all ministers done */}
                 {briefingVisibleLines.length > 0 && briefingVisibleLines.every(e => e.done) && (
                   <div style={{
-                    textAlign: 'center', fontSize: 12, color: '#4b6280',
+                    textAlign: 'center', fontSize: 12, color: '#7ba8d1',
                     fontFamily: "'Share Tech Mono', monospace",
                     animation: 'briefingFadeIn 0.6s ease',
                     paddingTop: 4,
@@ -2766,7 +2195,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                       border: '2px solid #1c3652', borderTopColor: '#e8a030',
                       animation: 'spin 1s linear infinite',
                     }} />
-                    <span style={{ fontSize: 11, color: '#4b6280', fontFamily: "'Share Tech Mono', monospace" }}>
+                    <span style={{ fontSize: 11, color: '#7ba8d1', fontFamily: "'Share Tech Mono', monospace" }}>
                       DRAFTING POLICIES...
                     </span>
                   </div>
@@ -2880,6 +2309,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
 
       <TurnExecutionOverlay
         open={turnOverlayOpen}
+        collapsed={pollPhase === 'polling' && turnOverlayPaceMode === 'cinematic'}
         canDismiss={turnOverlayComplete}
         phase={turnOverlayPhase}
         items={turnOverlayItems}
@@ -2887,7 +2317,19 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
         executionPct={turnOverlayExecutionPct}
         approvalPct={turnOverlayApprovalPct}
         treasuryDelta={turnOverlayTreasuryDelta}
+        paceMode={turnOverlayPaceMode}
+        onPaceModeChange={setTurnOverlayPaceMode}
         onDismiss={handleDismissTurnOverlay}
+        accountabilityResolved={accountabilityResolved}
+        accountabilityMinister={accountabilityMinister}
+        accountabilityBudgetStolen={accountabilityBudgetStolen}
+        accountabilityLoading={accountabilityLoading}
+        onAccountability={handleAccountability}
+        dilemmaOptions={dilemmaOptions}
+        onDilemmaChoice={(choice) => { if (dilemmaResolverRef.current) dilemmaResolverRef.current(choice) }}
+        eventResponseOptions={eventResponseOptions}
+        onEventResponses={(responses) => { if (eventResponseResolverRef.current) eventResponseResolverRef.current(responses) }}
+        ministers={gameState.ministers}
       />
 
       {gameOver && scorecard && <ScorecardOverlay sc={scorecard} />}
@@ -2933,7 +2375,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                 </div>
                 <button
                   onClick={() => setExpandedMinisterId(null)}
-                  style={{ fontSize: 16, color: '#475569', background: 'none', border: 'none', cursor: 'pointer', lineHeight: 1, padding: '2px 6px' }}
+                  style={{ fontSize: 16, color: '#7bb3d4', background: 'none', border: 'none', cursor: 'pointer', lineHeight: 1, padding: '2px 6px' }}
                 >✕</button>
               </div>
 
@@ -2955,7 +2397,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                   ].map(s => (
                     <div key={s.label} style={{ textAlign: 'center', background: 'rgba(255,255,255,0.03)', borderRadius: 5, padding: '8px 4px', border: '1px solid #1c3652' }}>
                       <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'Share Tech Mono', monospace", color: s.color }}>{s.value}</div>
-                      <div style={{ fontSize: 7, color: '#475569', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em', marginTop: 3 }}>{s.label}</div>
+                      <div style={{ fontSize: 9, color: '#7bb3d4', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em', marginTop: 3 }}>{s.label}</div>
                     </div>
                   ))}
                 </div>
@@ -3001,7 +2443,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                 </div>
               )}
 
-              <div style={{ fontSize: 9, color: '#334155', textAlign: 'center', fontStyle: 'italic' }}>Click outside to close</div>
+              <div style={{ fontSize: 9, color: '#6b9cc9', textAlign: 'center', fontStyle: 'italic' }}>Click outside to close</div>
             </div>
           </div>
         )
@@ -3015,6 +2457,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
           onClose={() => { if (!isTurnExecuting) { setShowPolicyModal(false); setPolicyOptions(null); setPolicyError(null); setDiscussingPolicyIndex(null) } }}
           loading={isTurnExecuting}
           error={turnError}
+          treasury={gameState.treasury}
         />
       )}
       {showMinisterPicker && pendingPolicyIndex !== null && policyOptions && (
@@ -3022,6 +2465,15 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
           policy={policyOptions[pendingPolicyIndex]}
           ministers={gameState.ministers}
           onSelect={handleSelectMinister}
+          agencyEnabled={GAMEPLAY_V2_AGENCY}
+          minorAction={GAMEPLAY_V2_AGENCY ? selectedMinorAction : { type: 'governance_upkeep', target: 'admin_efficiency', budget: 0 }}
+          onMinorActionChange={setSelectedMinorAction}
+          counterFrame={GAMEPLAY_V2_AGENCY ? selectedCounterFrame : 'Delivery Receipts'}
+          onCounterFrameChange={setSelectedCounterFrame}
+          politicalCapital={gameState.political_capital ?? 15}
+          activeEvents={(gameState.active_events ?? []).map(e => ({ id: e.id, name: e.name, type: e.type }))}
+          selectedPowerMove={selectedPowerMove}
+          onPowerMoveChange={setSelectedPowerMove}
           onBack={() => { setShowMinisterPicker(false); setShowPolicyModal(true) }}
         />
       )}
@@ -3055,7 +2507,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                 background: 'rgba(232,160,48,0.12)', border: '1px solid rgba(232,160,48,0.25)',
               }}>TERM 1</span>
               <ChevronRight size={9} color="#4b6280" />
-              <span style={{ fontSize: 10, fontFamily: "'Share Tech Mono', monospace", color: '#4b6280' }}>
+              <span style={{ fontSize: 10, fontFamily: "'Share Tech Mono', monospace", color: '#7ba8d1' }}>
                 Turn {gameState.current_turn} / {gameState.total_turns}
               </span>
             </div>
@@ -3069,11 +2521,11 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
           <div className="flex items-center justify-between mb-1">
             <span style={{
               fontSize: 9, fontFamily: "'Rajdhani', sans-serif", fontWeight: 700,
-              letterSpacing: '0.2em', color: '#4b6280'
+              letterSpacing: '0.2em', color: '#7ba8d1'
             }}>BUDGET</span>
             <span style={{
               fontSize: 9, fontFamily: "'Rajdhani', sans-serif", fontWeight: 700,
-              letterSpacing: '0.12em', color: '#4b6280'
+              letterSpacing: '0.12em', color: '#7ba8d1'
             }}>FISCAL YEAR</span>
           </div>
           <div className="flex items-center gap-2">
@@ -3100,13 +2552,28 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
           </div>
         </div>
 
+        {/* Political Capital */}
+        <div className="flex flex-col gap-0.5 shrink-0" style={{ minWidth: 50 }}>
+          <div style={{
+            fontSize: 8, fontFamily: "'Rajdhani', sans-serif", fontWeight: 700,
+            letterSpacing: '0.15em', color: '#a78bfa',
+          }}>POLITICAL CAPITAL</div>
+          <div className="flex items-center gap-1">
+            <span style={{ fontSize: 9, color: '#a78bfa' }}>🛡</span>
+            <span style={{ fontSize: 14, fontWeight: 700, ...MONO('#a78bfa'), lineHeight: 1 }}>
+              {Math.round(gameState.political_capital ?? 0)}
+            </span>
+            <span style={{ fontSize: 9, color: '#64748b' }}>/50</span>
+          </div>
+        </div>
+
         <div className="h-8 w-px" style={{ background: '#1c3652' }} />
 
         {/* Mayor Approval */}
         <div className="flex flex-col gap-1 shrink-0" style={{ minWidth: 120 }}>
           <div style={{
             fontSize: 9, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.15em',
-            color: '#4b6280', fontWeight: 700,
+            color: '#7ba8d1', fontWeight: 700,
           }}>MAYOR APPROVAL</div>
           <div className="flex items-center gap-2">
             <span style={{ fontSize: 20, fontWeight: 700, ...MONO('#f0c040'), lineHeight: 1 }}>
@@ -3132,6 +2599,40 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
             }} />
           </div>
         </div>
+
+        <div className="h-8 w-px" style={{ background: '#1c3652' }} />
+
+        {/* Ideology Track */}
+        {gameState.ideology_track && Object.values(gameState.ideology_track).some(v => v > 0) && (
+          <div className="flex flex-col gap-1 shrink-0" style={{ minWidth: 100 }}>
+            <div style={{
+              fontSize: 9, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.15em',
+              color: '#7ba8d1', fontWeight: 700,
+            }}>IDEOLOGY</div>
+            <div className="flex gap-1">
+              {([
+                ['pragmatist', '#60a5fa', 'P'],
+                ['populist', '#f87171', 'O'],
+                ['institutionalist', '#fbbf24', 'I'],
+                ['strongman', '#94a3b8', 'S'],
+              ] as const).map(([key, color, letter]) => {
+                const count = gameState.ideology_track[key] || 0
+                if (count === 0) return null
+                return (
+                  <div key={key} title={`${key}: ${count} choices (passive at 2, 4)`}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 2,
+                      padding: '1px 5px', borderRadius: 3,
+                      background: `${color}18`, border: `1px solid ${color}40`,
+                    }}>
+                    <span style={{ fontSize: 9, fontWeight: 800, color, fontFamily: "'Rajdhani', sans-serif" }}>{letter}</span>
+                    <span style={{ fontSize: 10, fontWeight: 700, color, fontFamily: "'Share Tech Mono', monospace" }}>{count}</span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
 
         <div className="h-8 w-px" style={{ background: '#1c3652' }} />
 
@@ -3190,6 +2691,53 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
         </div>
       </div>
 
+      <div style={{
+        borderBottom: '1px solid #1c3652',
+        background: 'rgba(7,19,32,0.92)',
+        padding: '5px 12px',
+        display: 'grid',
+        gridTemplateColumns: 'repeat(6, minmax(100px, 1fr))',
+        gap: 10,
+      }}>
+        <div style={{ fontSize: 9, color: '#7ba8d1' }}>
+          <span style={{ color: '#4b6280', marginRight: 6 }}>Decisions/Turn</span>
+          <strong style={{ color: avgDecisionsPerTurn >= 3 ? '#22c55e' : '#f87171' }}>
+            {turnTelemetryRows.length > 0 ? avgDecisionsPerTurn.toFixed(1) : '—'}
+          </strong>
+          <span style={{ color: '#4b6280', marginLeft: 4 }}>(target ≥3)</span>
+        </div>
+        <div style={{ fontSize: 9, color: '#7ba8d1' }}>
+          <span style={{ color: '#4b6280', marginRight: 6 }}>Decision Latency</span>
+          <strong style={{ color: medianDecisionLatency !== null && medianDecisionLatency <= 20000 ? '#22c55e' : '#f87171' }}>
+            {medianDecisionLatency === null ? '—' : `${Math.round(medianDecisionLatency / 1000)}s`}
+          </strong>
+          <span style={{ color: '#4b6280', marginLeft: 4 }}>(target ≤20s)</span>
+        </div>
+        <div style={{ fontSize: 9, color: '#7ba8d1' }}>
+          <span style={{ color: '#4b6280', marginRight: 6 }}>Policy Repeat</span>
+          <strong style={{ color: policyRepeatRate < 35 ? '#22c55e' : '#f87171' }}>
+            {turnChoices.length > 0 ? `${policyRepeatRate.toFixed(0)}%` : '—'}
+          </strong>
+          <span style={{ color: '#4b6280', marginLeft: 4 }}>(target &lt;35%)</span>
+        </div>
+        <div style={{ fontSize: 9, color: '#7ba8d1' }}>
+          <span style={{ color: '#4b6280', marginRight: 6 }}>Median Turn</span>
+          <strong style={{ color: '#60a5fa' }}>
+            {medianTurnDuration === null ? '—' : `${Math.round(medianTurnDuration / 1000)}s`}
+          </strong>
+        </div>
+        <div style={{ fontSize: 9, color: '#7ba8d1' }}>
+          <span style={{ color: '#4b6280', marginRight: 6 }}>Overlay Dwell</span>
+          <strong style={{ color: '#60a5fa' }}>
+            {medianOverlayDwell === null ? '—' : `${Math.round(medianOverlayDwell / 1000)}s`}
+          </strong>
+        </div>
+        <div style={{ fontSize: 9, color: '#7ba8d1' }}>
+          <span style={{ color: '#4b6280', marginRight: 6 }}>Pace Mode</span>
+          <strong style={{ color: '#e8a030', textTransform: 'uppercase' }}>{turnOverlayPaceMode}</strong>
+        </div>
+      </div>
+
       {/* Policy error bar (outside modal, e.g. if modal closed before error) */}
       {policyError && !showPolicyModal && (
         <div style={{
@@ -3208,11 +2756,31 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
       {/* ── MAIN 3-COLUMN ──────────────────────────────────────────────────── */}
       <div className="flex flex-1 gap-2 p-2 overflow-hidden min-h-0">
 
-        {/* ── LEFT: Advisory Chat + Crises ───────────────────────────────── */}
+        {/* ── LEFT: Advisory Chat / Game Feed tabs + Crises ───────────────── */}
         <div className="w-[380px] flex flex-col gap-2 shrink-0" style={{ position: 'relative' }}>
 
+          {/* Tab bar */}
+          <div className="flex shrink-0" style={{ gap: 4 }}>
+            {([['advisors', '⚡ ADVISORS'], ['feed', '▶ GAME FEED']] as const).map(([tab, label]) => (
+              <button
+                key={tab}
+                onClick={() => setLeftTab(tab)}
+                style={{
+                  flex: 1, padding: '6px 0', borderRadius: 6,
+                  border: `1px solid ${leftTab === tab ? '#e8a03066' : '#1c3652'}`,
+                  background: leftTab === tab ? 'rgba(232,160,48,0.1)' : 'rgba(255,255,255,0.02)',
+                  color: leftTab === tab ? '#f0c040' : '#7ba8d1',
+                  fontSize: 10, fontWeight: 700, fontFamily: "'Rajdhani', sans-serif",
+                  letterSpacing: '0.12em', cursor: 'pointer',
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
           {/* Advisory Chat Panel */}
-          <div className="flex flex-col" style={{ ...PANEL, minHeight: 500 }}>
+          <div className="flex flex-col" style={{ ...PANEL, minHeight: 500, display: leftTab === 'advisors' ? 'flex' : 'none' }}>
 
             {/* Header */}
             <div className="flex items-center justify-between px-3 py-2"
@@ -3267,7 +2835,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
 
             {/* Council hint */}
             <div style={{
-              padding: '5px 12px', fontSize: 10, color: '#475569',
+              padding: '5px 12px', fontSize: 10, color: '#7bb3d4',
               background: 'rgba(232,160,48,0.03)', borderBottom: '1px solid rgba(28,54,82,0.4)',
               fontStyle: 'italic', lineHeight: 1.4
             }}>
@@ -3278,7 +2846,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
             <div className="overflow-y-auto space-y-2.5" style={{ height: 320, padding: '10px' }}>
               {chatMessages.map((msg, i) => msg.isSystem ? (
                 <div key={i} style={{
-                  textAlign: 'center', fontSize: 9, color: '#334155', fontStyle: 'italic',
+                  textAlign: 'center', fontSize: 9, color: '#6b9cc9', fontStyle: 'italic',
                   padding: '4px 0', borderTop: '1px solid #1c3652', borderBottom: '1px solid #1c3652',
                   letterSpacing: '0.04em', margin: '2px 0',
                 }}>{msg.text}</div>
@@ -3301,8 +2869,8 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                       <span style={{ fontSize: 10, fontWeight: 700, color: msg.isMayor ? '#e8a030' : '#7dd3fc' }}>
                         {msg.sender}
                       </span>
-                      {msg.senderRole && <span style={{ fontSize: 10, color: '#475569' }}>· {msg.senderRole}</span>}
-                      <span style={{ fontSize: 9, color: '#334155', marginLeft: 'auto' }}>{msg.time}</span>
+                      {msg.senderRole && <span style={{ fontSize: 10, color: '#7bb3d4' }}>· {msg.senderRole}</span>}
+                      <span style={{ fontSize: 9, color: '#6b9cc9', marginLeft: 'auto' }}>{msg.time}</span>
                     </div>
                     <div className="mt-1 px-2 py-1.5 rounded-lg" style={{
                       fontSize: 11,
@@ -3317,7 +2885,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
               {consultLoading && (
                 <div className="flex gap-2 items-center">
                   <Loader2 size={14} color="#4b6280" className="animate-spin" />
-                  <div style={{ fontSize: 11, color: '#475569', fontStyle: 'italic' }}>
+                  <div style={{ fontSize: 11, color: '#7bb3d4', fontStyle: 'italic' }}>
                     Ministers are responding...
                   </div>
                 </div>
@@ -3378,6 +2946,88 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
             </div>
           </div>
 
+          {/* Game Feed Panel (moved from center; shown via tab) */}
+          {leftTab === 'feed' && (
+            <div style={PANEL} className="flex-1 flex flex-col overflow-hidden min-h-0">
+              <div className="flex items-center justify-between px-3 py-2 shrink-0" style={{ borderBottom: '1px solid #1c3652' }}>
+                <div className="flex items-center gap-2">
+                  <div className="w-5 h-5 rounded flex items-center justify-center"
+                    style={{ background: 'rgba(232,160,48,0.15)', border: '1px solid #92400e' }}>
+                    <span style={{ color: '#e8a030', fontSize: 10 }}>▶</span>
+                  </div>
+                  <span style={HDR_LABEL}>GAME STREAM</span>
+                </div>
+                <div className="flex items-center gap-1.5 px-2 py-0.5 rounded"
+                  style={{ background: 'rgba(239,68,68,0.2)', border: '1px solid #991b1b' }}>
+                  <div className="w-1.5 h-1.5 rounded-full bg-red-400" style={{ boxShadow: '0 0 4px #f87171' }} />
+                  <span style={{
+                    color: '#f87171', fontSize: 9, fontWeight: 700,
+                    fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.1em'
+                  }}>LIVE</span>
+                </div>
+              </div>
+
+              {/* Stream Image Banner */}
+              <div className="relative shrink-0 overflow-hidden" style={{ height: 120, background: '#050d1b' }}>
+                <img src={streamImg} alt={streamTitle} className="absolute inset-0 w-full h-full object-cover" />
+                <div className="absolute inset-0"
+                  style={{ background: 'linear-gradient(to top, rgba(5,13,27,0.97) 0%, rgba(5,13,27,0.3) 55%, transparent 100%)' }} />
+                <div className="absolute bottom-0 left-0 right-0 p-3">
+                  <div className="text-white uppercase tracking-wide"
+                    style={{ fontSize: 13, fontWeight: 700, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em' }}>
+                    {streamTitle}
+                  </div>
+                  {streamLocation && (
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      <MapPin size={10} color="#94a3b8" />
+                      <span style={{ fontSize: 10, color: '#94a3b8' }}>{streamLocation}</span>
+                    </div>
+                  )}
+                  {streamEffects.length > 0 && (
+                    <div className="flex items-center gap-4 mt-2 flex-wrap">
+                      {streamEffects.map((effect, i) => (
+                        <span key={i} className="flex items-center gap-1"
+                          style={{
+                            fontSize: 10, fontWeight: 700, color: effect.color,
+                            fontFamily: "'Share Tech Mono', monospace"
+                          }}>
+                          <span style={{ fontSize: 8 }}>{effect.up ? '▲' : '▼'}</span>
+                          {effect.label}
+                        </span>
+                      ))}
+                      <button className="ml-auto flex items-center justify-center rounded transition-all"
+                        style={{
+                          width: 20, height: 20, background: 'rgba(255,255,255,0.1)',
+                          border: '1px solid rgba(255,255,255,0.2)', cursor: 'pointer'
+                        }}>
+                        <Info size={11} color="#94a3b8" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Turn History */}
+              <div className="flex-1 overflow-y-auto min-h-0">
+                {turnHistory.length === 0 && (
+                  <div style={{ fontSize: 11, color: '#6b9cc9', textAlign: 'center', padding: '16px' }}>
+                    No turns yet. Draft a policy to begin.
+                  </div>
+                )}
+                {turnHistory.map((entry, i) => (
+                  <TurnPhaseCard
+                    key={entry.turn}
+                    entry={entry}
+                    ministers={gameState.ministers}
+                    onToggle={() => setTurnHistory(prev =>
+                      prev.map((e, j) => j === i ? { ...e, expanded: !e.expanded } : e)
+                    )}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Active Crises */}
           <div className="shrink-0" style={PANEL}>
             <div className="flex items-center justify-between px-3 py-2" style={{ borderBottom: '1px solid #1c3652' }}>
@@ -3389,7 +3039,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
             </div>
             <div className="p-2 space-y-1.5">
               {allCrises.length === 0 && (
-                <div style={{ fontSize: 11, color: '#334155', textAlign: 'center', padding: '8px 0' }}>No active crises</div>
+                <div style={{ fontSize: 11, color: '#6b9cc9', textAlign: 'center', padding: '8px 0' }}>No active crises</div>
               )}
               {allCrises.slice(0, 3).map((crisis) => {
                 const sv = severityLabel(crisis.severity)
@@ -3417,10 +3067,102 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
               })}
             </div>
           </div>
+
+          {/* Next Turn Intelligence Brief */}
+          {turnForecast && (
+            <div className="shrink-0" style={{
+              ...PANEL,
+              border: '1px solid rgba(56,189,248,0.2)',
+              background: 'linear-gradient(180deg, rgba(11,25,41,0.98) 0%, rgba(9,20,34,0.98) 100%)',
+            }}>
+              <div className="flex items-center gap-2 px-3 py-2" style={{ borderBottom: '1px solid rgba(56,189,248,0.12)' }}>
+                <span style={{ fontSize: 12 }}>📡</span>
+                <span style={{ ...HDR_LABEL, color: '#38bdf8' }}>INTELLIGENCE BRIEF</span>
+              </div>
+              <div className="p-2 space-y-1">
+                {turnForecast.hotspots.map((h, i) => (
+                  <div key={`h${i}`} className="flex items-start gap-2" style={{ padding: '3px 4px' }}>
+                    <span style={{ fontSize: 10, flexShrink: 0 }}>⚠</span>
+                    <span style={{ fontSize: 10, color: '#fca5a5', lineHeight: 1.4 }}>{h}</span>
+                  </div>
+                ))}
+                {turnForecast.opportunities.map((o, i) => (
+                  <div key={`o${i}`} className="flex items-start gap-2" style={{ padding: '3px 4px' }}>
+                    <span style={{ fontSize: 10, flexShrink: 0 }}>💡</span>
+                    <span style={{ fontSize: 10, color: '#86efac', lineHeight: 1.4 }}>{o}</span>
+                  </div>
+                ))}
+                {turnForecast.pressure_note.map((p, i) => (
+                  <div key={`p${i}`} className="flex items-start gap-2" style={{ padding: '3px 4px' }}>
+                    <span style={{ fontSize: 10, flexShrink: 0 }}>🗳</span>
+                    <span style={{ fontSize: 10, color: '#94a3b8', lineHeight: 1.4 }}>{p}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ── CENTER: Welfare + Game Stream ──────────────────────────────── */}
         <div className="flex-1 flex flex-col gap-2 min-w-0">
+
+          {/* Election Countdown Banner */}
+          {(() => {
+            const turnsToElection = gameState.election_turn - gameState.current_turn
+            if (turnsToElection > 2 || gameState.phase !== 'pre_election') return null
+            const electionApproval = approval
+            const approvalColor = electionApproval >= 55 ? '#4ade80' : electionApproval >= 45 ? '#f59e0b' : '#f87171'
+            const label = turnsToElection <= 0 ? 'ELECTION THIS TURN' : turnsToElection === 1 ? 'ELECTION NEXT TURN' : 'ELECTION IN 2 TURNS'
+            const borderColor = turnsToElection <= 0 ? '#f87171' : turnsToElection === 1 ? '#f59e0b' : '#e8a030'
+            const bgColor = turnsToElection <= 0 ? 'rgba(248,113,113,0.08)' : 'rgba(232,160,48,0.06)'
+            return (
+              <div className="shrink-0" style={{
+                background: bgColor,
+                border: `1px solid ${borderColor}55`,
+                borderRadius: 8, padding: '8px 12px',
+                boxShadow: `0 0 12px ${borderColor}20`,
+              }}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span style={{ fontSize: 16 }}>🗳</span>
+                    <span style={{
+                      fontSize: 11, fontWeight: 800, fontFamily: "'Rajdhani', sans-serif",
+                      letterSpacing: '0.1em', color: borderColor, textTransform: 'uppercase',
+                    }}>{label}</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span style={{ fontSize: 10, color: '#94a3b8', fontFamily: "'Share Tech Mono', monospace" }}>
+                      Approval: <span style={{ color: approvalColor, fontWeight: 700 }}>{electionApproval.toFixed(1)}%</span>
+                    </span>
+                    <span style={{
+                      fontSize: 9, padding: '2px 8px', borderRadius: 4,
+                      background: electionApproval >= 50 ? 'rgba(74,222,128,0.1)' : 'rgba(248,113,113,0.1)',
+                      border: `1px solid ${electionApproval >= 50 ? '#14532d' : '#7f1d1d'}`,
+                      color: electionApproval >= 50 ? '#4ade80' : '#f87171',
+                      fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, letterSpacing: '0.08em',
+                    }}>
+                      {electionApproval >= 50 ? 'ON TRACK TO WIN' : 'AT RISK — BELOW 50%'}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex gap-4 mt-1.5">
+                  {[
+                    { label: 'Health',  v: Math.round(wf.health) },
+                    { label: 'Wealth',  v: Math.round(wf.wealth) },
+                    { label: 'Safety',  v: Math.round(wf.safety) },
+                    { label: 'Society', v: Math.round(wf.social) },
+                  ].map(({ label: lbl, v }) => {
+                    const c = v > 60 ? '#4ade80' : v > 40 ? '#f59e0b' : '#f87171'
+                    return (
+                      <span key={lbl} style={{ fontSize: 9, color: '#94a3b8', fontFamily: "'Share Tech Mono', monospace" }}>
+                        {lbl}: <span style={{ color: c, fontWeight: 700 }}>{v}</span>
+                      </span>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          })()}
 
           {/* Welfare Indicators */}
           <div style={PANEL} className="shrink-0">
@@ -3439,8 +3181,32 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                 {showAllParams ? 'Hide' : 'View All Parameters'} {showAllParams ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
               </button>
             </div>
-            <div className="p-3 flex gap-3">
-              {welfareStats.map(stat => <WelfareCard key={stat.label} stat={stat} />)}
+            <div className="px-3 py-2 flex gap-2">
+              {welfareStats.map(stat => {
+                const scoreColor = stat.score >= 65 ? '#4ade80' : stat.score >= 40 ? '#f59e0b' : '#f87171'
+                const deltaColor = stat.delta > 0 ? '#4ade80' : stat.delta < 0 ? '#f87171' : '#64748b'
+                return (
+                  <div key={stat.label} style={{
+                    flex: 1, padding: '6px 10px', borderRadius: 6,
+                    background: 'rgba(255,255,255,0.025)', border: `1px solid ${stat.color}22`,
+                    display: 'flex', alignItems: 'center', gap: 8, minWidth: 0,
+                  }}>
+                    <span style={{
+                      fontSize: 9, fontWeight: 700, color: '#64748b',
+                      fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.1em', textTransform: 'uppercase',
+                    }} className="truncate">{stat.icon} {stat.label}</span>
+                    <span style={{
+                      fontSize: 18, fontWeight: 700, lineHeight: 1, marginLeft: 'auto',
+                      fontFamily: "'Share Tech Mono', monospace", color: scoreColor,
+                    }}>{Math.round(stat.score)}</span>
+                    {stat.delta !== 0 && (
+                      <span style={{ fontSize: 9, fontWeight: 700, color: deltaColor, fontFamily: "'Share Tech Mono', monospace" }}>
+                        {stat.delta > 0 ? `▲+${Math.round(stat.delta)}` : `▼${Math.round(stat.delta)}`}
+                      </span>
+                    )}
+                  </div>
+                )
+              })}
             </div>
             {/* All Parameters Grid */}
             {showAllParams && (() => {
@@ -3469,18 +3235,36 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                           const val = (cp as unknown as Record<string, number>)[key] ?? 0
                           const delta = paramDeltas[key] ?? 0
                           const roundDelta = Math.round(delta)
+                          // Compute total deferred delta for this param across all pending turns
+                          const deferredTotal = Object.values(pendingDeltas).reduce((sum, turnDeltas) => sum + (turnDeltas[key] ?? 0), 0)
+                          const roundDeferred = Math.round(deferredTotal * 10) / 10
                           return (
-                            <div key={key} className="flex items-center gap-2 mb-1" style={{ height: 18 }}>
-                              <span style={{ fontSize: 9, color: '#94a3b8', width: 90, flexShrink: 0 }} className="truncate">{label}</span>
-                              <MiniBar value={val} color={barColor(val)} width={50} />
-                              <span style={{ fontSize: 9, ...MONO('#fff'), width: 20, textAlign: 'right' }}>{Math.round(val)}</span>
-                              {roundDelta !== 0 && (
-                                <span style={{
-                                  fontSize: 8, fontFamily: "'Share Tech Mono', monospace",
-                                  color: roundDelta > 0 ? '#4ade80' : '#f87171'
-                                }}>
-                                  {roundDelta > 0 ? `▲+${roundDelta}` : `▼${roundDelta}`}
-                                </span>
+                            <div key={key} className="mb-1">
+                              <div className="flex items-center gap-2" style={{ height: 18 }}>
+                                <span style={{ fontSize: 9, color: '#94a3b8', width: 90, flexShrink: 0 }} className="truncate">{label}</span>
+                                <MiniBar value={val} color={barColor(val)} width={50} />
+                                <span style={{ fontSize: 9, ...MONO('#fff'), width: 20, textAlign: 'right' }}>{Math.round(val)}</span>
+                                {roundDelta !== 0 && (
+                                  <span style={{
+                                    fontSize: 8, fontFamily: "'Share Tech Mono', monospace",
+                                    color: roundDelta > 0 ? '#4ade80' : '#f87171'
+                                  }}>
+                                    {roundDelta > 0 ? `▲+${roundDelta}` : `▼${roundDelta}`}
+                                  </span>
+                                )}
+                              </div>
+                              {roundDeferred !== 0 && (
+                                <div style={{ paddingLeft: 92, marginTop: -1 }}>
+                                  <span style={{
+                                    fontSize: 7, fontFamily: "'Share Tech Mono', monospace",
+                                    color: roundDeferred > 0 ? '#67e8f9' : '#fda4af',
+                                    background: roundDeferred > 0 ? 'rgba(103,232,249,0.08)' : 'rgba(253,164,175,0.08)',
+                                    border: `1px solid ${roundDeferred > 0 ? 'rgba(103,232,249,0.2)' : 'rgba(253,164,175,0.2)'}`,
+                                    borderRadius: 3, padding: '0px 4px', letterSpacing: '0.03em',
+                                  }}>
+                                    {roundDeferred > 0 ? `+${roundDeferred}` : `${roundDeferred}`} deferred
+                                  </span>
+                                </div>
                               )}
                             </div>
                           )
@@ -3493,107 +3277,84 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
             })()}
           </div>
 
-          {/* Game Stream */}
+          {/* Living City Map */}
           <div style={PANEL} className="flex-1 flex flex-col overflow-hidden min-h-0">
             <div className="flex items-center justify-between px-3 py-2 shrink-0" style={{ borderBottom: '1px solid #1c3652' }}>
               <div className="flex items-center gap-2">
-                <div className="w-5 h-5 rounded flex items-center justify-center"
-                  style={{ background: 'rgba(232,160,48,0.15)', border: '1px solid #92400e' }}>
-                  <span style={{ color: '#e8a030', fontSize: 10 }}>▶</span>
-                </div>
-                <span style={HDR_LABEL}>GAME STREAM</span>
+                <span style={{ fontSize: 12 }}>🏙</span>
+                <span style={HDR_LABEL}>{gameState.city_name.toUpperCase()} — LIVE CITY VIEW</span>
               </div>
-              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded"
-                style={{ background: 'rgba(239,68,68,0.2)', border: '1px solid #991b1b' }}>
-                <div className="w-1.5 h-1.5 rounded-full bg-red-400" style={{ boxShadow: '0 0 4px #f87171' }} />
-                <span style={{
-                  color: '#f87171', fontSize: 9, fontWeight: 700,
-                  fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.1em'
-                }}>LIVE</span>
-              </div>
-            </div>
-
-            {/* Stream Image Banner */}
-            <div className="relative shrink-0 overflow-hidden" style={{ height: 185, background: '#050d1b' }}>
-              <img src={streamImg} alt={streamTitle} className="absolute inset-0 w-full h-full object-cover" />
-              <div className="absolute inset-0"
-                style={{ background: 'linear-gradient(to top, rgba(5,13,27,0.97) 0%, rgba(5,13,27,0.3) 55%, transparent 100%)' }} />
-              {turnError && !turnOverlayOpen && (
-                <div style={{
-                  position: 'absolute', top: 8, left: 8, right: 8,
-                  background: 'rgba(248,113,113,0.12)', border: '1px solid #7f1d1d',
-                  borderRadius: 5, padding: '5px 8px', display: 'flex', gap: 8, alignItems: 'center',
-                }}>
-                  <span style={{ color: '#f87171', fontSize: 10, flex: 1 }}>⚠ {turnError}</span>
-                  <button
-                    onClick={() => setTurnError(null)}
-                    style={{
-                      fontSize: 9, color: '#94a3b8', background: 'rgba(255,255,255,0.06)',
-                      border: '1px solid #1c3652', borderRadius: 4, padding: '2px 7px', cursor: 'pointer',
-                    }}
-                  >
-                    Dismiss
-                  </button>
-                </div>
-              )}
-              <div className="absolute bottom-0 left-0 right-0 p-3">
-                <div className="text-white uppercase tracking-wide"
-                  style={{ fontSize: 15, fontWeight: 700, fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.08em' }}>
-                  {streamTitle}
-                </div>
-                {streamLocation && (
-                  <div className="flex items-center gap-1.5 mt-0.5">
-                    <MapPin size={10} color="#94a3b8" />
-                    <span style={{ fontSize: 10, color: '#94a3b8' }}>{streamLocation}</span>
-                  </div>
-                )}
-                {streamEffects.length > 0 && (
-                  <div className="flex items-center gap-4 mt-2 flex-wrap">
-                    {streamEffects.map((effect, i) => (
-                      <span key={i} className="flex items-center gap-1"
-                        style={{
-                          fontSize: 10, fontWeight: 700, color: effect.color,
-                          fontFamily: "'Share Tech Mono', monospace"
-                        }}>
-                        <span style={{ fontSize: 8 }}>{effect.up ? '▲' : '▼'}</span>
-                        {effect.label}
-                      </span>
-                    ))}
-                    <button className="ml-auto flex items-center justify-center rounded transition-all"
+              <div className="flex items-center gap-2">
+                {turnError && !turnOverlayOpen && (
+                  <div style={{
+                    display: 'flex', gap: 8, alignItems: 'center',
+                    background: 'rgba(248,113,113,0.12)', border: '1px solid #7f1d1d',
+                    borderRadius: 5, padding: '3px 8px', maxWidth: 420,
+                  }}>
+                    <span style={{ color: '#f87171', fontSize: 10 }} className="truncate">⚠ {turnError}</span>
+                    <button
+                      onClick={() => setTurnError(null)}
                       style={{
-                        width: 20, height: 20, background: 'rgba(255,255,255,0.1)',
-                        border: '1px solid rgba(255,255,255,0.2)', cursor: 'pointer'
-                      }}>
-                      <Info size={11} color="#94a3b8" />
+                        fontSize: 9, color: '#94a3b8', background: 'rgba(255,255,255,0.06)',
+                        border: '1px solid #1c3652', borderRadius: 4, padding: '1px 6px', cursor: 'pointer',
+                      }}
+                    >
+                      Dismiss
                     </button>
                   </div>
                 )}
+                {(() => {
+                  const crises = (gameState.active_events ?? []).filter(e => e.type === 'crisis').length
+                  const opps = (gameState.active_events ?? []).filter(e => e.type === 'opportunity').length
+                  return (
+                    <div className="flex items-center gap-1.5">
+                      {crises > 0 && (
+                        <span style={{
+                          fontSize: 9, fontWeight: 700, color: '#f87171', fontFamily: "'Rajdhani', sans-serif",
+                          letterSpacing: '0.08em', background: 'rgba(248,113,113,0.1)',
+                          border: '1px solid rgba(248,113,113,0.3)', borderRadius: 4, padding: '2px 7px',
+                        }}>⚠ {crises} CRISIS{crises > 1 ? 'ES' : ''}</span>
+                      )}
+                      {opps > 0 && (
+                        <span style={{
+                          fontSize: 9, fontWeight: 700, color: '#4ade80', fontFamily: "'Rajdhani', sans-serif",
+                          letterSpacing: '0.08em', background: 'rgba(34,197,94,0.1)',
+                          border: '1px solid rgba(34,197,94,0.3)', borderRadius: 4, padding: '2px 7px',
+                        }}>✦ {opps} OPPORTUNIT{opps > 1 ? 'IES' : 'Y'}</span>
+                      )}
+                    </div>
+                  )
+                })()}
               </div>
             </div>
-
-            {/* Turn History */}
-            <div className="flex-1 overflow-y-auto min-h-0">
-              {turnHistory.length === 0 && (
-                <div style={{ fontSize: 11, color: '#334155', textAlign: 'center', padding: '16px' }}>
-                  No turns yet. Draft a policy to begin.
-                </div>
+            <div className="flex-1 min-h-0 relative" style={{ padding: 6 }}>
+              <ApprovalMeter baseApproval={approval} />
+              <CityMap
+                cityName={gameState.city_name}
+                wardReport={gameState.ward_report ?? []}
+                activeEvents={gameState.active_events ?? []}
+                avgWellbeing={gameState.avg_wellbeing}
+                approval={approval}
+                hoveredDistrict={hoveredDistrict}
+                onHoverDistrict={setHoveredDistrict}
+                overlay={(mapLayout) => (
+                  gameState.citizens && gameState.citizens.length > 0
+                    ? <CitizenCrowd citizens={gameState.citizens} layout={mapLayout} />
+                    : null
+                )}
+              />
+              {gameState.citizens && gameState.citizens.length > 0 && (
+                <SpeechBubbleLayer citizens={gameState.citizens} layout={mapLayoutForBubbles} />
               )}
-              {turnHistory.map((entry, i) => (
-                <TurnPhaseCard
-                  key={entry.turn}
-                  entry={entry}
-                  ministers={gameState.ministers}
-                  onToggle={() => setTurnHistory(prev =>
-                    prev.map((e, j) => j === i ? { ...e, expanded: !e.expanded } : e)
-                  )}
-                />
-              ))}
             </div>
           </div>
         </div>
 
         {/* ── RIGHT: Identity + Media + City Chatter ──────────────────────── */}
         <div className="w-[340px] flex flex-col gap-2 shrink-0 overflow-hidden min-h-0">
+
+          {/* Trend sparklines (needs ≥2 turns) */}
+          <HistoryCharts turns={historyTurns} />
 
           {/* Identity Groups */}
           <div style={{ ...PANEL, maxHeight: 380 }} className="shrink-0 overflow-hidden flex flex-col">
@@ -3647,13 +3408,16 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                     return wr ? { turn: te.turn, wb: wr.avg_wellbeing, appr: wr.approval ?? 50, pulse: wr.pulse_summary || '' } : null
                   }).filter(Boolean) as { turn: number; wb: number; appr: number; pulse: string }[] : []
 
+                  const isMapHovered = entry.group_type === 'location' && hoveredDistrict === entry.group_name
                   return (
                     <div key={i}
                       onClick={() => setExpandedGroup(isExpanded ? null : groupKey)}
+                      onMouseEnter={() => { if (entry.group_type === 'location') setHoveredDistrict(entry.group_name) }}
+                      onMouseLeave={() => { if (entry.group_type === 'location') setHoveredDistrict(null) }}
                       style={{
-                        background: isExpanded ? 'rgba(30,41,59,0.7)' : 'rgba(15,23,42,0.4)',
+                        background: isExpanded ? 'rgba(30,41,59,0.7)' : isMapHovered ? 'rgba(30,41,59,0.55)' : 'rgba(15,23,42,0.4)',
                         borderRadius: 8, padding: '10px 14px', cursor: 'pointer',
-                        border: `1px solid ${entry.hotspot ? 'rgba(248,113,113,0.3)' : entry.bright_spot ? 'rgba(168,85,247,0.3)' : 'rgba(51,65,85,0.5)'}`,
+                        border: `1px solid ${isMapHovered ? 'rgba(125,211,252,0.5)' : entry.hotspot ? 'rgba(248,113,113,0.3)' : entry.bright_spot ? 'rgba(168,85,247,0.3)' : 'rgba(51,65,85,0.5)'}`,
                         boxShadow: isExpanded ? '0 4px 12px rgba(0,0,0,0.2)' : 'none',
                         transition: 'all 0.2s ease',
                       }}>
@@ -3661,7 +3425,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                         <span className="flex-1 truncate" style={{ fontSize: 11, fontWeight: 600, color: '#cbd5e1' }}>{entry.group_name}</span>
                         <span style={{ fontSize: 14, fontWeight: 800, fontFamily: "'Share Tech Mono', monospace", color: scoreColor }}>{Math.round(wb)}</span>
-                        <span style={{ fontSize: 8, color: '#4b6280', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.05em', fontWeight: 600 }}>WB</span>
+                        <span style={{ fontSize: 8, color: '#7ba8d1', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.05em', fontWeight: 600 }}>WB</span>
                         <span style={{ fontSize: 13, fontWeight: 700, color: trendColor, width: 14, textAlign: 'center' }}>{trendIcon}</span>
                       </div>
                       {/* Row 2: wellbeing bar */}
@@ -3681,7 +3445,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                         <span style={{ marginLeft: 'auto', fontFamily: "'Share Tech Mono', monospace", fontWeight: 800, color: apprColor, letterSpacing: '0.05em' }}>
                           {Math.round(appr)}%
                         </span>
-                        <span style={{ color: '#4b6280', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.05em', fontWeight: 700, fontSize: 9 }}>APPR</span>
+                        <span style={{ color: '#7ba8d1', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.05em', fontWeight: 700, fontSize: 9 }}>APPR</span>
                       </div>
                       {/* Expanded: per-turn history */}
                       {isExpanded && (
@@ -3700,7 +3464,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                                   }}>TURN {h.turn}</span>
                                   <span style={{ color: '#64748b', fontFamily: "'Rajdhani', sans-serif", fontWeight: 600, fontSize: 9 }}>WB</span>
                                   <span style={{ fontFamily: "'Share Tech Mono', monospace", color: twbColor, fontWeight: 700 }}>{Math.round(h.wb)}</span>
-                                  <span style={{ color: '#334155' }}>│</span>
+                                  <span style={{ color: '#6b9cc9' }}>│</span>
                                   <span style={{ color: '#64748b', fontFamily: "'Rajdhani', sans-serif", fontWeight: 600, fontSize: 9 }}>APPR</span>
                                   <span style={{ fontFamily: "'Share Tech Mono', monospace", color: taColor, fontWeight: 700 }}>{Math.round(h.appr)}%</span>
                                 </div>
@@ -3718,7 +3482,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                   )
                 })}
               {wardReport.filter(e => e.group_type === identityFilter).length === 0 && (
-                <div style={{ fontSize: 11, color: '#334155', textAlign: 'center', paddingTop: 16 }}>No data yet — run a turn to see group welfare</div>
+                <div style={{ fontSize: 11, color: '#6b9cc9', textAlign: 'center', paddingTop: 16 }}>No data yet — run a turn to see group welfare</div>
               )}
             </div>
           </div>
@@ -3732,7 +3496,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
               </div>
               <div className="flex items-center gap-2">
                 <TrendingUp size={10} color="#22c55e" />
-                <span style={{ fontSize: 9, fontFamily: "'Rajdhani', sans-serif", color: '#4b6280' }}>Campaign Rate</span>
+                <span style={{ fontSize: 9, fontFamily: "'Rajdhani', sans-serif", color: '#7ba8d1' }}>Campaign Rate</span>
               </div>
             </div>
             <div ref={mediaScrollRef} className="p-2 overflow-y-auto flex-1 min-h-0"
@@ -3741,7 +3505,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
               onMouseLeave={() => { mediaHoveredRef.current = false }}
             >
               {allHeadlines.length === 0 && (
-                <div style={{ fontSize: 11, color: '#334155', textAlign: 'center', padding: '8px 0' }}>
+                <div style={{ fontSize: 11, color: '#6b9cc9', textAlign: 'center', padding: '8px 0' }}>
                   {briefingLoading ? 'Loading city briefing...' : 'No headlines yet'}
                 </div>
               )}
@@ -3768,7 +3532,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                           <div className="flex items-center gap-1.5">
                             <span style={{ fontSize: 10, fontWeight: 700, color: col }}>{item.outlet}</span>
                             <span style={{
-                              fontSize: 8, fontWeight: 700, color: '#4b6280',
+                              fontSize: 8, fontWeight: 700, color: '#7ba8d1',
                               background: '#0b1929', border: '1px solid #1c3652',
                               borderRadius: 3, padding: '0 3px', fontFamily: "'Rajdhani', sans-serif"
                             }}>T{item.turnNum}</span>
@@ -3794,7 +3558,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
               </div>
               <div className="flex items-center gap-2">
                 <TrendingDown size={10} color="#f87171" />
-                <span style={{ fontSize: 9, fontFamily: "'Rajdhani', sans-serif", color: '#4b6280' }}>Sentiment</span>
+                <span style={{ fontSize: 9, fontFamily: "'Rajdhani', sans-serif", color: '#7ba8d1' }}>Sentiment</span>
               </div>
             </div>
             <div ref={chatterScrollRef} className="p-2 overflow-y-auto flex-1 min-h-0"
@@ -3803,7 +3567,7 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
               onMouseLeave={() => { chatterHoveredRef.current = false }}
             >
               {allVoices.length === 0 && (
-                <div style={{ fontSize: 11, color: '#334155', textAlign: 'center', padding: '8px 0' }}>
+                <div style={{ fontSize: 11, color: '#6b9cc9', textAlign: 'center', padding: '8px 0' }}>
                   {briefingLoading ? 'Loading city briefing...' : 'No citizen voices yet'}
                 </div>
               )}
@@ -3825,14 +3589,14 @@ export default function GameDashboard({ gameId, initialState }: { gameId: string
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-1" style={{ marginBottom: 2 }}>
                             <span style={{ fontSize: 9, fontWeight: 700, color: '#94a3b8' }}>{v.name.split(' ')[0]}</span>
-                            <span style={{ fontSize: 8, color: '#334155' }}>· {v.demographics_summary.split(',')[0]}</span>
-                            {(v as any).turnNum != null && (
+                            <span style={{ fontSize: 8, color: '#6b9cc9' }}>· {v.demographics_summary.split(',')[0]}</span>
+                            {v.turnNum != null && (
                               <span style={{
-                                fontSize: 7, fontWeight: 700, color: '#f59e0b',
+                                fontSize: 9, fontWeight: 700, color: '#f59e0b',
                                 background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.25)',
                                 borderRadius: 3, padding: '0 3px',
                                 fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.06em',
-                              }}>T{(v as any).turnNum}</span>
+                              }}>T{v.turnNum}</span>
                             )}
                           </div>
                           {/* Speech bubble */}

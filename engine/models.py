@@ -6,6 +6,7 @@ to avoid circular deps — import from models instead.
 from __future__ import annotations
 
 import uuid
+from enum import Enum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -93,12 +94,20 @@ class BudgetConfig(BaseModel):
     interest_rate: float
 
 
+class ChallengeMode(str, Enum):
+    standard    = "standard"
+    reformist   = "reformist"    # lower treasury, higher media scrutiny; reform archetype bonuses
+    populist    = "populist"     # starts with high approval but highly volatile
+    fiscal_hawk = "fiscal_hawk"  # strict budget cap; deficit triggers immediate loyalty penalty
+
+
 class GameConfig(BaseModel):
     total_turns: int = 20
     election_turn: int = 12
     agent_count: int = 50
     minister_count: int = 5
     legacy_equilibrium_multiplier: float = 2.0
+    challenge_mode: ChallengeMode = ChallengeMode.standard
 
 
 class CityParameters(BaseModel):
@@ -216,6 +225,7 @@ class MinisterState(BaseModel):
     loyalty: float = 65.0           # 0–100
     scandal_exposure: float = 0.0   # 0–100; accumulates, may break
     political_capital: float = 50.0 # 0–100; high = hard to fire
+    fatigue: float = 0.0            # 0–100; repeated assignments reduce delivery quality
 
 
 class Minister(BaseModel):
@@ -257,6 +267,7 @@ class Policy(BaseModel):
     why_now: str
     consultation_link: str = ""
     advisor_stances: list[AdvisorStance] = []
+    archetype: Literal["stabilize", "growth", "crackdown", "reform", "relief"] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -277,6 +288,44 @@ class MinorAction(BaseModel):
     type: MinorActionType
     target: str | None = None  # param key / group name / minister id depending on type
     budget: float = 0.0
+
+
+# ---------------------------------------------------------------------------
+# Power Moves (spend Political Capital for one-time effects)
+# ---------------------------------------------------------------------------
+
+PowerMoveType = Literal[
+    "media_blitz",             # Double mayor-lean media amplification
+    "crisis_intervention",     # Reduce crisis duration by 1, block escalation
+    "opposition_discredit",    # Reduce opposition credibility −15
+    "rally_the_base",          # +8 alignment push for lowest-wellbeing quartile
+    "fast_track",              # Collapse all pending future deltas to this turn
+    "none",
+]
+
+
+class PowerMove(BaseModel):
+    type: PowerMoveType = "none"
+    target_event_id: str | None = None  # for crisis_intervention
+
+
+# ---------------------------------------------------------------------------
+# Event Responses (player reaction to triggered events)
+# ---------------------------------------------------------------------------
+
+EventResponseStrategy = Literal[
+    "mobilize",          # Spend treasury to halve crisis effects
+    "assign_minister",   # Assign minister to crisis (reduces duration/severity, adds fatigue)
+    "invest",            # Spend treasury to double opportunity effects
+    "leverage_pr",       # Spend PC for alignment push
+    "none",
+]
+
+
+class EventResponse(BaseModel):
+    event_id: str
+    strategy: EventResponseStrategy = "none"
+    minister_id: str | None = None  # for assign_minister
 
 
 # ---------------------------------------------------------------------------
@@ -372,12 +421,18 @@ class TurnResult(BaseModel):
     citizen_voices: list[CitizenVoice]
     opposition_attack: str
     counter_frame: str
+    assigned_minister_id: str = ""
+    assigned_minister_name: str = ""
     approval_before: float = 0.0
     interim_approval: float
     ward_report: list[WardReportEntry]
     events_triggered: list[ActiveEvent]
     communal_tension_after: float
-    minister_loyalty_changes: dict[str, float]  # citizen_id → delta
+    minister_loyalty_changes: dict[str, float] = Field(default_factory=dict)  # citizen_id → delta
+    minister_scandal_changes: dict[str, float] = Field(default_factory=dict)  # citizen_id → delta
+    minister_political_capital_changes: dict[str, float] = Field(default_factory=dict)  # citizen_id → delta
+    minister_fatigue_changes: dict[str, float] = Field(default_factory=dict)  # citizen_id → delta
+    minister_consequences: list[str] = Field(default_factory=list)
     treasury_after: float
     outstanding_debt_after: float
     interest_paid: float
@@ -419,6 +474,12 @@ class GameState(BaseModel):
     # press_conference cooldown per group: group_name → turn_last_used
     press_conference_cooldowns: dict[str, int] = Field(default_factory=dict)
     prng_seed: int = 0
+    # Governance ideology track: accumulates from mid-execution dilemma choices
+    ideology_track: dict[str, int] = Field(
+        default_factory=lambda: {"pragmatist": 0, "populist": 0, "institutionalist": 0, "strongman": 0}
+    )
+    # Mayor-level political capital (spendable on Power Moves)
+    political_capital: float = 15.0
 
 
 # ---------------------------------------------------------------------------

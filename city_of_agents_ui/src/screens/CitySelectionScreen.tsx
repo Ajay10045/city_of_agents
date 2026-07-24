@@ -12,7 +12,7 @@ const PRESET_CITIES = [
     id: 'delhi',
     name: 'New Delhi',
     image: 'https://images.unsplash.com/photo-1587474260584-136574528ed5?q=80&w=800&auto=format&fit=crop',
-    popStr: '33.8M',
+
     budgetStr: '$9.2B',
     issues: [{ label: 'Traffic Congestion', color: 'bg-amber-500' }, { label: 'Pollution', color: 'bg-red-500' }, { label: 'Income Gap', color: 'bg-blue-500' }],
     hint: 'New Delhi, India — a massive capital with extreme wealth disparity, deep administrative complexity, and severe pollution issues.'
@@ -21,7 +21,7 @@ const PRESET_CITIES = [
     id: 'dubai',
     name: 'Dubai',
     image: 'https://images.unsplash.com/photo-1512453979798-5ea266f8880c?q=80&w=800&auto=format&fit=crop',
-    popStr: '3.6M',
+
     budgetStr: '$21.5B',
     issues: [{ label: 'Cost of Living', color: 'bg-amber-500' }, { label: 'Labor Rights', color: 'bg-red-500' }],
     hint: 'Dubai, UAE — an ultra-modern desert metropolis known for luxury commerce, rapid development, and a massive expatriate workforce.'
@@ -30,7 +30,7 @@ const PRESET_CITIES = [
     id: 'london',
     name: 'London',
     image: 'https://images.unsplash.com/photo-1505761671935-60b3a7427bad?q=80&w=800&auto=format&fit=crop',
-    popStr: '9.0M',
+
     budgetStr: '$25.0B',
     issues: [{ label: 'Housing Costs', color: 'bg-red-500' }, { label: 'Transit Delays', color: 'bg-amber-500' }, { label: 'Economic Pressure', color: 'bg-blue-500' }],
     hint: 'London, UK — a historic global financial hub balancing immense cultural heritage with intense modern infrastructure and housing pressures.'
@@ -39,7 +39,7 @@ const PRESET_CITIES = [
     id: 'new_york',
     name: 'New York',
     image: 'https://images.unsplash.com/photo-1496442226666-8d4d0e62e6e9?q=80&w=800&auto=format&fit=crop',
-    popStr: '8.3M',
+
     budgetStr: '$107.0B',
     issues: [{ label: 'Inequality', color: 'bg-red-500' }, { label: 'Aging Infrastructure', color: 'bg-amber-500' }],
     hint: 'New York City, USA — a dense, iconic metropolis driven by commerce and culture, facing extreme housing costs and aging transit.'
@@ -48,7 +48,7 @@ const PRESET_CITIES = [
     id: 'san_francisco',
     name: 'San Francisco',
     image: 'https://images.unsplash.com/photo-1501594907352-04cda38ebc29?q=80&w=800&auto=format&fit=crop',
-    popStr: '0.8M',
+
     budgetStr: '$14.6B',
     issues: [{ label: 'Homelessness', color: 'bg-red-500' }, { label: 'Affordability', color: 'bg-red-500' }],
     hint: 'San Francisco, USA — a major tech and innovation center struggling with a severe housing affordability crisis and stark visible inequality.'
@@ -61,9 +61,17 @@ export default function CitySelectionScreen({ onGameCreated }: Props) {
   const [turnsToElection, setTurnsToElection] = useState(5)
   const [populationStr, setPopulationStr] = useState("10")
 
+  const [challengeMode, setChallengeMode] = useState<'standard' | 'reformist' | 'populist' | 'fiscal_hawk'>('standard')
   const [isStarting, setIsStarting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showHowToPlay, setShowHowToPlay] = useState(false)
+
+  const CHALLENGE_MODES: { id: 'standard' | 'reformist' | 'populist' | 'fiscal_hawk'; label: string; desc: string; color: string }[] = [
+    { id: 'standard',    label: 'STANDARD',     desc: 'Balanced gameplay',                     color: '#64748b' },
+    { id: 'reformist',   label: 'REFORMIST',    desc: 'Tight budget, reform pressure',          color: '#818cf8' },
+    { id: 'populist',    label: 'POPULIST',     desc: 'High start approval, volatile',          color: '#fb923c' },
+    { id: 'fiscal_hawk', label: 'FISCAL HAWK',  desc: 'Strict budget cap, loyalty at stake',    color: '#f87171' },
+  ]
 
   async function handleStartGame() {
     if (!selectedCityId) return
@@ -76,16 +84,19 @@ export default function CitySelectionScreen({ onGameCreated }: Props) {
     try {
       // 1. Generate profile from hint
       const profile = await generateProfile(city.hint)
-
-      // Override game config based on sliders
-      if (profile.game_config) {
-        profile.game_config.total_turns = turnsToElection
-        profile.game_config.election_turn = Math.max(3, turnsToElection - 1)
+      const mutableProfile = profile as Record<string, unknown> & {
+        game_config?: { total_turns?: number; election_turn?: number }
       }
 
-      // 2. Start game
-      const result = await newGame(profile)
-      onGameCreated(result.game_id, result.state, profile)
+      // Override game config based on sliders
+      if (mutableProfile.game_config) {
+        mutableProfile.game_config.total_turns = turnsToElection
+        mutableProfile.game_config.election_turn = Math.max(3, turnsToElection - 1)
+      }
+
+      // 2. Start game with selected challenge mode
+      const result = await newGame(mutableProfile, undefined, challengeMode)
+      onGameCreated(result.game_id, result.state, mutableProfile)
 
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e))
@@ -166,16 +177,21 @@ export default function CitySelectionScreen({ onGameCreated }: Props) {
 
                     {/* Bottom: Stats & Issues */}
                     <div className="space-y-3">
-                      {/* Stats row */}
-                      <div className="flex items-center gap-4 text-xs font-medium">
-                        <div className="flex items-center gap-1.5 text-white/90 drop-shadow-sm">
-                          <Users className="w-3.5 h-3.5 text-blue-400" />
-                          <span title="Population">{city.popStr}</span>
-                        </div>
+                      {/* Budget row with challenge mode modifier */}
+                      <div className="flex items-center gap-2 text-xs font-medium">
                         <div className="flex items-center gap-1.5 text-white/90 drop-shadow-sm">
                           <Banknote className="w-3.5 h-3.5 text-emerald-400" />
                           <span title="Annual Budget">{city.budgetStr}</span>
                         </div>
+                        {challengeMode === 'reformist' && (
+                          <span className="text-[10px] font-bold text-red-400 bg-red-500/15 px-1.5 py-0.5 rounded drop-shadow-sm">−30%</span>
+                        )}
+                        {challengeMode === 'fiscal_hawk' && (
+                          <span className="text-[10px] font-bold text-red-400 bg-red-500/15 px-1.5 py-0.5 rounded drop-shadow-sm">−20%</span>
+                        )}
+                        {challengeMode === 'populist' && (
+                          <span className="text-[10px] font-bold text-amber-400 bg-amber-500/15 px-1.5 py-0.5 rounded drop-shadow-sm">volatile</span>
+                        )}
                       </div>
 
                       {/* Issues */}
@@ -213,63 +229,92 @@ export default function CitySelectionScreen({ onGameCreated }: Props) {
         )}
 
         {/* Footer Controls */}
-        <div className="mt-auto p-6 px-8 flex items-center justify-between border-t border-[#2A2D3A]/50 bg-[#161822]/80 gap-8">
+        <div className="mt-auto border-t border-[#2A2D3A]/50 bg-[#161822]/80">
 
-          {/* Sliders */}
-          <div className="flex-1 flex items-center gap-12 bg-[#1C1F2B] border border-[#2A2D3A] rounded-xl px-6 py-4">
-            {/* Turns Slider */}
-            <div className="flex items-center gap-4 flex-1">
-              <span className="text-slate-400 text-sm whitespace-nowrap">Turns to Election:</span>
-              <div className="relative flex-1 flex items-center group">
-                <input
-                  type="range"
-                  min="5" max="10" step="1"
-                  value={turnsToElection}
-                  onChange={(e) => setTurnsToElection(parseInt(e.target.value))}
-                  className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-white hover:accent-amber-400 transition-all"
-                />
-              </div>
-              <div className="bg-[#2A2D3A] border border-[#3A3D4A] px-3 py-1 rounded text-sm text-white font-mono min-w-[3rem] text-center">
-                {turnsToElection}
-              </div>
-            </div>
-
-            {/* Population Slider */}
-            <div className="flex items-center gap-4 flex-1">
-              <span className="text-slate-400 text-sm whitespace-nowrap">Population (M):</span>
-              <div className="relative flex-1 flex items-center">
-                <input
-                  type="range"
-                  min="1" max="50" step="1"
-                  value={populationStr}
-                  onChange={(e) => setPopulationStr(e.target.value)}
-                  className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-white hover:accent-amber-400 transition-all"
-                />
-              </div>
-              <div className="bg-[#2A2D3A] border border-[#3A3D4A] px-3 py-1 rounded text-sm text-white font-mono min-w-[3rem] text-center">
-                {populationStr}
-              </div>
+          {/* Challenge Mode Row */}
+          <div className="px-8 pt-4 pb-2">
+            <span className="text-slate-500 text-xs font-bold tracking-widest uppercase mr-4">Challenge Mode:</span>
+            <div className="inline-flex gap-2 flex-wrap">
+              {CHALLENGE_MODES.map(m => {
+                const isActive = challengeMode === m.id
+                return (
+                  <button
+                    key={m.id}
+                    onClick={() => setChallengeMode(m.id)}
+                    title={m.desc}
+                    className="px-3 py-1 rounded-lg text-xs font-bold tracking-wider transition-all"
+                    style={{
+                      border: `1px solid ${isActive ? m.color : '#2A2D3A'}`,
+                      background: isActive ? `${m.color}22` : 'transparent',
+                      color: isActive ? m.color : '#64748b',
+                    }}
+                  >
+                    {m.label}
+                  </button>
+                )
+              })}
+              <span className="text-slate-600 text-xs self-center ml-2">
+                — {CHALLENGE_MODES.find(m => m.id === challengeMode)?.desc}
+              </span>
             </div>
           </div>
 
-          {/* Start Button */}
-          <button
-            onClick={handleStartGame}
-            disabled={!selectedCityId || isStarting}
-            className={`
-              shrink-0 flex items-center gap-3 px-10 py-4 rounded-xl font-bold text-lg transition-all
-              ${(!selectedCityId || isStarting)
-                ? 'bg-[#2A2D3A] text-slate-500 cursor-not-allowed'
-                : 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_20px_rgba(217,119,6,0.4)] hover:shadow-[0_0_30px_rgba(245,158,11,0.6)] hover:-translate-y-0.5'}
-            `}
-          >
-            {isStarting ? (
-              <><Loader2 className="w-5 h-5 animate-spin" /> GENERATING...</>
-            ) : (
-              <><Play className="w-5 h-5 fill-current" /> START GAME</>
-            )}
-          </button>
+          <div className="p-4 px-8 flex items-center justify-between gap-8">
+            {/* Sliders */}
+            <div className="flex-1 flex items-center gap-12 bg-[#1C1F2B] border border-[#2A2D3A] rounded-xl px-6 py-4">
+              {/* Turns Slider */}
+              <div className="flex items-center gap-4 flex-1">
+                <span className="text-slate-400 text-sm whitespace-nowrap">Turns to Election:</span>
+                <div className="relative flex-1 flex items-center group">
+                  <input
+                    type="range"
+                    min="5" max="10" step="1"
+                    value={turnsToElection}
+                    onChange={(e) => setTurnsToElection(parseInt(e.target.value))}
+                    className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-white hover:accent-amber-400 transition-all"
+                  />
+                </div>
+                <div className="bg-[#2A2D3A] border border-[#3A3D4A] px-3 py-1 rounded text-sm text-white font-mono min-w-[3rem] text-center">
+                  {turnsToElection}
+                </div>
+              </div>
 
+              {/* Population Slider */}
+              <div className="flex items-center gap-4 flex-1">
+                <span className="text-slate-400 text-sm whitespace-nowrap">Population (M):</span>
+                <div className="relative flex-1 flex items-center">
+                  <input
+                    type="range"
+                    min="1" max="50" step="1"
+                    value={populationStr}
+                    onChange={(e) => setPopulationStr(e.target.value)}
+                    className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-white hover:accent-amber-400 transition-all"
+                  />
+                </div>
+                <div className="bg-[#2A2D3A] border border-[#3A3D4A] px-3 py-1 rounded text-sm text-white font-mono min-w-[3rem] text-center">
+                  {populationStr}
+                </div>
+              </div>
+            </div>
+
+            {/* Start Button */}
+            <button
+              onClick={handleStartGame}
+              disabled={!selectedCityId || isStarting}
+              className={`
+                shrink-0 flex items-center gap-3 px-10 py-4 rounded-xl font-bold text-lg transition-all
+                ${(!selectedCityId || isStarting)
+                  ? 'bg-[#2A2D3A] text-slate-500 cursor-not-allowed'
+                  : 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_20px_rgba(217,119,6,0.4)] hover:shadow-[0_0_30px_rgba(245,158,11,0.6)] hover:-translate-y-0.5'}
+              `}
+            >
+              {isStarting ? (
+                <><Loader2 className="w-5 h-5 animate-spin" /> GENERATING...</>
+              ) : (
+                <><Play className="w-5 h-5 fill-current" /> START GAME</>
+              )}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -288,9 +333,9 @@ export default function CitySelectionScreen({ onGameCreated }: Props) {
               style={{ background: 'linear-gradient(135deg, #1C1F2B 0%, #1a1d2e 100%)' }}
             >
               <div>
-                <p className="text-amber-500 text-xs font-bold tracking-widest uppercase mb-1">Field Manual</p>
+                <p className="text-amber-500 text-sm font-bold tracking-widest uppercase mb-1">Field Manual</p>
                 <h2 className="text-2xl font-extrabold text-white tracking-tight">HOW TO PLAY</h2>
-                <p className="text-slate-400 text-sm mt-0.5">Master the art of city governance</p>
+                <p className="text-slate-400 text-base mt-0.5">Master the art of city governance</p>
               </div>
               <button
                 onClick={() => setShowHowToPlay(false)}
@@ -304,7 +349,7 @@ export default function CitySelectionScreen({ onGameCreated }: Props) {
             <div className="flex-1 overflow-y-auto px-8 py-6 space-y-6 custom-scrollbar">
 
               {/* The Premise */}
-              <p className="text-slate-300 leading-relaxed text-sm">
+              <p className="text-slate-300 leading-relaxed text-base">
                 You are the <span className="text-amber-400 font-semibold">Mayor</span> of a living, breathing city powered by AI.
                 Every decision you make ripples through the economy, public services, and the lives of real citizens.
                 Lead well — and earn re-election. Lead poorly — and face the consequences.
@@ -320,8 +365,8 @@ export default function CitySelectionScreen({ onGameCreated }: Props) {
                       color: 'text-blue-400',
                       border: 'border-blue-500/25',
                       bg: 'bg-blue-500/5',
-                      title: 'SELECT YOUR CITY',
-                      body: 'Pick one of five real-world cities — each with its own population, budget, and starting crises. A bigger budget might seem safe, but higher stakes mean fiercer political opposition.',
+                      title: 'SELECT YOUR CITY & CHALLENGE MODE',
+                      body: 'Pick from real-world cities — each with its own population, budget, and starting crises. Then choose a challenge mode: Standard for a balanced game, Reformist for a leaner budget with more scrutiny, Populist for volatile high-approval starts, or Fiscal Hawk for strict treasury discipline.',
                     },
                     {
                       num: '02',
@@ -330,7 +375,7 @@ export default function CitySelectionScreen({ onGameCreated }: Props) {
                       border: 'border-amber-500/25',
                       bg: 'bg-amber-500/5',
                       title: 'MORNING BRIEFING',
-                      body: "Each turn opens with a cinematic briefing. Your ministers report on the city's key metrics, media headlines, and citizen sentiment. Pay close attention — this is your intelligence.",
+                      body: "Each turn opens with a live cinematic briefing. Your ministers stream their reports on key metrics, active crises, media headlines, and citizen sentiment. At the end, the Intelligence Brief highlights hotspots to watch and opportunities on the horizon.",
                     },
                     {
                       num: '03',
@@ -339,7 +384,7 @@ export default function CitySelectionScreen({ onGameCreated }: Props) {
                       border: 'border-violet-500/25',
                       bg: 'bg-violet-500/5',
                       title: 'CHOOSE A POLICY',
-                      body: 'Your AI council drafts three policy options tailored to the current situation. Each has trade-offs — a housing subsidy might boost approval but strain the budget. Choose wisely.',
+                      body: 'Your AI council drafts five policy options across different archetypes — Invest, Reform, Crackdown, Populist, and Compromise. Each card shows primary effects, side effects in orange, and trade-off notes. Some effects land immediately; others are deferred and shown as "+N deferred" chips on the metrics panel.',
                     },
                     {
                       num: '04',
@@ -347,8 +392,8 @@ export default function CitySelectionScreen({ onGameCreated }: Props) {
                       color: 'text-emerald-400',
                       border: 'border-emerald-500/25',
                       bg: 'bg-emerald-500/5',
-                      title: 'ADVISOR DEBATE',
-                      body: 'Before you decide, your ministers weigh in. Each represents a different portfolio and perspective. Some will support your instincts. Others will push back hard. Their concerns matter.',
+                      title: 'ADVISOR DEBATE & MINISTER ASSIGNMENT',
+                      body: "Your ministers vote on each policy — watch for the consensus badge: HIGH CONSENSUS means broad support, SPLIT CABINET means divided opinion, CABINET RESISTANCE means most oppose it. You also pick which minister executes the policy. Overworked ministers accumulate fatigue (shown as a bar) that reduces execution quality — rotate them wisely.",
                     },
                     {
                       num: '05',
@@ -357,7 +402,7 @@ export default function CitySelectionScreen({ onGameCreated }: Props) {
                       border: 'border-cyan-500/25',
                       bg: 'bg-cyan-500/5',
                       title: 'WATCH THE CITY REACT',
-                      body: 'After each policy, city metrics shift and citizens respond with real reactions — in their own language, from their own perspective. Your approval rating is the pulse of your leadership.',
+                      body: 'After each policy, city metrics shift and citizens respond in their own words. The turn log shows an Outcome Drivers breakdown — which minister quality, side effects, and active events most influenced the result. Check the ALL PARAMETERS panel for deferred delta chips showing effects queued for future turns.',
                     },
                     {
                       num: '06',
@@ -365,8 +410,8 @@ export default function CitySelectionScreen({ onGameCreated }: Props) {
                       color: 'text-rose-400',
                       border: 'border-rose-500/25',
                       bg: 'bg-rose-500/5',
-                      title: 'FACE THE ELECTION',
-                      body: 'When the final turn arrives, citizens vote. Did you balance growth with equality? Fix the crises or ignore them? Your governance scorecard determines whether you win — or get voted out.',
+                      title: 'ELECTION RAMP & FINAL VOTE',
+                      body: 'Two turns before the election, an Election Countdown banner appears showing your approval and composite welfare scores. Crisis events escalate and the Election Season Scrutiny event kicks in. When the final turn arrives, citizens vote based on your full governance record — your scorecard determines whether you win or get voted out.',
                     },
                   ] as { num: string; icon: ReactNode; color: string; border: string; bg: string; title: string; body: string }[]
                 ).map((step) => (
@@ -376,43 +421,73 @@ export default function CitySelectionScreen({ onGameCreated }: Props) {
                     </div>
                     <div className="space-y-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-bold tracking-widest text-slate-600">{step.num}</span>
-                        <h3 className={`text-xs font-bold tracking-wider ${step.color}`}>{step.title}</h3>
+                        <span className="text-xs font-bold tracking-widest text-slate-600">{step.num}</span>
+                        <h3 className={`text-sm font-bold tracking-wider ${step.color}`}>{step.title}</h3>
                       </div>
-                      <p className="text-slate-300 text-sm leading-relaxed">{step.body}</p>
+                      <p className="text-slate-300 text-base leading-relaxed">{step.body}</p>
                     </div>
                   </div>
                 ))}
               </div>
 
-              {/* Pro tip */}
-              <div className="p-4 rounded-xl bg-amber-500/8 border border-amber-500/20">
-                <p className="text-amber-400 text-xs font-bold tracking-widest uppercase mb-2">💡 Pro Tip</p>
-                <p className="text-slate-300 text-sm leading-relaxed">
-                  No policy is universally popular — improving one metric often strains another.
-                  The best mayors find balance and keep their advisors aligned.
-                  Watch your <span className="text-amber-400 font-semibold">approval rating</span> closely: it's both your report card and your political survival.
-                </p>
+              {/* Pro tips */}
+              <div className="space-y-3">
+                <div className="p-4 rounded-xl bg-amber-500/8 border border-amber-500/20">
+                  <p className="text-amber-400 text-sm font-bold tracking-widest uppercase mb-2">💡 Minister Fatigue</p>
+                  <p className="text-slate-300 text-sm leading-relaxed">
+                    Every turn a minister executes a policy, their fatigue rises. High fatigue (shown in amber/red on the minister card) directly reduces execution quality — the city gets less of what you intended. Spread the workload and let fatigued ministers recover.
+                  </p>
+                </div>
+                <div className="p-4 rounded-xl bg-violet-500/8 border border-violet-500/20">
+                  <p className="text-violet-400 text-sm font-bold tracking-widest uppercase mb-2">📡 Intelligence Brief</p>
+                  <p className="text-slate-300 text-sm leading-relaxed">
+                    After each turn completes, the Intelligence Brief card appears in the left panel. It flags metrics trending toward crisis thresholds, upcoming opportunities, and election pressure notes. Use it to plan your next policy before the next briefing begins.
+                  </p>
+                </div>
+                <div className="p-4 rounded-xl bg-cyan-500/8 border border-cyan-500/20">
+                  <p className="text-cyan-400 text-sm font-bold tracking-widest uppercase mb-2">⏱ Deferred Effects</p>
+                  <p className="text-slate-300 text-sm leading-relaxed">
+                    Some policies have time-profiled effects — a portion lands this turn, the rest arrives in future turns. Look for <span className="text-cyan-300 font-mono text-xs">+N deferred</span> chips beneath the progress bars in the ALL PARAMETERS panel to track what's coming.
+                  </p>
+                </div>
               </div>
 
-              {/* Metrics cheat sheet */}
+              {/* Welfare composites */}
               <div>
-                <p className="text-slate-500 text-xs font-bold tracking-widest uppercase mb-3">City Metrics at a Glance</p>
+                <p className="text-slate-400 text-sm font-bold tracking-widest uppercase mb-3">Welfare Indicators Explained</p>
                 <div className="grid grid-cols-2 gap-2">
                   {[
-                    { label: 'Economy', desc: 'Tax revenue, employment, business health', color: 'text-yellow-400', dot: 'bg-yellow-400' },
-                    { label: 'Housing', desc: 'Affordability and availability of homes', color: 'text-blue-400', dot: 'bg-blue-400' },
-                    { label: 'Public Safety', desc: 'Crime rate and emergency response', color: 'text-red-400', dot: 'bg-red-400' },
-                    { label: 'Environment', desc: 'Air quality, green spaces, sustainability', color: 'text-emerald-400', dot: 'bg-emerald-400' },
-                    { label: 'Education', desc: 'School quality and youth outcomes', color: 'text-violet-400', dot: 'bg-violet-400' },
-                    { label: 'Healthcare', desc: 'Hospital access and public health', color: 'text-cyan-400', dot: 'bg-cyan-400' },
+                    { label: 'HEALTH',  desc: 'Avg of Hospitals & Air Quality',      color: 'text-rose-400',    dot: 'bg-rose-400' },
+                    { label: 'WEALTH',  desc: 'Avg of Economy & Affordable Housing',  color: 'text-yellow-400',  dot: 'bg-yellow-400' },
+                    { label: 'SAFETY',  desc: 'Avg of Police & Courts',               color: 'text-red-400',     dot: 'bg-red-400' },
+                    { label: 'SOCIETY', desc: 'Avg of Community & Education',         color: 'text-violet-400',  dot: 'bg-violet-400' },
+                    { label: 'INFRA',   desc: 'Avg of Transit & Water/Power',         color: 'text-cyan-400',    dot: 'bg-cyan-400' },
+                    { label: 'GOVN',    desc: 'Avg of Admin Efficiency & Media',      color: 'text-emerald-400', dot: 'bg-emerald-400' },
                   ].map(m => (
                     <div key={m.label} className="flex items-start gap-2.5 p-2.5 rounded-lg bg-[#161822] border border-[#2A2D3A]">
                       <div className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${m.dot}`} />
                       <div>
-                        <p className={`text-xs font-semibold ${m.color}`}>{m.label}</p>
-                        <p className="text-slate-500 text-xs">{m.desc}</p>
+                        <p className={`text-xs font-bold tracking-widest ${m.color}`}>{m.label}</p>
+                        <p className="text-slate-400 text-sm">{m.desc}</p>
                       </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Challenge modes cheat sheet */}
+              <div>
+                <p className="text-slate-400 text-sm font-bold tracking-widest uppercase mb-3">Challenge Modes</p>
+                <div className="space-y-2">
+                  {[
+                    { label: 'STANDARD',    color: 'text-slate-400',  desc: 'Balanced starting conditions. Recommended for first-time mayors.' },
+                    { label: 'REFORMIST',   color: 'text-blue-400',   desc: 'Treasury reduced by 30%, higher media freedom. Reform archetype policies score a bonus multiplier.' },
+                    { label: 'POPULIST',    color: 'text-amber-400',  desc: 'Start with boosted citizen alignment but lower admin efficiency. Approval is volatile — it moves fast in both directions.' },
+                    { label: 'FISCAL HAWK', color: 'text-rose-400',   desc: 'Treasury capped at 80% of standard. Running a deficit triggers immediate minister loyalty penalties.' },
+                  ].map(m => (
+                    <div key={m.label} className="flex items-start gap-3 p-3 rounded-lg bg-[#161822] border border-[#2A2D3A]">
+                      <p className={`text-xs font-bold tracking-widest shrink-0 w-24 pt-0.5 ${m.color}`}>{m.label}</p>
+                      <p className="text-slate-400 text-sm leading-relaxed">{m.desc}</p>
                     </div>
                   ))}
                 </div>
@@ -424,7 +499,7 @@ export default function CitySelectionScreen({ onGameCreated }: Props) {
             <div className="px-8 py-5 border-t border-[#2A2D3A]/60 bg-[#161822]/80 flex justify-end shrink-0">
               <button
                 onClick={() => setShowHowToPlay(false)}
-                className="px-8 py-3 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded-xl transition-all shadow-[0_0_20px_rgba(217,119,6,0.3)] hover:shadow-[0_0_30px_rgba(245,158,11,0.5)] hover:-translate-y-0.5 text-sm tracking-wide"
+                className="px-8 py-3 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded-xl transition-all shadow-[0_0_20px_rgba(217,119,6,0.3)] hover:shadow-[0_0_30px_rgba(245,158,11,0.5)] hover:-translate-y-0.5 text-base tracking-wide"
               >
                 LET'S GOVERN →
               </button>

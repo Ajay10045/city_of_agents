@@ -48,19 +48,88 @@ THRESHOLD_TRIGGERS: list[dict] = [
 ]
 
 # Stochastic event pool
+# city_types: list of geographic keyword substrings to match against city_profile.geographic_character
+# (case-insensitive). Use ["all"] to match every city.
 STOCHASTIC_CRISES = [
-    {"name": "Monsoon Flooding", "severity": 2, "effects": {"transit_and_roads": -3.0, "hospitals_and_clinics": -2.0}, "portfolio": "Infrastructure"},
-    {"name": "Factory Fire", "severity": 1, "effects": {"air_quality_and_pollution": -4.0, "jobs_and_commerce": -2.0}, "portfolio": "Environment"},
-    {"name": "Teachers Strike", "severity": 1, "effects": {"schools_and_universities": -3.0}, "portfolio": "Health & Education"},
-    {"name": "Water Main Collapse", "severity": 2, "effects": {"water_power_sanitation": -5.0, "hospitals_and_clinics": -2.0}, "portfolio": "Infrastructure"},
-    {"name": "Power Grid Failure", "severity": 2, "effects": {"water_power_sanitation": -3.0, "jobs_and_commerce": -2.0}, "portfolio": "Infrastructure"},
+    {"name": "Monsoon Flooding",    "severity": 2, "effects": {"transit_and_roads": -3.0, "hospitals_and_clinics": -2.0},                                  "portfolio": "Infrastructure",     "city_types": ["coastal", "monsoon", "tropical", "delta", "river", "peninsula"]},
+    {"name": "Factory Fire",        "severity": 1, "effects": {"air_quality_and_pollution": -4.0, "jobs_and_commerce": -2.0},                              "portfolio": "Environment",        "city_types": ["all"]},
+    {"name": "Teachers Strike",     "severity": 1, "effects": {"schools_and_universities": -3.0},                                                          "portfolio": "Health & Education", "city_types": ["all"]},
+    {"name": "Water Main Collapse", "severity": 2, "effects": {"water_power_sanitation": -5.0, "hospitals_and_clinics": -2.0},                            "portfolio": "Infrastructure",     "city_types": ["all"]},
+    {"name": "Power Grid Failure",  "severity": 2, "effects": {"water_power_sanitation": -3.0, "jobs_and_commerce": -2.0},                                "portfolio": "Infrastructure",     "city_types": ["all"]},
+    {"name": "Heat Wave",           "severity": 2, "effects": {"hospitals_and_clinics": -3.0, "water_power_sanitation": -2.0},                            "portfolio": "Health & Education", "city_types": ["arid", "desert", "continental", "landlocked"]},
+    {"name": "Storm Surge Flooding","severity": 3, "effects": {"transit_and_roads": -4.0, "affordable_housing": -3.0},                                    "portfolio": "Infrastructure",     "city_types": ["coastal", "archipelago", "peninsula", "harbor", "bay", "gulf"]},
+    {"name": "Earthquake Damage",   "severity": 3, "effects": {"transit_and_roads": -3.0, "water_power_sanitation": -3.0, "hospitals_and_clinics": -2.0}, "portfolio": "Infrastructure",     "city_types": ["seismic", "highland", "mountain", "hillside", "volcanic", "peninsula"]},
+    {"name": "Tech Layoffs Wave",   "severity": 1, "effects": {"jobs_and_commerce": -4.0, "affordable_housing": -2.0},                                    "portfolio": "Finance & Economy",  "city_types": ["tech", "silicon", "startup", "innovation", "financial"]},
+    {"name": "Port Strike",         "severity": 2, "effects": {"jobs_and_commerce": -3.0, "transit_and_roads": -2.0},                                     "portfolio": "Finance & Economy",  "city_types": ["coastal", "harbor", "port", "archipelago", "bay", "gulf"]},
+    {"name": "Dust Storm",          "severity": 1, "effects": {"air_quality_and_pollution": -5.0, "community_and_spaces": -2.0},                          "portfolio": "Environment",        "city_types": ["desert", "arid", "plain", "landlocked"]},
+    {"name": "River Bank Erosion",  "severity": 2, "effects": {"affordable_housing": -3.0, "transit_and_roads": -2.0},                                    "portfolio": "Infrastructure",     "city_types": ["river", "delta", "basin", "floodplain"]},
 ]
 
 STOCHASTIC_OPPORTUNITIES = [
-    {"name": "International Tourism Surge", "effects": {"jobs_and_commerce": 3.0, "community_and_spaces": 2.0}, "portfolio": "Finance & Economy"},
-    {"name": "NGO Housing Grant", "effects": {"affordable_housing": 4.0}, "portfolio": "Housing & Community"},
-    {"name": "Federal Infrastructure Fund", "effects": {"transit_and_roads": 3.0, "water_power_sanitation": 2.0}, "portfolio": "Infrastructure"},
+    {"name": "International Tourism Surge",   "effects": {"jobs_and_commerce": 3.0, "community_and_spaces": 2.0},      "portfolio": "Finance & Economy",   "city_types": ["all"]},
+    {"name": "NGO Housing Grant",             "effects": {"affordable_housing": 4.0},                                  "portfolio": "Housing & Community", "city_types": ["all"]},
+    {"name": "Federal Infrastructure Fund",  "effects": {"transit_and_roads": 3.0, "water_power_sanitation": 2.0},   "portfolio": "Infrastructure",      "city_types": ["all"]},
+    {"name": "Maritime Trade Boom",           "effects": {"jobs_and_commerce": 4.0, "transit_and_roads": 2.0},        "portfolio": "Finance & Economy",   "city_types": ["coastal", "harbor", "port", "archipelago", "bay", "gulf", "peninsula"]},
+    {"name": "Tech Investment Influx",        "effects": {"jobs_and_commerce": 5.0, "schools_and_universities": 2.0}, "portfolio": "Finance & Economy",   "city_types": ["tech", "silicon", "startup", "innovation", "financial", "coastal"]},
+    {"name": "Ecotourism Recognition",        "effects": {"community_and_spaces": 3.0, "jobs_and_commerce": 2.0},    "portfolio": "Finance & Economy",   "city_types": ["highland", "mountain", "forest", "coastal", "tropical", "river"]},
+    {"name": "Regional Agricultural Surplus", "effects": {"jobs_and_commerce": 3.0, "affordable_housing": 1.0},      "portfolio": "Finance & Economy",   "city_types": ["plain", "delta", "basin", "landlocked", "river", "agricultural"]},
 ]
+
+
+def _matches_geography(city_types: list[str], geographic_character: str) -> bool:
+    """Return True if geographic_character contains any keyword from city_types (case-insensitive)."""
+    if "all" in city_types:
+        return True
+    gc_lower = geographic_character.lower()
+    return any(kw in gc_lower for kw in city_types)
+
+# Election-season pressure event (one-time, triggers when election is 2 turns away)
+ELECTION_PRESSURE_EVENT_NAME = "Election Season Scrutiny"
+_ELECTION_PRESSURE_SPEC = {
+    "name": ELECTION_PRESSURE_EVENT_NAME,
+    "type": "crisis",
+    "severity": 1,
+    "effects": {"media_freedom": -1.0, "admin_efficiency": -1.0},
+    "portfolio": "Governance Reform",
+}
+
+
+def maybe_trigger_election_pressure(
+    existing_event_names: set[str],
+    turns_to_election: int,
+) -> list[ActiveEvent]:
+    """Trigger the Election Season Scrutiny event once when turns_to_election <= 2."""
+    import uuid
+    if turns_to_election > 2:
+        return []
+    if ELECTION_PRESSURE_EVENT_NAME in existing_event_names:
+        return []
+    spec = _ELECTION_PRESSURE_SPEC
+    ev = ActiveEvent(
+        id=str(uuid.uuid4())[:8],
+        name=spec["name"],
+        type=spec["type"],  # type: ignore[arg-type]
+        severity=spec["severity"],
+        turns_remaining=3,
+        escalation_chance=0.0,  # does not escalate — steady background pressure
+        city_effects_per_turn=spec["effects"],
+        portfolio=spec["portfolio"],
+    )
+    _log("bad", f"  ELECTION PRESSURE triggered: \"{spec['name']}\"  (turns_to_election={turns_to_election})")
+    return [ev]
+
+
+def apply_election_escalation_multiplier(
+    events: list[ActiveEvent],
+    turns_to_election: int,
+) -> None:
+    """During the election window (turns_to_election <= 2), boost crisis severity in-place.
+    We raise the escalation_chance of active crises by 0.15 to simulate heightened scrutiny."""
+    if turns_to_election > 2:
+        return
+    for ev in events:
+        if ev.type == "crisis" and ev.name != ELECTION_PRESSURE_EVENT_NAME:
+            ev.escalation_chance = min(1.0, ev.escalation_chance + 0.15)
 
 
 def check_threshold_events(
@@ -94,9 +163,23 @@ def check_stochastic_events(
     params: CityParameters,
     active_count: int,
     rng: random.Random,
+    geographic_character: str = "",
 ) -> list[ActiveEvent]:
-    """Section 12.2 — stochastic events."""
+    """Section 12.2 — stochastic events, filtered by city geography."""
     import uuid
+
+    # Filter pools to those that match the city's geographic character
+    crisis_pool = [s for s in STOCHASTIC_CRISES if _matches_geography(s["city_types"], geographic_character)]
+    opp_pool    = [s for s in STOCHASTIC_OPPORTUNITIES if _matches_geography(s["city_types"], geographic_character)]
+    # Always ensure at least the "all" events remain (fallback safety)
+    if not crisis_pool:
+        crisis_pool = [s for s in STOCHASTIC_CRISES if "all" in s["city_types"]]
+    if not opp_pool:
+        opp_pool = [s for s in STOCHASTIC_OPPORTUNITIES if "all" in s["city_types"]]
+
+    _log("info", f"  Geography pool: {len(crisis_pool)} crises, {len(opp_pool)} opps "
+                 f"matching \"{geographic_character[:40]}\"")
+
     avg = sum([
         params.jobs_and_commerce, params.transit_and_roads,
         params.water_power_sanitation, params.hospitals_and_clinics,
@@ -114,7 +197,7 @@ def check_stochastic_events(
 
     crisis_roll = rng.random()
     if crisis_roll < crisis_chance:
-        spec = rng.choice(STOCHASTIC_CRISES)
+        spec = rng.choice(crisis_pool)
         duration = rng.randint(2, 4)
         new_events.append(ActiveEvent(
             id=str(uuid.uuid4())[:8],
@@ -132,7 +215,7 @@ def check_stochastic_events(
 
     opp_roll = rng.random()
     if opp_roll < opp_chance:
-        spec = rng.choice(STOCHASTIC_OPPORTUNITIES)
+        spec = rng.choice(opp_pool)
         new_events.append(ActiveEvent(
             id=str(uuid.uuid4())[:8],
             name=spec["name"],

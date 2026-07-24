@@ -44,6 +44,7 @@ export interface Minister extends Citizen {
   loyalty: number
   scandal_exposure: number
   political_capital: number
+  fatigue: number
 }
 
 export interface ActiveEvent {
@@ -139,10 +140,42 @@ export interface WardReportEntry {
   pulse_summary: string
 }
 
+export type MinorActionType =
+  | 'maintenance'
+  | 'banking'
+  | 'reshuffle'
+  | 'press_conference'
+  | 'emergency_fund'
+  | 'governance_upkeep'
+
+export interface MinorActionInput {
+  type: MinorActionType
+  target?: string
+  budget: number
+}
+
+export type CounterFrameStrategy =
+  | 'Delivery Receipts'
+  | 'Empathy + Relief'
+  | 'Accountability Pivot'
+  | 'Attack the Attacker'
+  | 'Populist Counter'
+
+export interface TurnChoiceSnapshot {
+  turn: number
+  policyIndex: number
+  policyName: string
+  ministerId: string
+  ministerName: string
+  minorAction: MinorActionInput
+  counterFrame: CounterFrameStrategy
+  chosenAtIso: string
+}
+
 export interface TurnResult {
   turn: number
   major_policy: Policy
-  minor_action: { type: string; target?: string; budget: number }
+  minor_action: MinorActionInput
   execution_score: number
   actual_deltas: Record<string, number>
   side_effect_deltas: Record<string, number>
@@ -155,13 +188,19 @@ export interface TurnResult {
   media_headlines: MediaHeadline[]
   citizen_voices: CitizenVoice[]
   opposition_attack: string
-  counter_frame: string
+  counter_frame: CounterFrameStrategy
+  assigned_minister_id?: string
+  assigned_minister_name?: string
   approval_before: number
   interim_approval: number
   ward_report: WardReportEntry[]
   events_triggered: ActiveEvent[]
   communal_tension_after: number
   minister_loyalty_changes: Record<string, number>
+  minister_fatigue_changes?: Record<string, number>
+  minister_scandal_changes?: Record<string, number>
+  minister_political_capital_changes?: Record<string, number>
+  minister_consequences?: string[]
   treasury_after: number
   outstanding_debt_after: number
   interest_paid: number
@@ -186,9 +225,17 @@ export interface GameState {
   media_outlets: MediaOutlet[]
   interim_approval: number
   avg_wellbeing: number
+  ideology_track: Record<string, number>
+  political_capital: number
   turn_history_count: number
   last_turn: TurnResult | null
   ward_report: WardReportEntry[]
+  citizens?: Citizen[]
+}
+
+export interface GameHistoryResponse {
+  game_id: string
+  turns: TurnResult[]
 }
 
 export interface GovernanceScorecard {
@@ -288,6 +335,12 @@ export interface TurnStreamNarrativeChunkEvent {
   value: string | MediaHeadline[] | Record<string, unknown>[]
 }
 
+export interface TurnForecast {
+  hotspots: string[]
+  opportunities: string[]
+  pressure_note: string[]
+}
+
 export interface TurnStreamCompleteEvent {
   type: 'complete'
   turn_result: TurnResult
@@ -295,6 +348,88 @@ export interface TurnStreamCompleteEvent {
   game_over: boolean
   loss_reason?: string
   scorecard?: GovernanceScorecard
+  forecast?: TurnForecast
+}
+
+export interface DilemmaOption {
+  label: string
+  description: string
+  effect_key: string
+  effect_delta: number
+  ideology_tag: string
+}
+
+export interface TurnStreamDilemmaEvent {
+  type: 'dilemma'
+  situation: string
+  option_a: DilemmaOption
+  option_b: DilemmaOption
+}
+
+export interface TurnStreamDilemmaResolvedEvent {
+  type: 'dilemma_resolved'
+  choice: string
+  label: string
+  effect_key: string
+  effect_delta: number
+  ideology_tag: string
+}
+
+export interface TurnStreamIdeologyUpdateEvent {
+  type: 'ideology_update'
+  track: Record<string, number>
+  passive_unlocked: string | null
+}
+
+export interface TurnStreamPowerMoveEvent {
+  type: 'power_move_applied'
+  move_type: string
+  pc_cost: number
+  effect_summary: string
+  political_capital_after: number
+}
+
+export interface TurnStreamPCEarnedEvent {
+  type: 'pc_earned'
+  amount: number
+  reasons: string[]
+  total: number
+}
+
+export type PowerMoveType =
+  | 'media_blitz'
+  | 'crisis_intervention'
+  | 'opposition_discredit'
+  | 'rally_the_base'
+  | 'fast_track'
+  | 'none'
+
+export interface EventResponseStrategy {
+  strategy: string
+  label: string
+  description: string
+  cost_treasury?: number
+  cost_pc?: number
+}
+
+export interface EventResponseOption {
+  event_id: string
+  event_name: string
+  event_type: string
+  strategies: EventResponseStrategy[]
+}
+
+export interface TurnStreamEventResponsePromptEvent {
+  type: 'event_response_prompt'
+  events: ActiveEvent[]
+  options: EventResponseOption[]
+}
+
+export interface TurnStreamEventResponseAppliedEvent {
+  type: 'event_response_applied'
+  event_id: string
+  strategy: string
+  effect: string
 }
 
 export interface TurnStreamErrorEvent {
@@ -307,11 +442,18 @@ export type TurnStreamV2Event =
   | TurnStreamAnnouncementVoicesEvent
   | TurnStreamAssignmentEvent
   | TurnStreamEvaluationEvent
+  | TurnStreamDilemmaEvent
+  | TurnStreamDilemmaResolvedEvent
+  | TurnStreamIdeologyUpdateEvent
   | TurnStreamWellbeingUpdateEvent
   | TurnStreamImplementationVoicesEvent
   | TurnStreamApprovalVoteEvent
   | TurnStreamApprovalFinalEvent
   | TurnStreamEventsEvent
   | TurnStreamNarrativeChunkEvent
+  | TurnStreamPowerMoveEvent
+  | TurnStreamPCEarnedEvent
+  | TurnStreamEventResponsePromptEvent
+  | TurnStreamEventResponseAppliedEvent
   | TurnStreamCompleteEvent
   | TurnStreamErrorEvent

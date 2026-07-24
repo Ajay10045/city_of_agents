@@ -409,7 +409,7 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
       }}>
         <Loader2 style={{ width: 36, height: 36, color: '#e8a030' }} className="animate-spin" />
         <div style={{
-          fontFamily: "'Rajdhani', sans-serif", fontSize: 13, color: '#4b6280',
+          fontFamily: "'Rajdhani', sans-serif", fontSize: 13, color: '#7ba8d1',
           letterSpacing: '0.2em'
         }}>SUMMONING CANDIDATES...</div>
       </div>
@@ -451,7 +451,7 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
               color: '#f0c040', letterSpacing: '0.06em', textTransform: 'uppercase'
             }}>City of {state.city_name}</div>
             <div style={{
-              fontSize: 10, color: '#4b6280', fontFamily: "'Share Tech Mono', monospace",
+              fontSize: 10, color: '#7ba8d1', fontFamily: "'Share Tech Mono', monospace",
               letterSpacing: '0.1em'
             }}>CABINET FORMATION · MAYORAL OFFICE</div>
           </div>
@@ -556,7 +556,7 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
             }}>
               <span style={{
                 fontFamily: "'Rajdhani', sans-serif", fontSize: 9, fontWeight: 700,
-                color: '#4b6280', letterSpacing: '0.2em', whiteSpace: 'nowrap', flexShrink: 0
+                color: '#7ba8d1', letterSpacing: '0.2em', whiteSpace: 'nowrap', flexShrink: 0
               }}>CABINET ·</span>
               {cabinet.map(m => {
                 const isOver = dragOverMinisterId === m.citizen.id
@@ -583,7 +583,7 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
                           const pInfo = PORTFOLIOS.find(p => p.id === pid)
                           return (
                             <span key={pid} style={{
-                              fontSize: 8, padding: '0 5px', borderRadius: 8, whiteSpace: 'nowrap',
+                              fontSize: 10, padding: '0 5px', borderRadius: 8, whiteSpace: 'nowrap',
                               background: pInfo?.bg ?? 'rgba(255,255,255,0.06)',
                               border: `1px solid ${pInfo?.border ?? '#1c3652'}`,
                               color: pInfo?.color ?? '#e8a030',
@@ -592,7 +592,7 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
                             }}
                               onClick={() => removePortfolioFromMinister(m.citizen.id, pid)}
                               title="Click to remove">
-                              {pInfo?.icon} {pid} <span style={{ opacity: 0.5, fontSize: 7 }}>✕</span>
+                              {pInfo?.icon} {pid} <span style={{ opacity: 0.5, fontSize: 9 }}>✕</span>
                             </span>
                           )
                         })}
@@ -601,7 +601,7 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
                     <button onClick={() => handleDismissFromCabinet(m.citizen.id)}
                       style={{
                         marginLeft: 2, background: 'none', border: 'none', cursor: 'pointer',
-                        color: '#475569', padding: 2, display: 'flex', flexShrink: 0
+                        color: '#7bb3d4', padding: 2, display: 'flex', flexShrink: 0
                       }}
                       onMouseEnter={e => (e.currentTarget.style.color = '#f87171')}
                       onMouseLeave={e => (e.currentTarget.style.color = '#475569')}>
@@ -618,7 +618,7 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
               <span style={{
                 fontFamily: "'Rajdhani', sans-serif", fontSize: 9, fontWeight: 700,
-                color: '#2a4a6a', letterSpacing: '0.15em', whiteSpace: 'nowrap', flexShrink: 0
+                color: '#6b9cc9', letterSpacing: '0.15em', whiteSpace: 'nowrap', flexShrink: 0
               }}>
                 UNASSIGNED ·
               </span>
@@ -641,7 +641,7 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
               ))}
               {cabinet.length > 0 && (
                 <span style={{
-                  fontSize: 9, color: '#2a4a6a', fontStyle: 'italic',
+                  fontSize: 9, color: '#6b9cc9', fontStyle: 'italic',
                   fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.05em'
                 }}>
                   drag onto a minister to assign
@@ -665,7 +665,7 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
           <div style={{ padding: '11px 14px 9px', borderBottom: '1px solid #1c3652', flexShrink: 0 }}>
             <div style={{
               fontFamily: "'Rajdhani', sans-serif", fontSize: 10, fontWeight: 700,
-              letterSpacing: '0.2em', color: '#4b6280'
+              letterSpacing: '0.2em', color: '#7ba8d1'
             }}>CANDIDATE PROFILE</div>
           </div>
 
@@ -676,7 +676,7 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
                 justifyContent: 'center', height: '100%', gap: 12, padding: 32, textAlign: 'center'
               }}>
                 <div style={{
-                  fontFamily: "'Rajdhani', sans-serif", fontSize: 12, color: '#1c3652',
+                  fontFamily: "'Rajdhani', sans-serif", fontSize: 12, color: '#5a8fc0',
                   letterSpacing: '0.12em', lineHeight: 1.8
                 }}>
                   SELECT A CANDIDATE<br />FROM BELOW TO REVIEW<br />THEIR PROFILE
@@ -699,7 +699,7 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
                     <div style={{ display: 'flex', gap: 4, marginTop: 4, flexWrap: 'wrap' }}>
                       {interviewee.demographics.ideology_economic && (
                         <span style={{
-                          fontSize: 8, padding: '1px 6px', borderRadius: 3,
+                          fontSize: 10, padding: '1px 6px', borderRadius: 3,
                           background: 'rgba(56,189,248,0.12)', border: '1px solid #0c4a6e',
                           color: '#7dd3fc', fontFamily: "'Rajdhani', sans-serif", fontWeight: 700,
                           textTransform: 'uppercase', letterSpacing: '0.05em'
@@ -709,7 +709,7 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
                       )}
                       {interviewee.demographics.ideology_social && (
                         <span style={{
-                          fontSize: 8, padding: '1px 6px', borderRadius: 3,
+                          fontSize: 10, padding: '1px 6px', borderRadius: 3,
                           background: 'rgba(167,139,250,0.12)', border: '1px solid #4c1d95',
                           color: '#c4b5fd', fontFamily: "'Rajdhani', sans-serif", fontWeight: 700,
                           textTransform: 'uppercase', letterSpacing: '0.05em'
@@ -776,7 +776,7 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
                         <span style={{
                           fontSize: 11, fontFamily: "'Share Tech Mono', monospace",
                           color: '#cbd5e1', fontWeight: 700
-                        }}>{meta.costOfService} <span style={{ fontSize: 8, color: '#4b6280' }}>CR</span></span>
+                        }}>{meta.costOfService} <span style={{ fontSize: 10, color: '#7ba8d1' }}>CR</span></span>
                       </div>
                     </div>
                   )}
@@ -801,7 +801,7 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
                 <div>
                   <div style={{
                     fontFamily: "'Rajdhani', sans-serif", fontSize: 10, fontWeight: 700,
-                    letterSpacing: '0.18em', color: '#4b6280', marginBottom: 7
+                    letterSpacing: '0.18em', color: '#7ba8d1', marginBottom: 7
                   }}>
                     ASSIGN PORTFOLIOS
                     {selectedPortfolios.size > 0 && (
@@ -829,7 +829,7 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
                           onMouseLeave={e => { if (!isAssigned && !isSelected) e.currentTarget.style.borderColor = '#1a2f44' }}>
                           <span style={{ fontSize: 11, lineHeight: 1 }}>{pf.icon}</span>
                           <span style={{
-                            fontSize: 8, fontWeight: 600, lineHeight: 1.2,
+                            fontSize: 10, fontWeight: 600, lineHeight: 1.2,
                             fontFamily: "'Rajdhani', sans-serif",
                             color: isAssigned ? '#334155' : isSelected ? pf.color : '#94a3b8'
                           }}>
@@ -869,7 +869,7 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
                   <button onClick={() => { setInterviewee(null); setSelectedPortfolios(new Set()) }}
                     style={{
                       width: '100%', padding: '6px 0', borderRadius: 5, background: 'none',
-                      border: '1px solid #1c3652', color: '#4b6280', cursor: 'pointer',
+                      border: '1px solid #1c3652', color: '#7ba8d1', cursor: 'pointer',
                       fontFamily: "'Rajdhani', sans-serif", fontSize: 10, letterSpacing: '0.1em',
                       transition: 'all 0.15s'
                     }}
@@ -904,7 +904,7 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
                 <span style={{ fontSize: 32, opacity: 0.3 }}>?</span>
               </div>
               <div style={{
-                fontFamily: "'Rajdhani', sans-serif", fontSize: 14, color: '#1c3652',
+                fontFamily: "'Rajdhani', sans-serif", fontSize: 14, color: '#5a8fc0',
                 letterSpacing: '0.2em', textAlign: 'center', lineHeight: 1.8
               }}>
                 SELECT A CANDIDATE
@@ -952,7 +952,7 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
                 borderRadius: 4, padding: '4px 10px'
               }}>
                 <div style={{
-                  fontSize: 8, color: '#38bdf8', fontFamily: "'Rajdhani', sans-serif",
+                  fontSize: 10, color: '#38bdf8', fontFamily: "'Rajdhani', sans-serif",
                   fontWeight: 700, letterSpacing: '0.1em'
                 }}>TARGET ID</div>
                 <div style={{
@@ -968,7 +968,7 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
                 background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)',
                 borderRadius: 4, padding: '5px 10px'
               }}>
-                <span style={{ fontSize: 9, color: '#4b6280', fontFamily: "'Share Tech Mono', monospace" }}>radar</span>
+                <span style={{ fontSize: 9, color: '#7ba8d1', fontFamily: "'Share Tech Mono', monospace" }}>radar</span>
                 <span style={{
                   fontSize: 9, color: '#22c55e', fontFamily: "'Rajdhani', sans-serif",
                   fontWeight: 700, letterSpacing: '0.1em',
@@ -1122,7 +1122,7 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
                 )}
               </div>
               <div style={{
-                fontFamily: "'Share Tech Mono', monospace", fontSize: 8,
+                fontFamily: "'Share Tech Mono', monospace", fontSize: 10,
                 letterSpacing: '0.2em', marginTop: 3,
                 color: allAssigned && !submitting ? 'rgba(4,13,27,0.6)' : '#1c3652'
               }}>
@@ -1146,7 +1146,7 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
             position: 'absolute', left: 0, top: 0, bottom: 0, width: 32, zIndex: 5,
             background: 'linear-gradient(90deg, rgba(7,19,32,0.95), transparent)',
             border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center',
-            justifyContent: 'center', color: '#4b6280'
+            justifyContent: 'center', color: '#7ba8d1'
           }}
           onMouseEnter={e => (e.currentTarget.style.color = '#e8a030')}
           onMouseLeave={e => (e.currentTarget.style.color = '#4b6280')}>
@@ -1157,7 +1157,7 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
             position: 'absolute', right: 0, top: 0, bottom: 0, width: 32, zIndex: 5,
             background: 'linear-gradient(270deg, rgba(7,19,32,0.95), transparent)',
             border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center',
-            justifyContent: 'center', color: '#4b6280'
+            justifyContent: 'center', color: '#7ba8d1'
           }}
           onMouseEnter={e => (e.currentTarget.style.color = '#e8a030')}
           onMouseLeave={e => (e.currentTarget.style.color = '#4b6280')}>
@@ -1172,9 +1172,6 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
           className="scrollbar-hide">
           {waitingCandidates.map(c => {
             const isSelected = interviewee?.id === c.id
-            const cap2 = c.capability as Record<string, number>
-            const p2 = c.personality as Record<string, number>
-            const comp = cap2.competence ?? 50
             return (
               <div key={c.id}
                 onClick={() => handleCallToDesk(c)}
@@ -1212,7 +1209,7 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
                     padding: '4px 0', textAlign: 'center', zIndex: 2
                   }}>
                     <span style={{
-                      fontSize: 8, fontFamily: "'Rajdhani', sans-serif", fontWeight: 700,
+                      fontSize: 10, fontFamily: "'Rajdhani', sans-serif", fontWeight: 700,
                       letterSpacing: '0.15em', color: '#22c55e'
                     }}>SELECTED</span>
                   </div>
@@ -1238,7 +1235,7 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
                     {c.name.toUpperCase()}
                   </div>
                   <div style={{
-                    fontSize: 9, color: '#4b6280', fontFamily: "'Rajdhani', sans-serif",
+                    fontSize: 9, color: '#7ba8d1', fontFamily: "'Rajdhani', sans-serif",
                     fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase',
                     whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 1
                   }}>
@@ -1252,7 +1249,7 @@ export default function CabinetScreen({ gameId, state, onCabinetFormed }: Props)
           {waitingCandidates.length === 0 && (
             <div style={{
               width: '100%', textAlign: 'center', padding: '24px 0',
-              color: '#1c3652', fontSize: 11, fontFamily: "'Rajdhani', sans-serif",
+              color: '#5a8fc0', fontSize: 11, fontFamily: "'Rajdhani', sans-serif",
               letterSpacing: '0.1em'
             }}>
               ALL CANDIDATES HAVE BEEN APPOINTED
